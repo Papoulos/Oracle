@@ -2,10 +2,9 @@ import streamlit as st
 import config
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
-from langchain.chains import RetrievalQA
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.runnable import RunnablePassthrough
-from langchain.schema.output_parser import StrOutputParser
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnablePassthrough
+from langchain_core.output_parsers import StrOutputParser
 
 st.set_page_config(page_title="RPG Oracle - Test Agent", layout="wide")
 
