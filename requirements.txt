@@ -1,0 +1,8 @@
+langchain
+langchain-community
+langchain-ollama
+chromadb
+pypdf
+streamlit
+python-dotenv
+fpdf2
