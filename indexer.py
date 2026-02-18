@@ -4,6 +4,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
+import chromadb
 import config
 
 def index_pdfs(source_dir, collection_name):
@@ -43,10 +44,11 @@ def index_pdfs(source_dir, collection_name):
     )
 
     # Création/Mise à jour du Vector Store
+    client = chromadb.PersistentClient(path=config.CHROMA_PATH)
     db = Chroma.from_documents(
         documents=chunks,
         embedding=embeddings,
-        persist_directory=config.CHROMA_PATH,
+        client=client,
         collection_name=collection_name
     )
 

@@ -1,5 +1,7 @@
 import streamlit as st
 import config
+import os
+import chromadb
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_core.prompts import ChatPromptTemplate
@@ -18,17 +20,33 @@ def get_vectorstores():
         base_url=config.OLLAMA_BASE_URL
     )
 
+    if not os.path.exists(config.CHROMA_PATH) or not os.listdir(config.CHROMA_PATH):
+        st.warning("⚠️ La base de données est vide. Veuillez lancer l'indexation (./run.sh).")
+        return None, None
+
     try:
-        codex_db = Chroma(
-            persist_directory=config.CHROMA_PATH,
-            collection_name=config.COLLECTION_CODEX,
-            embedding_function=embeddings
-        )
-        intrigue_db = Chroma(
-            persist_directory=config.CHROMA_PATH,
-            collection_name=config.COLLECTION_INTRIGUE,
-            embedding_function=embeddings
-        )
+        # Utilisation du PersistentClient pour éviter les erreurs de validation Pydantic
+        client = chromadb.PersistentClient(path=config.CHROMA_PATH)
+
+        # Vérification de l'existence des collections
+        collections = [c.name for c in client.list_collections()]
+
+        codex_db = None
+        if config.COLLECTION_CODEX in collections:
+            codex_db = Chroma(
+                client=client,
+                collection_name=config.COLLECTION_CODEX,
+                embedding_function=embeddings
+            )
+
+        intrigue_db = None
+        if config.COLLECTION_INTRIGUE in collections:
+            intrigue_db = Chroma(
+                client=client,
+                collection_name=config.COLLECTION_INTRIGUE,
+                embedding_function=embeddings
+            )
+
         return codex_db, intrigue_db
     except Exception as e:
         st.error(f"Erreur lors du chargement des bases : {e}")
