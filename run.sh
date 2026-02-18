@@ -6,7 +6,7 @@ pip install -r requirements.txt
 echo "Génération des exemples..."
 python3 generate_samples.py
 
-echo "Indexation du Codex..."
+echo "Indexation du Codex (Veuillez vous assurer qu'Ollama est lancé)..."
 python3 indexer.py codex
 
 echo "Indexation de l'Intrigue..."

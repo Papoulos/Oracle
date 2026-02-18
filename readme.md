@@ -24,6 +24,8 @@ Système d'agent conversationnel de jeu de rôle basé sur des agents (RAG).
    chmod +x run.sh
    ./run.sh
    ```
+   **Important** : L'indexation nécessite qu'Ollama soit en cours d'exécution pour générer les embeddings. Si vous ajoutez de nouveaux PDF dans `data/`, relancez l'indexation.
+
    (Note : `run.sh` lancera également l'application Streamlit après l'indexation).
 
 ## Structure du projet
