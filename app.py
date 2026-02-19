@@ -2,15 +2,15 @@ import streamlit as st
 import config
 import os
 import chromadb
-from langchain_ollama import ChatOllama, OllamaEmbeddings
+import json
+from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnablePassthrough
-from langchain_core.output_parsers import StrOutputParser
+from orchestrateur import Orchestrateur
+import memory_manager
 
-st.set_page_config(page_title="RPG Oracle - Test Agent", layout="wide")
+st.set_page_config(page_title="RPG Oracle - Multi-Agent", layout="wide")
 
-st.title("🧙‍♂️ RPG Oracle - Agent de Test")
+st.title("🧙‍♂️ RPG Oracle - Système Multi-Agent")
 
 # --- Configuration & Initialization ---
 @st.cache_resource
@@ -25,10 +25,7 @@ def get_vectorstores():
         return None, None
 
     try:
-        # Utilisation du PersistentClient pour éviter les erreurs de validation Pydantic
         client = chromadb.PersistentClient(path=config.CHROMA_PATH)
-
-        # Vérification de l'existence des collections
         collections = [c.name for c in client.list_collections()]
 
         codex_db = None
@@ -54,72 +51,46 @@ def get_vectorstores():
 
 codex_db, intrigue_db = get_vectorstores()
 
+@st.cache_resource
+def get_orchestrateur(_codex, _intrigue):
+    return Orchestrateur(_codex, _intrigue)
+
+if codex_db and intrigue_db:
+    orchestrateur = get_orchestrateur(codex_db, intrigue_db)
+else:
+    orchestrateur = None
+
 # --- Sidebar ---
 with st.sidebar:
-    st.header("Statut des Bases")
-    if codex_db:
-        st.success("Codex: Chargé")
-    else:
-        st.error("Codex: Non trouvé")
+    st.header("📜 État du Jeu")
+    memory = memory_manager.load_memory()
+    if memory:
+        st.subheader("👤 Personnage")
+        st.json(memory.get("personnage", {}))
+        st.subheader("🌍 Monde")
+        st.write(f"**Lieu :** {memory.get('monde', {}).get('lieu_actuel')}")
+        st.write("**Événements :**")
+        for ev in memory.get('monde', {}).get('evenements_marquants', [])[-5:]:
+            st.write(f"- {ev}")
 
-    if intrigue_db:
-        st.success("Intrigue: Chargé")
-    else:
-        st.error("Intrigue: Non trouvé")
-
-    st.info(f"Modèle LLM: {config.OLLAMA_MODEL}")
-    st.info(f"Modèle Embed: {config.OLLAMA_EMBED_MODEL}")
     st.markdown("---")
-    st.markdown(f"""
-    ### Instructions
-    1. Assurez-vous d'avoir téléchargé les modèles :
-       `ollama pull {config.OLLAMA_MODEL}`
-       `ollama pull {config.OLLAMA_EMBED_MODEL}`
-    2. Indexez vos documents :
-       `./run.sh`
-    3. Posez vos questions à l'agent.
-    """)
-
-# --- RAG Logic ---
-def get_response(query):
-    llm = ChatOllama(
-        model=config.OLLAMA_MODEL,
-        base_url=config.OLLAMA_BASE_URL,
-        temperature=0.7
-    )
-
-    # Simple strategy: retrieve from both and combine context
-    context_docs = []
-    if codex_db:
-        context_docs.extend(codex_db.similarity_search(query, k=3))
-    if intrigue_db:
-        context_docs.extend(intrigue_db.similarity_search(query, k=3))
-
-    context_text = "\n\n".join([doc.page_content for doc in context_docs])
-
-    prompt = ChatPromptTemplate.from_template("""
-    Tu es un assistant de jeu de rôle omniscient. Ton rôle est d'aider le maître du jeu ou les joueurs
-    en répondant à des questions basées UNIQUEMENT sur le CODEX (règles) et l'INTRIGUE (scénario) fournis ci-dessous.
-
-    Si la réponse n'est pas dans le contexte, dis-le poliment.
-
-    CONTEXTE:
-    {context}
-
-    QUESTION:
-    {question}
-
-    REPONSE:
-    """)
-
-    chain = (
-        {"context": lambda x: context_text, "question": RunnablePassthrough()}
-        | prompt
-        | llm
-        | StrOutputParser()
-    )
-
-    return chain.stream(query)
+    if st.button("🔄 Réinitialiser la Mémoire"):
+        # Reset memory to default
+        default_mem = {
+          "personnage": {
+            "nom": "Aventurier",
+            "stats": {"force": 10, "agilite": 10, "intelligence": 10, "pv": 20, "pv_max": 20},
+            "inventaire": ["Épée rouillée", "Gourde d'eau"],
+            "xp": 0, "niveau": 1
+          },
+          "monde": {
+            "lieu_actuel": "Auberge du Dragon Vert",
+            "factions": {}, "evenements_marquants": [], "secrets_decouverts": []
+          },
+          "historique": []
+        }
+        memory_manager.save_memory(default_mem)
+        st.rerun()
 
 # --- Chat Interface ---
 if "messages" not in st.session_state:
@@ -128,20 +99,62 @@ if "messages" not in st.session_state:
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
+        if "reflection" in message:
+            with st.expander("💭 Réflexion des Agents"):
+                st.write(message["reflection"])
 
-if prompt := st.chat_input("Posez une question sur les règles ou l'intrigue..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
+if prompt := st.chat_input("Que faites-vous ?"):
+    if not orchestrateur:
+        st.error("L'orchestrateur n'est pas prêt. Vérifiez les bases de données.")
+    else:
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-    with st.chat_message("assistant"):
-        response_placeholder = st.empty()
-        full_response = ""
+        with st.chat_message("assistant"):
+            # Placeholder pour les étapes de réflexion
+            reflection_placeholder = st.empty()
+            response_placeholder = st.empty()
 
-        for chunk in get_response(prompt):
-            full_response += chunk
-            response_placeholder.markdown(full_response + "▌")
+            reflections = {}
+            full_response = ""
 
-        response_placeholder.markdown(full_response)
+            # Exécution du graphe
+            with st.status("Les agents réfléchissent...", expanded=True) as status:
+                for step in orchestrateur.run(prompt):
+                    for node_name, output in step.items():
+                        if node_name == "consult_regles":
+                            st.write("⚖️ L'Agent Règles vérifie le Codex...")
+                            reflections["Règles"] = output["regles_info"]
+                        elif node_name == "consult_monde":
+                            st.write("🌍 L'Agent Monde consulte l'Intrigue...")
+                            reflections["Monde"] = output["world_info"]
+                        elif node_name == "narrate":
+                            st.write("🎙️ Le MJ Narrateur prépare sa réponse...")
+                            full_response = output["narration"]
+                        elif node_name == "update_memory":
+                            st.write("🧠 L'Agent Mémoire met à jour l'état...")
+                            reflections["Mémoire (Updates)"] = output["updates"]
 
-    st.session_state.messages.append({"role": "assistant", "content": full_response})
+                status.update(label="Réflexion terminée !", state="complete", expanded=False)
+
+            # Affichage de la réponse finale
+            response_placeholder.markdown(full_response)
+
+            # Affichage des réflexions dans un expander
+            with st.expander("💭 Détails de la réflexion"):
+                for agent, content in reflections.items():
+                    st.subheader(agent)
+                    if isinstance(content, dict):
+                        st.json(content)
+                    else:
+                        st.write(content)
+
+        st.session_state.messages.append({
+            "role": "assistant",
+            "content": full_response,
+            "reflection": reflections
+        })
+
+        # Forcer le rafraîchissement pour mettre à jour la sidebar
+        st.rerun()
