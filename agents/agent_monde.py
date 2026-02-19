@@ -34,6 +34,7 @@ class AgentMonde:
         - Ne révèle que ce que le personnage peut raisonnablement savoir ou découvrir.
         - Réponds avec des faits bruts, pas de narration.
         - Indique si l'action entraîne une conséquence scénaristique majeure.
+        - NE FAIS JAMAIS référence à des actions passées du joueur qui ne sont pas explicitement présentes dans la MÉMOIRE ACTUELLE. Si la mémoire est vide, considère que c'est le tout début.
 
         RÉPONSE:
         """)

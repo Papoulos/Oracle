@@ -35,6 +35,7 @@ class AgentNarrateur:
         - Ne décide PAS des règles.
         - Ne connais pas le scénario complet au-delà de ce que l'Agent Monde t'a transmis.
         - Reste fidèle à l'ambiance du jeu.
+        - NE FAIS JAMAIS référence à des discussions ou actions précédentes du joueur qui ne figurent pas dans la MÉMOIRE DU JEU. Si la mémoire est vide, c'est que la partie vient de commencer. Ne dis pas "Comme vous l'avez mentionné" si ce n'est pas écrit dans la mémoire.
 
         NARRE LA RÉPONSE AU JOUEUR:
         """)
