@@ -16,7 +16,7 @@ st.title("🧙‍♂️ RPG Oracle - Agent de Test")
 @st.cache_resource
 def get_vectorstores():
     embeddings = OllamaEmbeddings(
-        model=config.OLLAMA_MODEL,
+        model=config.OLLAMA_EMBED_MODEL,
         base_url=config.OLLAMA_BASE_URL
     )
 
@@ -67,12 +67,17 @@ with st.sidebar:
     else:
         st.error("Intrigue: Non trouvé")
 
-    st.info(f"Modèle: {config.OLLAMA_MODEL}")
+    st.info(f"Modèle LLM: {config.OLLAMA_MODEL}")
+    st.info(f"Modèle Embed: {config.OLLAMA_EMBED_MODEL}")
     st.markdown("---")
-    st.markdown("""
+    st.markdown(f"""
     ### Instructions
-    1. Indexez vos documents avec `python indexer.py codex` et `python indexer.py intrigue`.
-    2. Posez vos questions à l'agent ci-contre.
+    1. Assurez-vous d'avoir téléchargé les modèles :
+       `ollama pull {config.OLLAMA_MODEL}`
+       `ollama pull {config.OLLAMA_EMBED_MODEL}`
+    2. Indexez vos documents :
+       `./run.sh`
+    3. Posez vos questions à l'agent.
     """)
 
 # --- RAG Logic ---

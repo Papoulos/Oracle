@@ -39,7 +39,7 @@ def index_pdfs(source_dir, collection_name):
 
     # Initialisation des Embeddings
     embeddings = OllamaEmbeddings(
-        model=config.OLLAMA_MODEL,
+        model=config.OLLAMA_EMBED_MODEL,
         base_url=config.OLLAMA_BASE_URL
     )
 
