@@ -234,6 +234,10 @@ def run_game_introduction():
         with st.status("Initialisation de l'aventure...", expanded=True) as status:
             for step in orchestrateur.initialiser_aventure():
                 for node_name, output in step.items():
+                    # Capture de la narration si présente
+                    if "narration" in output:
+                        full_response = output["narration"]
+
                     if node_name == "personnage_creation":
                         st.write("🧙‍♂️ Début de la création de personnage...")
                         reflections["Création"] = output["personnage_info"]
@@ -242,7 +246,6 @@ def run_game_introduction():
                         reflections["Scénario (Intro)"] = output["world_info"]
                     elif node_name == "narrate":
                         st.write("🎙️ Le MJ Narrateur prépare l'entrée en matière...")
-                        full_response = output["narration"]
                     elif node_name == "update_memory":
                         st.write("🧠 L'Agent Mémoire enregistre le point de départ...")
                         reflections["Mémoire"] = output["updates"]
