@@ -96,7 +96,10 @@ class Orchestrateur:
         if etape in ["CREATION", "LEVEL_UP"]:
             # Mise à jour directe via l'Agent Personnage
             res = state.get("personnage_info", {})
-            updates = {"personnage_updates": res.get("personnage_updates", {})}
+            updates = {
+                "personnage_updates": res.get("personnage_updates", {}),
+                "resume_action": res.get("message", "Mise à jour du personnage")
+            }
 
             if etape == "CREATION" and res.get("creation_terminee"):
                 memory_manager.update_etape("AVENTURE")
@@ -117,15 +120,13 @@ class Orchestrateur:
         if updates:
             p_up = updates.get("personnage_updates", {})
             if p_up and isinstance(p_up, dict):
-                # Mise à jour intelligente : stats, inventaire, ou fiche complète
-                if p_up.get("stats"):
-                    memory_manager.update_stats(p_up["stats"])
+                # Gestion spécifique des ajouts à l'inventaire
                 if p_up.get("inventaire_ajouts"):
                     for item in p_up.get("inventaire_ajouts", []):
                         memory_manager.add_to_inventory(item)
 
-                # Pour les autres champs (nom, classe, xp, niveau)
-                other_updates = {k: v for k, v in p_up.items() if k not in ["stats", "inventaire_ajouts"]}
+                # Mise à jour des autres champs via la nouvelle fonction robuste
+                other_updates = {k: v for k, v in p_up.items() if k != "inventaire_ajouts"}
                 if other_updates:
                     memory_manager.update_personnage(other_updates)
 
@@ -253,10 +254,12 @@ class Orchestrateur:
             # On simule un premier échange pour lancer la création
             historique = memory.get("historique", [])[-5:]
             res = self.agent_personnage.interagir_creation("Bonjour", memory, historique)
-            yield {"personnage_creation": {"personnage_info": res}}
-            yield {"narrate": {"narration": res["message"]}}
+            yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
 
-            updates = {"personnage_updates": res.get("personnage_updates", {}), "resume_action": "Début de la création de personnage"}
+            updates = {
+                "personnage_updates": res.get("personnage_updates", {}),
+                "resume_action": "Début de la création de personnage"
+            }
             if updates["personnage_updates"]:
                 memory_manager.update_personnage(updates["personnage_updates"])
             memory_manager.add_to_history(updates["resume_action"])

@@ -7,8 +7,15 @@ DEFAULT_MEMORY = {
     "etape": "CREATION",
     "personnage": {
         "nom": "À définir",
+        "classe": "À définir",
         "stats": {},
         "inventaire": [],
+        "points_de_passage": {
+            "nom": False,
+            "classe": False,
+            "stats": False,
+            "equipement": False
+        },
         "xp": 0,
         "niveau": 1
     },
@@ -57,7 +64,11 @@ def update_stats(stats_updates):
 
 def update_personnage(updates):
     memory = load_memory()
-    memory["personnage"].update(updates)
+    for key, value in updates.items():
+        if isinstance(value, dict) and key in memory["personnage"] and isinstance(memory["personnage"][key], dict):
+            memory["personnage"][key].update(value)
+        else:
+            memory["personnage"][key] = value
     save_memory(memory)
 
 def add_to_inventory(item):
