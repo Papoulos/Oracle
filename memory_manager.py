@@ -16,6 +16,7 @@ DEFAULT_MEMORY = {
             "stats": False,
             "equipement": False
         },
+        "journal_creation": [],
         "xp": 0,
         "niveau": 1
     },
@@ -105,6 +106,13 @@ def add_chronique_chapter(chapter_text):
     if "chronique" not in memory:
         memory["chronique"] = []
     memory["chronique"].append(chapter_text)
+    save_memory(memory)
+
+def add_to_journal_creation(message):
+    memory = load_memory()
+    if "journal_creation" not in memory["personnage"]:
+        memory["personnage"]["journal_creation"] = []
+    memory["personnage"]["journal_creation"].append(message)
     save_memory(memory)
 
 def reset_memory():
