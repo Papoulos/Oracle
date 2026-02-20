@@ -48,6 +48,7 @@ class AgentRegles:
         2. Si un jet de dés est nécessaire, indique le format exact "JET: NdM+K" (ex: JET: 1d20+2).
         3. Explique brièvement la règle appliquée.
         4. Sois concis et technique. Ne fais pas de narration.
+        5. S'il s'agit d'un début de partie ou d'une action purement narrative sans enjeu de règle, indique simplement "Aucune règle spécifique applicable."
 
         RÉPONSE:
         """)

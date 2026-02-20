@@ -101,7 +101,65 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
         if "reflection" in message:
             with st.expander("💭 Réflexion des Agents"):
-                st.write(message["reflection"])
+                # On affiche les réflexions de manière structurée
+                for agent, content in message["reflection"].items():
+                    st.subheader(agent)
+                    if isinstance(content, dict):
+                        st.json(content)
+                    else:
+                        st.write(content)
+
+# Fonction pour exécuter un tour de jeu
+def run_game_turn(user_query):
+    with st.chat_message("assistant"):
+        reflection_placeholder = st.empty()
+        response_placeholder = st.empty()
+
+        reflections = {}
+        full_response = ""
+
+        with st.status("Les agents réfléchissent...", expanded=True) as status:
+            for step in orchestrateur.run(user_query):
+                for node_name, output in step.items():
+                    if node_name == "consult_regles":
+                        st.write("⚖️ L'Agent Règles vérifie le Codex...")
+                        reflections["Règles"] = output["regles_info"]
+                    elif node_name == "consult_monde":
+                        st.write("🌍 L'Agent Monde consulte l'Intrigue...")
+                        reflections["Monde"] = output["world_info"]
+                    elif node_name == "narrate":
+                        st.write("🎙️ Le MJ Narrateur prépare sa réponse...")
+                        full_response = output["narration"]
+                    elif node_name == "update_memory":
+                        st.write("🧠 L'Agent Mémoire met à jour l'état...")
+                        reflections["Mémoire (Updates)"] = output["updates"]
+
+            status.update(label="Réflexion terminée !", state="complete", expanded=False)
+
+        response_placeholder.markdown(full_response)
+
+        with st.expander("💭 Détails de la réflexion", expanded=False):
+            if not reflections:
+                st.info("Aucune réflexion technique disponible pour ce tour.")
+            for agent, content in reflections.items():
+                st.markdown(f"**{agent}**")
+                if isinstance(content, dict):
+                    st.json(content)
+                else:
+                    st.write(content)
+                st.markdown("---")
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": full_response,
+        "reflection": reflections
+    })
+
+# --- Introduction Automatique ---
+if not st.session_state.messages and orchestrateur:
+    welcome_query = "Le jeu commence. Présente-toi brièvement comme le MJ et décris la scène initiale pour plonger le joueur dans l'aventure selon le lieu actuel et l'intrigue."
+    run_game_turn(welcome_query)
+    st.rerun()
 
 if prompt := st.chat_input("Que faites-vous ?"):
     if not orchestrateur:
@@ -111,50 +169,5 @@ if prompt := st.chat_input("Que faites-vous ?"):
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        with st.chat_message("assistant"):
-            # Placeholder pour les étapes de réflexion
-            reflection_placeholder = st.empty()
-            response_placeholder = st.empty()
-
-            reflections = {}
-            full_response = ""
-
-            # Exécution du graphe
-            with st.status("Les agents réfléchissent...", expanded=True) as status:
-                for step in orchestrateur.run(prompt):
-                    for node_name, output in step.items():
-                        if node_name == "consult_regles":
-                            st.write("⚖️ L'Agent Règles vérifie le Codex...")
-                            reflections["Règles"] = output["regles_info"]
-                        elif node_name == "consult_monde":
-                            st.write("🌍 L'Agent Monde consulte l'Intrigue...")
-                            reflections["Monde"] = output["world_info"]
-                        elif node_name == "narrate":
-                            st.write("🎙️ Le MJ Narrateur prépare sa réponse...")
-                            full_response = output["narration"]
-                        elif node_name == "update_memory":
-                            st.write("🧠 L'Agent Mémoire met à jour l'état...")
-                            reflections["Mémoire (Updates)"] = output["updates"]
-
-                status.update(label="Réflexion terminée !", state="complete", expanded=False)
-
-            # Affichage de la réponse finale
-            response_placeholder.markdown(full_response)
-
-            # Affichage des réflexions dans un expander
-            with st.expander("💭 Détails de la réflexion"):
-                for agent, content in reflections.items():
-                    st.subheader(agent)
-                    if isinstance(content, dict):
-                        st.json(content)
-                    else:
-                        st.write(content)
-
-        st.session_state.messages.append({
-            "role": "assistant",
-            "content": full_response,
-            "reflection": reflections
-        })
-
-        # Forcer le rafraîchissement pour mettre à jour la sidebar
+        run_game_turn(prompt)
         st.rerun()
