@@ -14,6 +14,7 @@ class AgentMonde:
         self.intrigue_db = intrigue_db
 
     def consult(self, query, memory_dict):
+        # CONTEXTE : Jeu SOLO
         # On essaie de chercher par rapport à l'action ET au lieu actuel pour rester dans le thème
         lieu_actuel = memory_dict.get("monde", {}).get("lieu_actuel", "")
         search_query = f"{lieu_actuel} {query}" if lieu_actuel else query
@@ -24,6 +25,7 @@ class AgentMonde:
         prompt = ChatPromptTemplate.from_template("""
         Tu es l'Expert du Monde et du Scénario (Agent Monde).
         Ton rôle est d'extraire de l'INTRIGUE les éléments nécessaires pour que le MJ Narrateur puisse décrire la scène.
+        **CONTEXTE : Jeu SOLO (Un seul joueur).**
 
         MÉMOIRE ACTUELLE:
         {memory}
@@ -59,6 +61,7 @@ class AgentMonde:
         return response
 
     def chercher_introduction(self):
+        # CONTEXTE : Jeu SOLO
         # On cherche les éléments de début avec plusieurs angles et un k plus grand
         queries = [
             "introduction début aventure scène initiale point de départ",
@@ -88,6 +91,7 @@ class AgentMonde:
         prompt = ChatPromptTemplate.from_template("""
         Tu es l'Expert du Monde et du Scénario (Agent Monde).
         Ton rôle est d'extraire de l'INTRIGUE les éléments pour COMMENCER l'aventure.
+        **CONTEXTE : Jeu SOLO (Un seul joueur).**
 
         CONTEXTE DE L'INTRIGUE :
         {context}

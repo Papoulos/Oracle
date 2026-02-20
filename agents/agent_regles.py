@@ -38,12 +38,14 @@ class AgentRegles:
         self.codex_db = codex_db
 
     def evaluer_besoin_jet(self, query, char_sheet, world_info):
+        # CONTEXTE : Jeu SOLO
         context_docs = self.codex_db.similarity_search(query, k=3) if self.codex_db else []
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
         prompt = ChatPromptTemplate.from_template("""
         Tu es l'Expert des Règles (Agent Règles).
         Ton rôle est de déterminer si l'action du joueur nécessite un jet de dés selon le CODEX.
+        **IMPORTANT : C'est un jeu SOLO. Il n'y a qu'un seul personnage joueur.**
 
         FICHE PERSONNAGE:
         {char_sheet}

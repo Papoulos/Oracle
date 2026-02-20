@@ -15,6 +15,7 @@ class AgentNarrateur:
         prompt = ChatPromptTemplate.from_template("""
         Tu es le MJ Narrateur. Ton rôle est de décrire la résolution de l'action du joueur et de jouer les PNJ.
         Tu transformes les informations techniques des autres agents en une narration immersive.
+        **CONTEXTE : C'est un jeu de rôle SOLO. Il n'y a qu'un seul joueur.**
 
         ACTION DU JOUEUR:
         {query}
@@ -63,6 +64,7 @@ class AgentNarrateur:
         prompt = ChatPromptTemplate.from_template("""
         Tu es le MJ Narrateur. Ton rôle est d'introduire l'aventure au joueur.
         Tu dois décrire la scène initiale en te basant UNIQUEMENT sur les informations de l'Agent Monde.
+        **CONTEXTE : C'est un jeu de rôle SOLO. Il n'y a qu'un seul joueur.**
 
         INFOS DU SCÉNARIO (Agent Monde) :
         {world_info}

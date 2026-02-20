@@ -15,6 +15,7 @@ class AgentGarde:
         self.intrigue_db = intrigue_db
 
     def valider_action(self, query, memory):
+        # CONTEXTE : Jeu SOLO - Un seul joueur
         # Recherche dans le Codex (règles/physique)
         codex_docs = self.codex_db.similarity_search(query, k=3) if self.codex_db else []
         codex_context = "\n\n".join([doc.page_content for doc in codex_docs])
@@ -26,6 +27,7 @@ class AgentGarde:
         prompt = ChatPromptTemplate.from_template("""
         Tu es le Garde du Jeu (Agent Garde).
         Ton rôle est de vérifier si l'action du joueur est possible, réaliste et cohérente avec l'univers et l'intrigue.
+        **IMPORTANT : C'est un jeu SOLO. Il n'y a qu'un seul personnage joueur.**
 
         MÉMOIRE ACTUELLE:
         {memory}
