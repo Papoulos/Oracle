@@ -268,7 +268,7 @@ class Orchestrateur:
 
             # On simule un premier échange pour lancer la création
             journal = memory.get("personnage", {}).get("journal_creation", [])
-            res = self.agent_personnage.interagir_creation("Bonjour", memory, journal)
+            res = self.agent_personnage.interagir_creation("Début de l'aventure", memory, journal)
             yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
 
             updates = {
