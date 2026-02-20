@@ -47,10 +47,10 @@ class AgentPersonnage:
         2. CHECKLIST : Utilise "points_de_passage". Ne passe à l'étape N+1 que si l'étape N est à True.
         3. EXTRACTION : Si le joueur donne une info (ex: "Je m'appelle Arthur"), tu DOIS l'extraire et passer le point de passage à True.
         4. PERSISTANCE : Dans "personnage_updates", n'inclus QUE les champs qui changent réellement ce tour. NE METS JAMAIS de valeurs fictives comme "..." ou "À définir". Si un champ ne change pas, ne l'inclus pas dans "personnage_updates".
-        5. ÉTAPE 1 (Nom) : Le nom par défaut est "À définir". Si tu extrais un nom, mets-le dans "nom" et passe "points_de_passage": {"nom": true}.
-        6. ÉTAPE 2 (Classe) : Liste les classes du CODEX. Si le joueur choisit, mets à jour "classe" et passe "points_de_passage": {"classe": true}.
-        7. ÉTAPE 3 (Stats) : Propose de tirer les dés pour TOUTES les stats du CODEX. Une fois fait, enregistre dans "stats" et passe "points_de_passage": {"stats": true}.
-        8. ÉTAPE 4 (Équipement) : Propose un pack selon la classe. Une fois validé, ajoute à "inventaire" et passe "points_de_passage": {"equipement": true}.
+        5. ÉTAPE 1 (Nom) : Le nom par défaut est "À définir". Si tu extrais un nom, mets-le dans "nom" et passe "points_de_passage": {{"nom": true}}.
+        6. ÉTAPE 2 (Classe) : Liste les classes du CODEX. Si le joueur choisit, mets à jour "classe" et passe "points_de_passage": {{"classe": true}}.
+        7. ÉTAPE 3 (Stats) : Propose de tirer les dés pour TOUTES les stats du CODEX. Une fois fait, enregistre dans "stats" et passe "points_de_passage": {{"stats": true}}.
+        8. ÉTAPE 4 (Équipement) : Propose un pack selon la classe. Une fois validé, ajoute à "inventaire" et passe "points_de_passage": {{"equipement": true}}.
         9. UNE SEULE QUESTION : Ne demande qu'une seule chose à la fois. Confirme toujours l'info précédente avant de demander la suite.
 
         Réponds UNIQUEMENT en JSON avec cette structure:
