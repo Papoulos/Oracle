@@ -88,6 +88,33 @@ with st.sidebar:
 
     st.markdown("---")
 
+    @st.dialog("👤 Fiche de Personnage")
+    def afficher_fiche():
+        mem = memory_manager.load_memory()
+        char = mem.get("personnage", {})
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**Nom :** {char.get('nom')}")
+            st.write(f"**Classe :** {char.get('classe', 'N/A')}")
+            st.write(f"**Niveau :** {char.get('niveau')}")
+            st.write(f"**XP :** {char.get('xp')}")
+        with col2:
+            st.write("**Statistiques :**")
+            st.json(char.get("stats", {}))
+
+        st.write("**Inventaire :**")
+        if char.get("inventaire"):
+            for item in char.get("inventaire"):
+                st.write(f"- {item}")
+        else:
+            st.info("L'inventaire est vide.")
+
+        if st.button("Fermer"):
+            st.rerun()
+
+    if st.button("👤 Fiche de Personnage", use_container_width=True):
+        afficher_fiche()
+
     @st.dialog("📖 Journal de Bord")
     def afficher_chronique():
         mem = memory_manager.load_memory()
@@ -139,7 +166,13 @@ def run_game_turn(user_query):
         with st.status("Les agents réfléchissent...", expanded=True) as status:
             for step in orchestrateur.run(user_query):
                 for node_name, output in step.items():
-                    if node_name == "consult_garde":
+                    if node_name == "personnage_creation":
+                        st.write("🧙‍♂️ L'Agent Personnage façonne votre destin...")
+                        reflections["0. Création"] = output["personnage_info"]
+                    elif node_name == "personnage_evolution":
+                        st.write("✨ L'Agent Personnage gère votre montée en puissance...")
+                        reflections["0. Évolution"] = output["personnage_info"]
+                    elif node_name == "consult_garde":
                         st.write("🛡️ Le Garde vérifie l'action...")
                         reflections["1. Garde"] = output["garde_info"]
                     elif node_name == "consult_regles":
@@ -158,6 +191,16 @@ def run_game_turn(user_query):
             status.update(label="Réflexion terminée !", state="complete", expanded=False)
 
         response_placeholder.markdown(full_response)
+
+        # Affichage des récompenses XP ou montées de niveau
+        updates = reflections.get("4. Mémoire (Updates)", {})
+        if updates.get("xp_gain"):
+            xp = updates["xp_gain"]
+            st.toast(f"✨ +{xp['xp_gagne']} XP : {xp['raison']}")
+        if updates.get("level_up_available"):
+            st.warning("🎉 Vous avez assez d'XP pour monter de niveau ! Tapez `/levelup` pour choisir vos bonus.")
+        if updates.get("etape_change") == "AVENTURE":
+            st.success("✅ Personnage prêt ! L'aventure commence...")
 
         with st.expander("💭 Détails de la réflexion", expanded=False):
             if not reflections:
@@ -188,7 +231,10 @@ def run_game_introduction():
         with st.status("Initialisation de l'aventure...", expanded=True) as status:
             for step in orchestrateur.initialiser_aventure():
                 for node_name, output in step.items():
-                    if node_name == "consult_monde":
+                    if node_name == "personnage_creation":
+                        st.write("🧙‍♂️ Début de la création de personnage...")
+                        reflections["Création"] = output["personnage_info"]
+                    elif node_name == "consult_monde":
                         st.write("🌍 Recherche de l'introduction dans l'Intrigue...")
                         reflections["Scénario (Intro)"] = output["world_info"]
                     elif node_name == "narrate":

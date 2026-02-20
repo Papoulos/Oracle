@@ -37,8 +37,7 @@ class AgentMemoire:
         {{
             "personnage_updates": {{
                 "stats": {{...}},
-                "inventaire_ajouts": [...],
-                "xp_gain": 0
+                "inventaire_ajouts": [...]
             }},
             "monde_updates": {{
                 "nouveau_lieu": "...",

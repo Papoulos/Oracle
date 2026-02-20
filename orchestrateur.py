@@ -6,6 +6,7 @@ from agents.agent_garde import AgentGarde
 from agents.agent_narrateur import AgentNarrateur
 from agents.agent_memoire import AgentMemoire
 from agents.agent_chronique import AgentChronique
+from agents.agent_personnage import AgentPersonnage
 import memory_manager
 import json
 
@@ -17,6 +18,7 @@ class AgentState(TypedDict):
     world_info: str
     narration: str
     updates: dict
+    personnage_info: dict
 
 class Orchestrateur:
     def __init__(self, codex_db, intrigue_db):
@@ -26,6 +28,7 @@ class Orchestrateur:
         self.agent_narrateur = AgentNarrateur()
         self.agent_memoire = AgentMemoire()
         self.agent_chronique = AgentChronique()
+        self.agent_personnage = AgentPersonnage(codex_db, intrigue_db)
 
         self.graph = self._build_graph()
 
@@ -77,22 +80,54 @@ class Orchestrateur:
         )
         return {"narration": res}
 
+    def _consult_personnage_creation(self, state: AgentState):
+        res = self.agent_personnage.interagir_creation(state["query"], state["memory"])
+        return {"personnage_info": res, "narration": res["message"]}
+
+    def _consult_personnage_evolution(self, state: AgentState):
+        res = self.agent_personnage.gerer_evolution(state["query"], state["memory"])
+        return {"personnage_info": res, "narration": res["message"]}
+
     def _update_memory_state(self, state: AgentState):
-        updates = self.agent_memoire.extract_updates(
-            state["query"],
-            state["regles_info"],
-            state["world_info"],
-            state["narration"]
-        )
+        etape = state["memory"].get("etape", "CREATION")
+
+        if etape in ["CREATION", "LEVEL_UP"]:
+            # Mise à jour directe via l'Agent Personnage
+            res = state.get("personnage_info", {})
+            updates = {"personnage_updates": res.get("personnage_updates", {})}
+            if updates["personnage_updates"]:
+                memory_manager.update_personnage(updates["personnage_updates"])
+
+            if etape == "CREATION" and res.get("creation_terminee"):
+                memory_manager.update_etape("AVENTURE")
+                updates["etape_change"] = "AVENTURE"
+            elif etape == "LEVEL_UP" and res.get("evolution_terminee"):
+                memory_manager.update_etape("AVENTURE")
+                updates["etape_change"] = "AVENTURE"
+        else:
+            # Mode Aventure Normal
+            updates = self.agent_memoire.extract_updates(
+                state["query"],
+                state["regles_info"],
+                state["world_info"],
+                state["narration"]
+            )
 
         # Appliquer les mises à jour au fichier physique via memory_manager
         if updates:
             p_up = updates.get("personnage_updates", {})
             if p_up and isinstance(p_up, dict):
+                # Mise à jour intelligente : stats, inventaire, ou fiche complète
                 if p_up.get("stats"):
                     memory_manager.update_stats(p_up["stats"])
-                for item in p_up.get("inventaire_ajouts", []):
-                    memory_manager.add_to_inventory(item)
+                if p_up.get("inventaire_ajouts"):
+                    for item in p_up.get("inventaire_ajouts", []):
+                        memory_manager.add_to_inventory(item)
+
+                # Pour les autres champs (nom, classe, xp, niveau)
+                other_updates = {k: v for k, v in p_up.items() if k not in ["stats", "inventaire_ajouts"]}
+                if other_updates:
+                    memory_manager.update_personnage(other_updates)
 
             m_up = updates.get("monde_updates", {})
             if m_up and isinstance(m_up, dict):
@@ -100,6 +135,24 @@ class Orchestrateur:
                     memory_manager.update_lieu(m_up["nouveau_lieu"])
                 if m_up.get("nouvel_evenement"):
                     memory_manager.add_evenement(m_up["nouvel_evenement"])
+
+            # Gestion XP et Niveau en mode Aventure
+            if etape == "AVENTURE" and state["narration"]:
+                xp_res = self.agent_personnage.calculer_xp(
+                    state["query"], state["narration"], state["regles_info"], state["world_info"]
+                )
+                if xp_res.get("xp_gagne"):
+                    current_xp = state["memory"]["personnage"].get("xp", 0)
+                    memory_manager.update_personnage({"xp": current_xp + xp_res["xp_gagne"]})
+                    updates["xp_gain"] = xp_res
+
+                    # Vérification immédiate du passage de niveau
+                    new_mem = memory_manager.load_memory()
+                    lvl_check = self.agent_personnage.verifier_niveau(new_mem["personnage"])
+                    if lvl_check.get("passage_niveau"):
+                        # On ne change pas l'étape tout de suite pour laisser le narrateur finir
+                        # Mais on prévient l'UI
+                        updates["level_up_available"] = True
 
             # Ajout du résumé à l'historique
             if updates.get("resume_action"):
@@ -130,8 +183,29 @@ class Orchestrateur:
         workflow.add_node("consult_monde", self._consult_monde)
         workflow.add_node("narrate", self._narrate)
         workflow.add_node("update_memory", self._update_memory_state)
+        workflow.add_node("personnage_creation", self._consult_personnage_creation)
+        workflow.add_node("personnage_evolution", self._consult_personnage_evolution)
 
-        workflow.set_entry_point("consult_garde")
+        def route_entree(state: AgentState):
+            if state["query"].strip().lower() == "/levelup":
+                memory_manager.update_etape("LEVEL_UP")
+                return "evolution"
+
+            etape = state["memory"].get("etape", "CREATION")
+            if etape == "CREATION":
+                return "creation"
+            if etape == "LEVEL_UP":
+                return "evolution"
+            return "aventure"
+
+        workflow.set_conditional_entry_point(
+            route_entree,
+            {
+                "creation": "personnage_creation",
+                "evolution": "personnage_evolution",
+                "aventure": "consult_garde"
+            }
+        )
 
         # Logique conditionnelle après le Garde
         def check_garde_status(state: AgentState):
@@ -151,6 +225,8 @@ class Orchestrateur:
         workflow.add_edge("consult_regles", "consult_monde")
         workflow.add_edge("consult_monde", "narrate")
         workflow.add_edge("narrate", "update_memory")
+        workflow.add_edge("personnage_creation", "update_memory")
+        workflow.add_edge("personnage_evolution", "update_memory")
         workflow.add_edge("update_memory", END)
 
         return workflow.compile()
@@ -163,35 +239,49 @@ class Orchestrateur:
             "regles_info": "",
             "world_info": "",
             "narration": "",
-            "updates": {}
+            "updates": {},
+            "personnage_info": {}
         }
         return self.graph.stream(initial_state)
 
     def initialiser_aventure(self):
-        # Pour rester compatible avec le système de stream du UI, on simule les étapes
+        # On vérifie si on doit passer par la création
+        memory = memory_manager.load_memory()
+        etape = memory.get("etape", "CREATION")
 
-        # Étape 1 : Monde
-        world_info = self.agent_monde.chercher_introduction()
-        yield {"consult_monde": {"world_info": world_info}}
+        if etape == "CREATION":
+            # On simule un premier échange pour lancer la création
+            res = self.agent_personnage.interagir_creation("Bonjour", memory)
+            yield {"personnage_creation": {"personnage_info": res}}
+            yield {"narrate": {"narration": res["message"]}}
 
-        # Étape 2 : Narrateur
-        narration = self.agent_narrateur.narrer_introduction(world_info)
-        yield {"narrate": {"narration": narration}}
+            updates = {"personnage_updates": res.get("personnage_updates", {}), "resume_action": "Début de la création de personnage"}
+            if updates["personnage_updates"]:
+                memory_manager.update_personnage(updates["personnage_updates"])
+            memory_manager.add_to_history(updates["resume_action"])
 
-        # Étape 3 : Mémoire
-        updates = self.agent_memoire.extract_updates(
-            "Début de l'aventure",
-            "N/A",
-            world_info,
-            narration
-        )
+            yield {"update_memory": {"updates": updates}}
+        else:
+            # Introduction classique au monde
+            world_info = self.agent_monde.chercher_introduction()
+            yield {"consult_monde": {"world_info": world_info}}
 
-        if updates:
-            m_up = updates.get("monde_updates", {})
-            if m_up and isinstance(m_up, dict):
-                if m_up.get("nouveau_lieu"):
-                    memory_manager.update_lieu(m_up["nouveau_lieu"])
-            if updates.get("resume_action"):
-                memory_manager.add_to_history(updates["resume_action"])
+            narration = self.agent_narrateur.narrer_introduction(world_info)
+            yield {"narrate": {"narration": narration}}
 
-        yield {"update_memory": {"updates": updates}}
+            updates = self.agent_memoire.extract_updates(
+                "Début de l'aventure",
+                "N/A",
+                world_info,
+                narration
+            )
+
+            if updates:
+                m_up = updates.get("monde_updates", {})
+                if m_up and isinstance(m_up, dict):
+                    if m_up.get("nouveau_lieu"):
+                        memory_manager.update_lieu(m_up["nouveau_lieu"])
+                if updates.get("resume_action"):
+                    memory_manager.add_to_history(updates["resume_action"])
+
+            yield {"update_memory": {"updates": updates}}
