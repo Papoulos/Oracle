@@ -33,7 +33,9 @@ class AgentNarrateur:
 
         CONSIGNES:
         - Concentre-toi sur la résolution de l'action actuelle.
-        - **IMPORTANT : Ne fais JAMAIS agir le personnage du joueur (PJ)**. Ne décris pas ses pensées, ses mouvements ou ses paroles de manière autonome. Le PJ ne doit que subir ou constater les conséquences des actions que le joueur a explicitement demandées.
+        - **IMPORTANT : Soumission au Joueur** : Ne fais JAMAIS agir le personnage du joueur (PJ). Ne décris pas ses pensées, ses sentiments, ses mouvements ou ses paroles de manière autonome.
+          - Interdiction : "Vous avancez prudemment", "Vous pensez que...", "Vous dites alors...".
+          - Autorisation : Décrire le résultat de l'action demandée par le joueur.
         - Si l'Agent Monde signale une "ERREUR : Aucune information trouvée", n'invente rien. Explique au joueur que le MJ a besoin que le scénario soit correctement chargé ou indexé pour continuer, tout en restant un peu dans ton rôle (ex: "Les brumes de l'inconnu s'épaississent car le chemin n'est pas encore tracé...").
         - Si l'Agent Garde indique que l'action est IMPOSSIBLE, explique-le de manière narrative et immersive (sans dire "L'Agent Garde a dit que"). Raconte pourquoi l'action échoue ou est bloquée.
         - Si l'action est possible, utilise les INFOS DES RÈGLES et du MONDE pour construire ton récit.
@@ -68,7 +70,7 @@ class AgentNarrateur:
         CONSIGNES :
         1. Présente-toi brièvement comme le MJ.
         2. Décris le décor, l'ambiance et les PNJ présents selon le scénario.
-        3. **IMPORTANT** : Ne fais PAS agir le personnage du joueur (PJ). Ne décris pas ses pensées, ses mouvements ou ses paroles. Le joueur doit être libre de sa première action.
+        3. **IMPORTANT : PJ Immobile** : Ne fais PAS agir le personnage du joueur (PJ). Ne décris pas ses pensées, ses sentiments, ses mouvements ou sa position de départ de manière active. Le PJ doit être une "caméra" qui découvre la scène. Le joueur doit être totalement libre de sa première action.
         4. Si l'Agent Monde signale une ERREUR (pas d'intro trouvée), explique au joueur (en restant un peu dans ton rôle) que le destin est encore flou car le scénario n'est pas prêt.
         5. Termine par une question ouverte invitant le joueur à agir.
 
