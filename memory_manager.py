@@ -3,11 +3,33 @@ import os
 
 MEMORY_FILE = "memory.json"
 
+DEFAULT_MEMORY = {
+    "personnage": {
+        "nom": "Aventurier",
+        "stats": {"force": 10, "agilite": 10, "intelligence": 10, "pv": 20, "pv_max": 20},
+        "inventaire": ["Épée rouillée", "Gourde d'eau"],
+        "xp": 0, "niveau": 1
+    },
+    "monde": {
+        "lieu_actuel": "Auberge du Dragon Vert",
+        "factions": {},
+        "evenements_marquants": [],
+        "secrets_decouverts": []
+    },
+    "historique": []
+}
+
 def load_memory():
     if not os.path.exists(MEMORY_FILE):
-        return {}
-    with open(MEMORY_FILE, "r", encoding="utf-8") as f:
-        return json.load(f)
+        return DEFAULT_MEMORY
+    try:
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            content = f.read().strip()
+            if not content:
+                return DEFAULT_MEMORY
+            return json.loads(content)
+    except (json.JSONDecodeError, IOError):
+        return DEFAULT_MEMORY
 
 def save_memory(data):
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
@@ -38,3 +60,6 @@ def add_evenement(evenement):
     memory = load_memory()
     memory["monde"]["evenements_marquants"].append(evenement)
     save_memory(memory)
+
+def reset_memory():
+    save_memory(DEFAULT_MEMORY)

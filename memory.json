@@ -1,13 +1,25 @@
 {
   "personnage": {
     "nom": "Aventurier",
-    "stats": {"force": 10, "agilite": 10, "intelligence": 10, "pv": 20, "pv_max": 20},
-    "inventaire": ["Épée rouillée", "Gourde d'eau"],
-    "xp": 0, "niveau": 1
+    "stats": {
+      "force": 10,
+      "agilite": 10,
+      "intelligence": 10,
+      "pv": 20,
+      "pv_max": 20
+    },
+    "inventaire": [
+      "Épée rouillée",
+      "Gourde d'eau"
+    ],
+    "xp": 0,
+    "niveau": 1
   },
   "monde": {
     "lieu_actuel": "Auberge du Dragon Vert",
-    "factions": {}, "evenements_marquants": [], "secrets_decouverts": []
+    "factions": {},
+    "evenements_marquants": [],
+    "secrets_decouverts": []
   },
   "historique": []
 }
