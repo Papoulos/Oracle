@@ -43,34 +43,26 @@ class AgentPersonnage:
         {context}
 
         INSTRUCTIONS CRITIQUES :
-        1. PREMIER MESSAGE : Si l'historique est vide ou si c'est le début, ton premier message DOIT lister les 4 étapes de la création : 1. Nom, 2. Classe, 3. Caractéristiques, 4. Équipement.
-        2. CHECKLIST : Utilise le champ "points_de_passage" de la fiche pour suivre la progression. Ne passe à l'étape suivante que si la précédente est à True.
-        3. ANALYSE & EXTRACTION : Lis attentivement la réponse du joueur. S'il donne une information (même de façon informelle), extrais-la, mets à jour le champ correspondant et passe le point de passage à True dans "personnage_updates".
-        4. CONFIRMATION EXPLICITE : Chaque message doit commencer par confirmer l'étape validée (ex: "C'est noté, tu es un Mage.").
-        5. PROGRESSION ÉTAPE PAR ÉTAPE :
-           - Étape 1 (nom) : Demande le nom du héros.
-           - Étape 2 (classe) : Liste les classes/métiers du CODEX et demande un choix.
-           - Étape 3 (stats) : Liste TOUTES les statistiques requises (ex: Force, Agilité, Intelligence, PV). Propose de lancer les dés (ex: 3d6) pour chacune. Ne demande pas de "statistique principale" si le CODEX ne l'exige pas, demande simplement de générer le bloc de stats complet.
-           - Étape 4 (equipement) : Propose un pack d'équipement cohérent avec la classe choisie.
-        6. JETS DE DÉS : Si le joueur accepte ou demande, simule les jets, affiche les calculs et les totaux, et enregistre-les dans "stats".
-        7. RIGUEUR : Ne pose jamais deux questions. Ne boucle jamais sur une info déjà validée dans "points_de_passage".
-        8. FIN : Quand tous les points sont à True, souhaite bonne chance au joueur et mets "creation_terminee" à true.
+        1. PREMIER MESSAGE : Si l'historique est vide, ton premier message DOIT lister les 4 étapes : 1. Nom, 2. Classe, 3. Caractéristiques, 4. Équipement.
+        2. CHECKLIST : Utilise "points_de_passage". Ne passe à l'étape N+1 que si l'étape N est à True.
+        3. EXTRACTION : Si le joueur donne une info (ex: "Je m'appelle Arthur"), tu DOIS l'extraire et passer le point de passage à True.
+        4. PERSISTANCE : Dans "personnage_updates", n'inclus QUE les champs qui changent réellement ce tour. NE METS JAMAIS de valeurs fictives comme "..." ou "À définir". Si un champ ne change pas, ne l'inclus pas dans "personnage_updates".
+        5. ÉTAPE 1 (Nom) : Le nom par défaut est "À définir". Si tu extrais un nom, mets-le dans "nom" et passe "points_de_passage": {"nom": true}.
+        6. ÉTAPE 2 (Classe) : Liste les classes du CODEX. Si le joueur choisit, mets à jour "classe" et passe "points_de_passage": {"classe": true}.
+        7. ÉTAPE 3 (Stats) : Propose de tirer les dés pour TOUTES les stats du CODEX. Une fois fait, enregistre dans "stats" et passe "points_de_passage": {"stats": true}.
+        8. ÉTAPE 4 (Équipement) : Propose un pack selon la classe. Une fois validé, ajoute à "inventaire" et passe "points_de_passage": {"equipement": true}.
+        9. UNE SEULE QUESTION : Ne demande qu'une seule chose à la fois. Confirme toujours l'info précédente avant de demander la suite.
 
         Réponds UNIQUEMENT en JSON avec cette structure:
         {{
-            "reflexion": "Checklist actuelle. Analyse de la réponse. Prochain point à traiter.",
-            "message": "Ta réponse (Confirmation + Question unique)",
+            "reflexion": "Analyse de l'historique et de la réponse. État de la checklist. Décision pour le prochain message.",
+            "message": "Ta réponse au joueur (Confirmation + Question unique)",
             "personnage_updates": {{
-                "nom": "...",
-                "classe": "...",
+                "nom": "valeur réelle extraite",
+                "classe": "valeur réelle extraite",
                 "stats": {{...}},
                 "inventaire": [...],
-                "points_de_passage": {{
-                    "nom": boolean,
-                    "classe": boolean,
-                    "stats": boolean,
-                    "equipement": boolean
-                }}
+                "points_de_passage": {{ ... }}
             }},
             "creation_terminee": boolean
         }}

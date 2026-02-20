@@ -120,13 +120,16 @@ class Orchestrateur:
         if updates:
             p_up = updates.get("personnage_updates", {})
             if p_up and isinstance(p_up, dict):
+                # Filtre pour éviter d'écraser avec des valeurs fictives ou vides
+                clean_p_up = {k: v for k, v in p_up.items() if v not in ["...", "À définir", None, ""]}
+
                 # Gestion spécifique des ajouts à l'inventaire
-                if p_up.get("inventaire_ajouts"):
-                    for item in p_up.get("inventaire_ajouts", []):
+                if clean_p_up.get("inventaire_ajouts"):
+                    for item in clean_p_up.get("inventaire_ajouts", []):
                         memory_manager.add_to_inventory(item)
 
                 # Mise à jour des autres champs via la nouvelle fonction robuste
-                other_updates = {k: v for k, v in p_up.items() if k != "inventaire_ajouts"}
+                other_updates = {k: v for k, v in clean_p_up.items() if k != "inventaire_ajouts"}
                 if other_updates:
                     memory_manager.update_personnage(other_updates)
 
