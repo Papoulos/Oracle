@@ -2,6 +2,7 @@ from typing import TypedDict
 from langgraph.graph import StateGraph, END
 from agents.agent_regles import AgentRegles, simulate_dice_roll
 from agents.agent_monde import AgentMonde
+from agents.agent_garde import AgentGarde
 from agents.agent_narrateur import AgentNarrateur
 from agents.agent_memoire import AgentMemoire
 import memory_manager
@@ -10,6 +11,7 @@ import json
 class AgentState(TypedDict):
     query: str
     memory: dict
+    garde_info: dict
     regles_info: str
     world_info: str
     narration: str
@@ -17,6 +19,7 @@ class AgentState(TypedDict):
 
 class Orchestrateur:
     def __init__(self, codex_db, intrigue_db):
+        self.agent_garde = AgentGarde(codex_db, intrigue_db)
         self.agent_regles = AgentRegles(codex_db)
         self.agent_monde = AgentMonde(intrigue_db)
         self.agent_narrateur = AgentNarrateur()
@@ -24,18 +27,23 @@ class Orchestrateur:
 
         self.graph = self._build_graph()
 
+    def _consult_garde(self, state: AgentState):
+        res = self.agent_garde.valider_action(state["query"], json.dumps(state["memory"]))
+        return {"garde_info": res}
+
     def _consult_monde(self, state: AgentState):
         # L'Agent Monde consulte l'état du monde, l'intrigue et l'historique
-        res = self.agent_monde.consult(state["query"], json.dumps(state["memory"]))
+        res = self.agent_monde.consult(state["query"], state["memory"])
         return {"world_info": res}
 
     def _consult_regles(self, state: AgentState):
-        # L'Agent Règles reçoit maintenant l'avis de l'Agent Monde pour plus de contexte
+        # L'Agent Règles reçoit l'avis du Garde pour plus de contexte
         char_sheet = json.dumps(state["memory"].get("personnage", {}))
-        world_info = state["world_info"]
+        # On utilise la raison du garde comme info de contexte
+        garde_context = state["garde_info"].get("raison", "")
 
         # 1. Évaluation du besoin de jet
-        analyse, context_text = self.agent_regles.evaluer_besoin_jet(state["query"], char_sheet, world_info)
+        analyse, context_text = self.agent_regles.evaluer_besoin_jet(state["query"], char_sheet, garde_context)
 
         if analyse.get("besoin_jet") and analyse.get("jet_format"):
             # 2. Simulation du jet (système)
@@ -62,6 +70,7 @@ class Orchestrateur:
             state["query"],
             state["regles_info"],
             state["world_info"],
+            json.dumps(state["garde_info"]),
             json.dumps(state["memory"])
         )
         return {"narration": res}
@@ -101,15 +110,31 @@ class Orchestrateur:
     def _build_graph(self):
         workflow = StateGraph(AgentState)
 
-        workflow.add_node("consult_monde", self._consult_monde)
+        workflow.add_node("consult_garde", self._consult_garde)
         workflow.add_node("consult_regles", self._consult_regles)
+        workflow.add_node("consult_monde", self._consult_monde)
         workflow.add_node("narrate", self._narrate)
         workflow.add_node("update_memory", self._update_memory_state)
 
-        # Nouvel ordre : Monde -> Règles -> Narrateur -> Mémoire
-        workflow.set_entry_point("consult_monde")
-        workflow.add_edge("consult_monde", "consult_regles")
-        workflow.add_edge("consult_regles", "narrate")
+        workflow.set_entry_point("consult_garde")
+
+        # Logique conditionnelle après le Garde
+        def check_garde_status(state: AgentState):
+            if state["garde_info"].get("possible"):
+                return "possible"
+            return "impossible"
+
+        workflow.add_conditional_edges(
+            "consult_garde",
+            check_garde_status,
+            {
+                "possible": "consult_regles",
+                "impossible": "narrate"
+            }
+        )
+
+        workflow.add_edge("consult_regles", "consult_monde")
+        workflow.add_edge("consult_monde", "narrate")
         workflow.add_edge("narrate", "update_memory")
         workflow.add_edge("update_memory", END)
 
@@ -119,6 +144,7 @@ class Orchestrateur:
         initial_state = {
             "query": query,
             "memory": memory_manager.load_memory(),
+            "garde_info": {},
             "regles_info": "",
             "world_info": "",
             "narration": "",

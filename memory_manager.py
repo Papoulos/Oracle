@@ -11,7 +11,7 @@ DEFAULT_MEMORY = {
         "xp": 0, "niveau": 1
     },
     "monde": {
-        "lieu_actuel": "Auberge du Dragon Vert",
+        "lieu_actuel": "",
         "factions": {},
         "evenements_marquants": [],
         "secrets_decouverts": []

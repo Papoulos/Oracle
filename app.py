@@ -121,18 +121,21 @@ def run_game_turn(user_query):
         with st.status("Les agents réfléchissent...", expanded=True) as status:
             for step in orchestrateur.run(user_query):
                 for node_name, output in step.items():
-                    if node_name == "consult_monde":
-                        st.write("🌍 L'Agent Monde vérifie la cohérence...")
-                        reflections["1. Monde"] = output["world_info"]
+                    if node_name == "consult_garde":
+                        st.write("🛡️ Le Garde vérifie l'action...")
+                        reflections["1. Garde"] = output["garde_info"]
                     elif node_name == "consult_regles":
                         st.write("⚖️ L'Agent Règles consulte le Codex...")
                         reflections["2. Règles"] = output["regles_info"]
+                    elif node_name == "consult_monde":
+                        st.write("🌍 L'Agent Monde consulte l'Intrigue...")
+                        reflections["3. Monde/Scénario"] = output["world_info"]
                     elif node_name == "narrate":
                         st.write("🎙️ Le MJ Narrateur prépare sa réponse...")
                         full_response = output["narration"]
                     elif node_name == "update_memory":
                         st.write("🧠 L'Agent Mémoire met à jour l'état...")
-                        reflections["3. Mémoire (Updates)"] = output["updates"]
+                        reflections["4. Mémoire (Updates)"] = output["updates"]
 
             status.update(label="Réflexion terminée !", state="complete", expanded=False)
 
@@ -157,7 +160,7 @@ def run_game_turn(user_query):
 
 # --- Introduction Automatique ---
 if not st.session_state.messages and orchestrateur and config.check_ollama_connectivity():
-    welcome_query = "Le jeu commence. Présente-toi brièvement comme le MJ et décris la scène initiale pour plonger le joueur dans l'aventure selon le lieu actuel et l'intrigue."
+    welcome_query = "Début de l'aventure. Présente-toi brièvement comme le MJ et décris la scène initiale en te basant sur l'introduction décrite dans l'INTRIGUE."
     try:
         run_game_turn(welcome_query)
         st.rerun()
