@@ -6,7 +6,7 @@ MEMORY_FILE = "memory.json"
 DEFAULT_MEMORY = {
     "etape": "CREATION",
     "personnage": {
-        "nom": "Nouveau Personnage",
+        "nom": "À définir",
         "stats": {},
         "inventaire": [],
         "xp": 0,

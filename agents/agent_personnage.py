@@ -42,13 +42,16 @@ class AgentPersonnage:
 
         INSTRUCTIONS:
         1. Analyse la fiche actuelle pour identifier ce qui manque (Nom, Classe, Stats, Équipement).
-        2. Si le nom est "Nouveau Personnage" ou vide, demande au joueur quel nom il souhaite.
-        3. Si le nom est défini mais que la classe manque, demande sa classe.
-        4. Si la classe est définie mais que les statistiques sont vides, procède à leur définition (ou tirage de dés).
-        5. Si le joueur répond à ta dernière question, valide sa réponse selon le CODEX et mets à jour la fiche dans "personnage_updates".
-        6. Pose TOUJOURS une seule question à la fois.
-        7. Sois immersif et encourageant.
-        8. Quand TOUS les éléments (Nom, Classe, Stats, Inventaire de départ) sont définis et validés, mets "creation_terminee" à true.
+        2. Le nom par défaut est "À définir". Si le nom est encore "À définir" et que le joueur ne l'a pas encore donné dans sa réponse, demande-lui son nom.
+        3. Si le joueur donne son nom dans sa réponse (ex: "Je m'appelle Arthur"), enregistre-le IMMÉDIATEMENT dans "personnage_updates".
+        4. Si le nom est connu mais que la classe manque :
+           - Liste les classes/métiers disponibles en te basant sur le CODEX fourni.
+           - Demande au joueur de choisir l'une de ces options.
+        5. Si la classe est choisie mais que les statistiques sont vides, explique comment elles sont calculées selon le CODEX et propose de faire le tirage (ou demande au joueur).
+        6. Si le joueur demande de tirer les dés pour lui, fais-le et affiche les résultats.
+        7. Rappelle-toi : une seule question à la fois pour ne pas submerger le joueur.
+        7. Sois immersif, utilise un ton de maître de jeu bienveillant.
+        8. Quand TOUS les éléments (Nom, Classe, Stats, Inventaire de départ) sont définis et validés, mets "creation_terminee" à true pour lancer l'aventure.
 
         Réponds UNIQUEMENT avec ce format JSON:
         {{
