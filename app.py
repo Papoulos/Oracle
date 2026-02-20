@@ -87,7 +87,25 @@ with st.sidebar:
             st.write(f"- {entry}")
 
     st.markdown("---")
-    if st.button("🔄 Réinitialiser la Mémoire"):
+
+    @st.dialog("📖 Journal de Bord")
+    def afficher_chronique():
+        mem = memory_manager.load_memory()
+        chronique = mem.get("chronique", [])
+        if not chronique:
+            st.info("Votre journal est encore vide. L'histoire s'écrira au fil de vos actions (toutes les 10 requêtes).")
+        else:
+            for i, chapitre in enumerate(chronique):
+                st.markdown(f"### Chapitre {i+1}")
+                st.write(chapitre)
+                st.markdown("---")
+            if st.button("Fermer"):
+                st.rerun()
+
+    if st.button("📖 Consulter la Chronique", use_container_width=True):
+        afficher_chronique()
+
+    if st.button("🔄 Réinitialiser la Mémoire", use_container_width=True):
         memory_manager.reset_memory()
         st.session_state.messages = []
         st.rerun()

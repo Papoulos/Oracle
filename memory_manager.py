@@ -16,7 +16,9 @@ DEFAULT_MEMORY = {
         "evenements_marquants": [],
         "secrets_decouverts": []
     },
-    "historique": []
+    "historique": [],
+    "chronique": [],
+    "compteur_actions": 0
 }
 
 def load_memory():
@@ -66,6 +68,19 @@ def add_to_history(event_summary):
     if "historique" not in memory:
         memory["historique"] = []
     memory["historique"].append(event_summary)
+    save_memory(memory)
+
+def increment_action_count():
+    memory = load_memory()
+    memory["compteur_actions"] = memory.get("compteur_actions", 0) + 1
+    save_memory(memory)
+    return memory["compteur_actions"]
+
+def add_chronique_chapter(chapter_text):
+    memory = load_memory()
+    if "chronique" not in memory:
+        memory["chronique"] = []
+    memory["chronique"].append(chapter_text)
     save_memory(memory)
 
 def reset_memory():

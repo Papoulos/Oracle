@@ -5,6 +5,7 @@ from agents.agent_monde import AgentMonde
 from agents.agent_garde import AgentGarde
 from agents.agent_narrateur import AgentNarrateur
 from agents.agent_memoire import AgentMemoire
+from agents.agent_chronique import AgentChronique
 import memory_manager
 import json
 
@@ -24,6 +25,7 @@ class Orchestrateur:
         self.agent_monde = AgentMonde(intrigue_db)
         self.agent_narrateur = AgentNarrateur()
         self.agent_memoire = AgentMemoire()
+        self.agent_chronique = AgentChronique()
 
         self.graph = self._build_graph()
 
@@ -102,6 +104,19 @@ class Orchestrateur:
             # Ajout du résumé à l'historique
             if updates.get("resume_action"):
                 memory_manager.add_to_history(updates["resume_action"])
+
+                # Mise à jour du compteur d'actions et de la chronique toutes les 10 actions
+                count = memory_manager.increment_action_count()
+                if count % 10 == 0:
+                    current_memory = memory_manager.load_memory()
+                    historique = current_memory.get("historique", [])
+                    # On prend les 10 derniers éléments de l'historique
+                    derniers_evenements = historique[-10:] if len(historique) >= 10 else historique
+
+                    chapitre = self.agent_chronique.generer_chapitre(derniers_evenements)
+                    memory_manager.add_chronique_chapter(chapitre)
+                    # On peut ajouter une info dans les updates pour l'UI
+                    updates["chronique_update"] = True
 
         # Recharger la mémoire pour le prochain tour ou pour l'affichage
         new_memory = memory_manager.load_memory()
