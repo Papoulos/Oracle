@@ -166,6 +166,10 @@ def run_game_turn(user_query):
         with st.status("Les agents réfléchissent...", expanded=True) as status:
             for step in orchestrateur.run(user_query):
                 for node_name, output in step.items():
+                    # Capture de la narration si présente dans l'output du nœud
+                    if "narration" in output:
+                        full_response = output["narration"]
+
                     if node_name == "personnage_creation":
                         st.write("🧙‍♂️ L'Agent Personnage façonne votre destin...")
                         reflections["0. Création"] = output["personnage_info"]
@@ -183,7 +187,6 @@ def run_game_turn(user_query):
                         reflections["3. Monde/Scénario"] = output["world_info"]
                     elif node_name == "narrate":
                         st.write("🎙️ Le MJ Narrateur prépare sa réponse...")
-                        full_response = output["narration"]
                     elif node_name == "update_memory":
                         st.write("🧠 L'Agent Mémoire met à jour l'état...")
                         reflections["4. Mémoire (Updates)"] = output["updates"]
