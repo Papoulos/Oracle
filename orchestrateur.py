@@ -260,6 +260,12 @@ class Orchestrateur:
         etape = memory.get("etape", "CREATION")
 
         if etape == "CREATION":
+            # On définit les étapes dynamiquement si la checklist est vide
+            if not memory.get("personnage", {}).get("points_de_passage"):
+                etapes = self.agent_personnage.definir_etapes_creation()
+                memory_manager.update_personnage({"points_de_passage": etapes})
+                memory = memory_manager.load_memory()
+
             # On simule un premier échange pour lancer la création
             journal = memory.get("personnage", {}).get("journal_creation", [])
             res = self.agent_personnage.interagir_creation("Bonjour", memory, journal)
