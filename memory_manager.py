@@ -4,11 +4,13 @@ import os
 MEMORY_FILE = "memory.json"
 
 DEFAULT_MEMORY = {
+    "etape": "CREATION",
     "personnage": {
-        "nom": "Aventurier",
-        "stats": {"force": 10, "agilite": 10, "intelligence": 10, "pv": 20, "pv_max": 20},
-        "inventaire": ["Épée rouillée", "Gourde d'eau"],
-        "xp": 0, "niveau": 1
+        "nom": "Nouveau Personnage",
+        "stats": {},
+        "inventaire": [],
+        "xp": 0,
+        "niveau": 1
     },
     "monde": {
         "lieu_actuel": "",
@@ -37,8 +39,19 @@ def save_memory(data):
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
+def update_etape(nouvelle_etape):
+    memory = load_memory()
+    memory["etape"] = nouvelle_etape
+    save_memory(memory)
+
+def get_etape():
+    memory = load_memory()
+    return memory.get("etape", "CREATION")
+
 def update_stats(stats_updates):
     memory = load_memory()
+    if "stats" not in memory["personnage"]:
+        memory["personnage"]["stats"] = {}
     memory["personnage"]["stats"].update(stats_updates)
     save_memory(memory)
 
