@@ -82,6 +82,10 @@ with st.sidebar:
         for ev in memory.get('monde', {}).get('evenements_marquants', [])[-5:]:
             st.write(f"- {ev}")
 
+        st.subheader("📖 Historique")
+        for entry in memory.get('historique', [])[-10:]:
+            st.write(f"- {entry}")
+
     st.markdown("---")
     if st.button("🔄 Réinitialiser la Mémoire"):
         memory_manager.reset_memory()
@@ -117,18 +121,18 @@ def run_game_turn(user_query):
         with st.status("Les agents réfléchissent...", expanded=True) as status:
             for step in orchestrateur.run(user_query):
                 for node_name, output in step.items():
-                    if node_name == "consult_regles":
-                        st.write("⚖️ L'Agent Règles vérifie le Codex...")
-                        reflections["Règles"] = output["regles_info"]
-                    elif node_name == "consult_monde":
-                        st.write("🌍 L'Agent Monde consulte l'Intrigue...")
-                        reflections["Monde"] = output["world_info"]
+                    if node_name == "consult_monde":
+                        st.write("🌍 L'Agent Monde vérifie la cohérence...")
+                        reflections["1. Monde"] = output["world_info"]
+                    elif node_name == "consult_regles":
+                        st.write("⚖️ L'Agent Règles consulte le Codex...")
+                        reflections["2. Règles"] = output["regles_info"]
                     elif node_name == "narrate":
                         st.write("🎙️ Le MJ Narrateur prépare sa réponse...")
                         full_response = output["narration"]
                     elif node_name == "update_memory":
                         st.write("🧠 L'Agent Mémoire met à jour l'état...")
-                        reflections["Mémoire (Updates)"] = output["updates"]
+                        reflections["3. Mémoire (Updates)"] = output["updates"]
 
             status.update(label="Réflexion terminée !", state="complete", expanded=False)
 

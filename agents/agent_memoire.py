@@ -15,7 +15,8 @@ class AgentMemoire:
 
     def extract_updates(self, query, rules_info, world_info, narration):
         prompt = ChatPromptTemplate.from_template("""
-        Tu es l'Agent Mémoire. Ton rôle est d'extraire les changements structurels du jeu pour mettre à jour le fichier JSON de mémoire.
+        Tu es l'Agent Mémoire. Ton rôle est d'analyser le tour qui vient de se dérouler pour en extraire les informations essentielles à conserver.
+        Tu dois résumer ce qu'il s'est passé en définissant précisément "qui a fait quoi" et quel a été le résultat.
 
         DERNIER TOUR:
         Joueur: {query}
@@ -24,14 +25,20 @@ class AgentMemoire:
         Narration MJ: {narration}
 
         INSTRUCTIONS:
-        Extrais uniquement les changements concernant:
-        - Le personnage (PV, inventaire, XP)
-        - Le monde (nouveau lieu, nouveaux faits marquants)
-
-        Réponds UNIQUEMENT avec un objet JSON structuré comme suit:
+        1. Extrais les changements structurels (stats, inventaire, lieu).
+        2. Rédige un résumé factuel et concis de l'action (ex: "Le joueur a tenté de crocheter la porte de la cave, réussite, il est entré discrètement").
+        3. Réponds UNIQUEMENT avec un objet JSON structuré comme suit:
         {{
-            "personnage_updates": {{ "stats": {{...}}, "inventaire_ajouts": [...], "xp_gain": 0 }},
-            "monde_updates": {{ "nouveau_lieu": "...", "nouvel_evenement": "..." }}
+            "personnage_updates": {{
+                "stats": {{...}},
+                "inventaire_ajouts": [...],
+                "xp_gain": 0
+            }},
+            "monde_updates": {{
+                "nouveau_lieu": "...",
+                "nouvel_evenement": "..."
+            }},
+            "resume_action": "Résumé concis de qui a fait quoi et du résultat"
         }}
 
         JSON:

@@ -61,5 +61,12 @@ def add_evenement(evenement):
     memory["monde"]["evenements_marquants"].append(evenement)
     save_memory(memory)
 
+def add_to_history(event_summary):
+    memory = load_memory()
+    if "historique" not in memory:
+        memory["historique"] = []
+    memory["historique"].append(event_summary)
+    save_memory(memory)
+
 def reset_memory():
     save_memory(DEFAULT_MEMORY)
