@@ -42,15 +42,15 @@ class AgentGarde:
         INSTRUCTIONS:
         1. Évalue si l'action est physiquement possible dans cet univers (Codex).
         2. Évalue si l'action est cohérente avec la situation actuelle et l'intrigue (Intrigue).
-        3. **ANTI-HALLUCINATION** : Ne présume jamais d'un lieu par défaut (comme une auberge). Si l'action mentionne un lieu non présent dans l'Intrigue ou la Mémoire, considère l'action comme suspecte ou impossible.
-        4. Si l'action est impossible ou totalement irréaliste, "possible" doit être false.
-        5. Si l'action est possible (même si elle est difficile ou risquée), "possible" doit être true.
+        3. **ANTI-HALLUCINATION** : Ne présume jamais d'un lieu par défaut (comme une auberge). Si l'action mentionne un lieu non présent dans l'Intrigue ou la Mémoire, l'action est impossible.
+        4. Si l'action est possible, "possible" est true et "raison" est "OUI".
+        5. Si l'action est impossible, "possible" est false et "raison" commence obligatoirement par "NON, parce que...".
+        6. NE DONNE AUCUN CONSEIL ni alternative. Sois un juge binaire et strict.
 
         Réponds UNIQUEMENT avec un objet JSON:
         {{
             "possible": boolean,
-            "raison": "Explication courte de pourquoi c'est possible ou non",
-            "conseil": "Si impossible, suggérer une alternative ou expliquer l'obstacle"
+            "raison": "OUI ou NON, parce que..."
         }}
 
         JSON:

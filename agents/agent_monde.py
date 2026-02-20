@@ -59,13 +59,31 @@ class AgentMonde:
         return response
 
     def chercher_introduction(self):
-        # On cherche spécifiquement les éléments de début
-        search_query = "introduction début aventure scène initiale point de départ"
-        context_docs = self.intrigue_db.similarity_search(search_query, k=5) if self.intrigue_db else []
+        # On cherche les éléments de début avec plusieurs angles
+        queries = [
+            "introduction début aventure scène initiale point de départ",
+            "chapitre 1",
+            "personnage joueur commence",
+            " " # Recherche large pour récupérer les premiers documents indexés
+        ]
+
+        all_docs = []
+        if self.intrigue_db:
+            for q in queries:
+                all_docs.extend(self.intrigue_db.similarity_search(q, k=3))
+
+        # Déduplication simple par contenu
+        seen = set()
+        context_docs = []
+        for doc in all_docs:
+            if doc.page_content not in seen:
+                context_docs.append(doc)
+                seen.add(doc.page_content)
+
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
         if not context_text:
-            return "ERREUR : La base de données INTRIGUE semble vide ou inaccessible. Impossible de trouver l'introduction."
+            return "ERREUR CRITIQUE : Aucune information trouvée dans l'INTRIGUE. Vérifiez que vous avez bien placé vos PDFs dans 'data/intrigue' et lancé './run.sh --reset'."
 
         prompt = ChatPromptTemplate.from_template("""
         Tu es l'Expert du Monde et du Scénario (Agent Monde).

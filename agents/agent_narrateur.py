@@ -33,6 +33,7 @@ class AgentNarrateur:
 
         CONSIGNES:
         - Concentre-toi sur la résolution de l'action actuelle.
+        - **IMPORTANT : Ne fais JAMAIS agir le personnage du joueur (PJ)**. Ne décris pas ses pensées, ses mouvements ou ses paroles de manière autonome. Le PJ ne doit que subir ou constater les conséquences des actions que le joueur a explicitement demandées.
         - Si l'Agent Monde signale une "ERREUR : Aucune information trouvée", n'invente rien. Explique au joueur que le MJ a besoin que le scénario soit correctement chargé ou indexé pour continuer, tout en restant un peu dans ton rôle (ex: "Les brumes de l'inconnu s'épaississent car le chemin n'est pas encore tracé...").
         - Si l'Agent Garde indique que l'action est IMPOSSIBLE, explique-le de manière narrative et immersive (sans dire "L'Agent Garde a dit que"). Raconte pourquoi l'action échoue ou est bloquée.
         - Si l'action est possible, utilise les INFOS DES RÈGLES et du MONDE pour construire ton récit.
