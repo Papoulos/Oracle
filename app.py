@@ -84,21 +84,8 @@ with st.sidebar:
 
     st.markdown("---")
     if st.button("🔄 Réinitialiser la Mémoire"):
-        # Reset memory to default
-        default_mem = {
-          "personnage": {
-            "nom": "Aventurier",
-            "stats": {"force": 10, "agilite": 10, "intelligence": 10, "pv": 20, "pv_max": 20},
-            "inventaire": ["Épée rouillée", "Gourde d'eau"],
-            "xp": 0, "niveau": 1
-          },
-          "monde": {
-            "lieu_actuel": "Auberge du Dragon Vert",
-            "factions": {}, "evenements_marquants": [], "secrets_decouverts": []
-          },
-          "historique": []
-        }
-        memory_manager.save_memory(default_mem)
+        memory_manager.reset_memory()
+        st.session_state.messages = []
         st.rerun()
 
 # --- Chat Interface ---
