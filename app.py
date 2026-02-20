@@ -158,11 +158,51 @@ def run_game_turn(user_query):
         "reflection": reflections
     })
 
+# Fonction spécifique pour l'introduction
+def run_game_introduction():
+    with st.chat_message("assistant"):
+        reflection_placeholder = st.empty()
+        response_placeholder = st.empty()
+
+        reflections = {}
+        full_response = ""
+
+        with st.status("Initialisation de l'aventure...", expanded=True) as status:
+            for step in orchestrateur.initialiser_aventure():
+                for node_name, output in step.items():
+                    if node_name == "consult_monde":
+                        st.write("🌍 Recherche de l'introduction dans l'Intrigue...")
+                        reflections["Scénario (Intro)"] = output["world_info"]
+                    elif node_name == "narrate":
+                        st.write("🎙️ Le MJ Narrateur prépare l'entrée en matière...")
+                        full_response = output["narration"]
+                    elif node_name == "update_memory":
+                        st.write("🧠 L'Agent Mémoire enregistre le point de départ...")
+                        reflections["Mémoire"] = output["updates"]
+
+            status.update(label="Aventure prête !", state="complete", expanded=False)
+
+        response_placeholder.markdown(full_response)
+
+        with st.expander("💭 Détails de la réflexion", expanded=False):
+            for agent, content in reflections.items():
+                st.markdown(f"**{agent}**")
+                if isinstance(content, dict):
+                    st.json(content)
+                else:
+                    st.write(content)
+                st.markdown("---")
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": full_response,
+        "reflection": reflections
+    })
+
 # --- Introduction Automatique ---
 if not st.session_state.messages and orchestrateur and config.check_ollama_connectivity():
-    welcome_query = "Début de l'aventure. Présente-toi brièvement comme le MJ et décris la scène initiale en te basant sur l'introduction décrite dans l'INTRIGUE."
     try:
-        run_game_turn(welcome_query)
+        run_game_introduction()
         st.rerun()
     except Exception as e:
         st.error(f"❌ Impossible de se connecter à Ollama pour générer l'introduction : {e}")

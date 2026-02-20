@@ -55,3 +55,27 @@ class AgentNarrateur:
         })
 
         return response
+
+    def narrer_introduction(self, world_info):
+        prompt = ChatPromptTemplate.from_template("""
+        Tu es le MJ Narrateur. Ton rôle est d'introduire l'aventure au joueur.
+        Tu dois décrire la scène initiale en te basant UNIQUEMENT sur les informations de l'Agent Monde.
+
+        INFOS DU SCÉNARIO (Agent Monde) :
+        {world_info}
+
+        CONSIGNES :
+        1. Présente-toi brièvement comme le MJ.
+        2. Décris le décor, l'ambiance et les PNJ présents selon le scénario.
+        3. **IMPORTANT** : Ne fais PAS agir le personnage du joueur (PJ). Ne décris pas ses pensées, ses mouvements ou ses paroles. Le joueur doit être libre de sa première action.
+        4. Si l'Agent Monde signale une ERREUR (pas d'intro trouvée), explique au joueur (en restant un peu dans ton rôle) que le destin est encore flou car le scénario n'est pas prêt.
+        5. Termine par une question ouverte invitant le joueur à agir.
+
+        NARRE L'INTRODUCTION :
+        """)
+
+        chain = prompt | self.llm | StrOutputParser()
+        response = chain.invoke({
+            "world_info": world_info
+        })
+        return response
