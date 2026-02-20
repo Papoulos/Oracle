@@ -81,11 +81,13 @@ class Orchestrateur:
         return {"narration": res}
 
     def _consult_personnage_creation(self, state: AgentState):
-        res = self.agent_personnage.interagir_creation(state["query"], state["memory"])
+        historique = state["memory"].get("historique", [])[-5:]
+        res = self.agent_personnage.interagir_creation(state["query"], state["memory"], historique)
         return {"personnage_info": res, "narration": res["message"]}
 
     def _consult_personnage_evolution(self, state: AgentState):
-        res = self.agent_personnage.gerer_evolution(state["query"], state["memory"])
+        historique = state["memory"].get("historique", [])[-5:]
+        res = self.agent_personnage.gerer_evolution(state["query"], state["memory"], historique)
         return {"personnage_info": res, "narration": res["message"]}
 
     def _update_memory_state(self, state: AgentState):
@@ -249,7 +251,8 @@ class Orchestrateur:
 
         if etape == "CREATION":
             # On simule un premier échange pour lancer la création
-            res = self.agent_personnage.interagir_creation("Bonjour", memory)
+            historique = memory.get("historique", [])[-5:]
+            res = self.agent_personnage.interagir_creation("Bonjour", memory, historique)
             yield {"personnage_creation": {"personnage_info": res}}
             yield {"narrate": {"narration": res["message"]}}
 

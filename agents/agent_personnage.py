@@ -22,47 +22,49 @@ class AgentPersonnage:
         self.codex_db = codex_db
         self.intrigue_db = intrigue_db
 
-    def interagir_creation(self, query, memory):
+    def interagir_creation(self, query, memory, historique=[]):
         context_docs = self.codex_db.similarity_search("règles création personnage caractéristiques classes", k=5) if self.codex_db else []
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        Tu es l'Agent Personnage. Ton but est d'accompagner le joueur dans la création de son personnage.
-        Tu dois poser des questions une par une pour définir : Nom, Classe/Métier, Caractéristiques, et Équipement de départ.
-        Utilise le CODEX pour respecter les règles du jeu.
+        Tu es l'Agent Personnage, un Maître de Jeu expert en création de personnage.
+        Ton rôle est d'accompagner le joueur pour définir son Nom, sa Classe, ses Caractéristiques et son Équipement.
 
-        RÈGLES DU CODEX:
-        {context}
+        HISTORIQUE DES ÉCHANGES (Contexte):
+        {historique}
 
-        ÉTAT ACTUEL DU PERSONNAGE:
+        ÉTAT ACTUEL DE LA FICHE:
         {char_sheet}
 
-        DERNIER ÉCHANGE / RÉPONSE DU JOUEUR:
+        RÉPONSE ACTUELLE DU JOUEUR:
         {query}
 
-        INSTRUCTIONS:
-        1. Analyse la fiche actuelle pour identifier ce qui manque (Nom, Classe, Stats, Équipement).
-        2. Le nom par défaut est "À définir". Si le nom est encore "À définir" et que le joueur ne l'a pas encore donné dans sa réponse, demande-lui son nom.
-        3. Si le joueur donne son nom dans sa réponse (ex: "Je m'appelle Arthur"), enregistre-le IMMÉDIATEMENT dans "personnage_updates".
-        4. Si le nom est connu mais que la classe manque :
-           - Liste les classes/métiers disponibles en te basant sur le CODEX fourni.
-           - Demande au joueur de choisir l'une de ces options.
-        5. Si la classe est choisie mais que les statistiques sont vides, explique comment elles sont calculées selon le CODEX et propose de faire le tirage (ou demande au joueur).
-        6. Si le joueur demande de tirer les dés pour lui, fais-le et affiche les résultats.
-        7. Rappelle-toi : une seule question à la fois pour ne pas submerger le joueur.
-        7. Sois immersif, utilise un ton de maître de jeu bienveillant.
-        8. Quand TOUS les éléments (Nom, Classe, Stats, Inventaire de départ) sont définis et validés, mets "creation_terminee" à true pour lancer l'aventure.
+        RÈGLES DU CODEX (Source de vérité):
+        {context}
 
-        Réponds UNIQUEMENT avec ce format JSON:
+        INSTRUCTIONS CRITIQUES :
+        1. ANALYSE : Lis la réponse du joueur. S'il a répondu à ta question précédente (même de façon brève comme "Arthur" ou "Guerrier"), tu DOIS extraire cette info. La réponse du joueur est PRIORITAIRE sur l'état de la fiche.
+        2. PERSISTANCE : Toute information extraite doit être placée dans l'objet "personnage_updates".
+        3. EXPLICIT_CONFIRMATION : Dans ton message, commence par confirmer ce que tu as enregistré (ex: "Très bien, ton nom est donc [Nom].").
+        4. PROGRESSION : Pose ensuite la question SUIVANTE. Ne boucle pas sur une question déjà répondue.
+           - Si Nom == "À définir" -> Demande le nom.
+           - Si Classe absente -> LISTE EXPLICITEMENT les classes trouvées dans le CODEX et demande un choix.
+           - Si Stats vides -> Explique le calcul (ex: 3d6) et propose de tirer les dés.
+        5. UNE SEULE QUESTION : Ne demande jamais deux choses en même temps.
+        6. JETS DE DÉS : Si le joueur te demande de tirer les dés, simule-le et donne les scores obtenus.
+        7. FIN : Quand Nom, Classe, Stats et Équipement sont OK, mets "creation_terminee" à true.
+
+        Réponds UNIQUEMENT en JSON avec cette structure:
         {{
-            "message": "Ton message au joueur",
+            "reflexion": "Analyse de la situation : qu'est-ce qui est acquis, que manque-t-il, quelle est la prochaine étape ?",
+            "message": "Ta réponse immersive (Confirmation des acquis + Prochaine question)",
             "personnage_updates": {{
-                "nom": "...",
+                "nom": "valeur extraite ou inchangée",
+                "classe": "valeur extraite ou inchangée",
                 "stats": {{...}},
-                "inventaire": [...],
-                "classe": "..."
+                "inventaire": [...]
             }},
-            "creation_terminee": false
+            "creation_terminee": boolean
         }}
         """)
 
@@ -70,6 +72,7 @@ class AgentPersonnage:
         res = chain.invoke({
             "context": context_text,
             "char_sheet": json.dumps(memory.get("personnage", {})),
+            "historique": json.dumps(historique),
             "query": query
         })
         return res
@@ -136,25 +139,35 @@ class AgentPersonnage:
             "xp": xp
         })
 
-    def gerer_evolution(self, query, memory):
+    def gerer_evolution(self, query, memory, historique=[]):
         context_docs = self.codex_db.similarity_search("bonus montée de niveau caractéristiques compétences", k=5) if self.codex_db else []
         context_text = "\n".join([d.page_content for d in context_docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        Accompagne le joueur pour sa montée de niveau.
+        Tu es l'Agent Personnage, chargé d'accompagner le joueur dans sa montée de niveau.
 
-        RÈGLES:
-        {context}
+        HISTORIQUE (Contexte):
+        {historique}
 
-        FICHE:
+        FICHE ACTUELLE:
         {char_sheet}
 
-        RÉPONSE JOUEUR:
+        RÉPONSE DU JOUEUR:
         {query}
+
+        RÈGLES DE MONTÉE DE NIVEAU (CODEX):
+        {context}
+
+        INSTRUCTIONS:
+        1. Analyse les choix du joueur par rapport aux règles du CODEX.
+        2. Confirme explicitement les changements que tu enregistres.
+        3. Si des choix sont encore à faire, liste les options possibles clairement.
+        4. Mets à jour "personnage_updates" avec les nouveaux bonus (stats, nouvelles compétences, etc.).
+        5. Quand tous les bonus du niveau sont choisis, mets "evolution_terminee" à true.
 
         Réponds en JSON:
         {{
-            "message": "...",
+            "message": "Ta réponse (Confirmation + Questions éventuelles)",
             "personnage_updates": {{...}},
             "evolution_terminee": boolean
         }}
@@ -164,5 +177,6 @@ class AgentPersonnage:
         return chain.invoke({
             "context": context_text,
             "char_sheet": json.dumps(memory.get("personnage", {})),
+            "historique": json.dumps(historique),
             "query": query
         })
