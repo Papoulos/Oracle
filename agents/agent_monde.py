@@ -57,3 +57,40 @@ class AgentMonde:
         })
 
         return response
+
+    def chercher_introduction(self):
+        # On cherche spécifiquement les éléments de début
+        search_query = "introduction début aventure scène initiale point de départ"
+        context_docs = self.intrigue_db.similarity_search(search_query, k=5) if self.intrigue_db else []
+        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+
+        if not context_text:
+            return "ERREUR : La base de données INTRIGUE semble vide ou inaccessible. Impossible de trouver l'introduction."
+
+        prompt = ChatPromptTemplate.from_template("""
+        Tu es l'Expert du Monde et du Scénario (Agent Monde).
+        Ton rôle est d'extraire de l'INTRIGUE les éléments du TOUT DÉBUT de l'aventure (scène initiale).
+
+        CONTEXTE DE L'INTRIGUE (Introduction) :
+        {context}
+
+        TES MISSIONS :
+        1. Identifie le lieu exact de départ, les PNJ présents et l'ambiance initiale.
+        2. Si un événement lance l'aventure, décris-le précisément.
+        3. Donne des détails techniques et factuels pour le Narrateur.
+
+        RÈGLES CRITIQUES:
+        - NE RÉPONDS PAS "RAS".
+        - SI LE CONTEXTE NE CONTIENT PAS D'INTRODUCTION, réponds : "ERREUR : Aucun point de départ trouvé dans le document INTRIGUE."
+        - N'INVENTE RIEN (pas d'Auberge du Dragon Vert par défaut).
+        - Reste factuel.
+
+        RÉPONSE (Facts & Introduction details):
+        """)
+
+        chain = prompt | self.llm | StrOutputParser()
+        response = chain.invoke({
+            "context": context_text
+        })
+
+        return response

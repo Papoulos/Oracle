@@ -151,3 +151,32 @@ class Orchestrateur:
             "updates": {}
         }
         return self.graph.stream(initial_state)
+
+    def initialiser_aventure(self):
+        # Pour rester compatible avec le système de stream du UI, on simule les étapes
+
+        # Étape 1 : Monde
+        world_info = self.agent_monde.chercher_introduction()
+        yield {"consult_monde": {"world_info": world_info}}
+
+        # Étape 2 : Narrateur
+        narration = self.agent_narrateur.narrer_introduction(world_info)
+        yield {"narrate": {"narration": narration}}
+
+        # Étape 3 : Mémoire
+        updates = self.agent_memoire.extract_updates(
+            "Début de l'aventure",
+            "N/A",
+            world_info,
+            narration
+        )
+
+        if updates:
+            m_up = updates.get("monde_updates", {})
+            if m_up and isinstance(m_up, dict):
+                if m_up.get("nouveau_lieu"):
+                    memory_manager.update_lieu(m_up["nouveau_lieu"])
+            if updates.get("resume_action"):
+                memory_manager.add_to_history(updates["resume_action"])
+
+        yield {"update_memory": {"updates": updates}}
