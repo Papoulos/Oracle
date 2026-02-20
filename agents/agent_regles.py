@@ -59,8 +59,10 @@ class AgentRegles:
 
         INSTRUCTIONS:
         1. Analyse si l'action nécessite un test de compétence ou une résolution par les dés.
-        2. Si l'Agent Monde a signalé une impossibilité majeure, aucun jet n'est nécessaire.
-        3. Réponds au format JSON avec les champs suivants:
+        2. **IMPORTANT** : Ne suppose JAMAIS d'intention cachée (ex: discrétion, rapidité, violence) si ce n'est pas écrit explicitement par le joueur. Par exemple, "s'approcher" n'implique pas la discrétion.
+        3. Si l'action est simple, routinière et sans opposition, aucun jet n'est nécessaire.
+        4. Si l'Agent Garde (world_info) a signalé une impossibilité, aucun jet n'est nécessaire.
+        5. Réponds au format JSON avec les champs suivants:
            - "besoin_jet": boolean
            - "jet_format": "NdM+K" (ex: "1d20+2") ou null si aucun jet
            - "explication_regle": courte explication de la règle appliquée
