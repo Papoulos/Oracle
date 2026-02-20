@@ -59,18 +59,18 @@ class AgentMonde:
         return response
 
     def chercher_introduction(self):
-        # On cherche les éléments de début avec plusieurs angles
+        # On cherche les éléments de début avec plusieurs angles et un k plus grand
         queries = [
             "introduction début aventure scène initiale point de départ",
-            "chapitre 1",
-            "personnage joueur commence",
-            " " # Recherche large pour récupérer les premiers documents indexés
+            "chapitre 1 prologue",
+            "personnage joueur commence situation initiale",
+            " " # Recherche large
         ]
 
         all_docs = []
         if self.intrigue_db:
             for q in queries:
-                all_docs.extend(self.intrigue_db.similarity_search(q, k=3))
+                all_docs.extend(self.intrigue_db.similarity_search(q, k=5))
 
         # Déduplication simple par contenu
         seen = set()
@@ -83,27 +83,27 @@ class AgentMonde:
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
         if not context_text:
-            return "ERREUR CRITIQUE : Aucune information trouvée dans l'INTRIGUE. Vérifiez que vous avez bien placé vos PDFs dans 'data/intrigue' et lancé './run.sh --reset'."
+            return "ERREUR CRITIQUE : Aucune donnée disponible dans la base INTRIGUE. Assurez-vous d'avoir indexé vos fichiers PDF."
 
         prompt = ChatPromptTemplate.from_template("""
         Tu es l'Expert du Monde et du Scénario (Agent Monde).
-        Ton rôle est d'extraire de l'INTRIGUE les éléments du TOUT DÉBUT de l'aventure (scène initiale).
+        Ton rôle est d'extraire de l'INTRIGUE les éléments pour COMMENCER l'aventure.
 
-        CONTEXTE DE L'INTRIGUE (Introduction) :
+        CONTEXTE DE L'INTRIGUE :
         {context}
 
         TES MISSIONS :
-        1. Identifie le lieu exact de départ, les PNJ présents et l'ambiance initiale.
-        2. Si un événement lance l'aventure, décris-le précisément.
-        3. Donne des détails techniques et factuels pour le Narrateur.
+        1. Décris la situation initiale en te basant sur les informations fournies.
+        2. Identifie le lieu, l'ambiance et les personnages présents.
+        3. Donne tous les détails factuels nécessaires pour que le MJ Narrateur puisse lancer la partie.
 
         RÈGLES CRITIQUES:
-        - NE RÉPONDS PAS "RAS".
-        - SI LE CONTEXTE NE CONTIENT PAS D'INTRODUCTION, réponds : "ERREUR : Aucun point de départ trouvé dans le document INTRIGUE."
-        - N'INVENTE RIEN (pas d'Auberge du Dragon Vert par défaut).
-        - Reste factuel.
+        - Utilise le contexte fourni comme la source absolue du début de l'aventure.
+        - Ne dis jamais "RAS" ou "ERREUR". Fais le meilleur usage possible des informations extraites.
+        - N'INVENTE RIEN qui ne soit pas suggéré par le contexte (pas d'Auberge du Dragon Vert par défaut).
+        - Reste purement factuel.
 
-        RÉPONSE (Facts & Introduction details):
+        RÉPONSE (Facts & Intro details):
         """)
 
         chain = prompt | self.llm | StrOutputParser()

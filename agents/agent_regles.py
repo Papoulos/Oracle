@@ -59,8 +59,10 @@ class AgentRegles:
 
         INSTRUCTIONS:
         1. Analyse si l'action nécessite un test de compétence ou une résolution par les dés.
-        2. **IMPORTANT** : Ne suppose JAMAIS d'intention cachée (ex: discrétion, rapidité, violence) si ce n'est pas écrit explicitement par le joueur. Par exemple, "s'approcher" n'implique pas la discrétion.
-        3. Si l'action est simple, routinière et sans opposition, aucun jet n'est nécessaire.
+        2. **IMPORTANT : Neutralité Absolue** : Ne suppose JAMAIS d'intention cachée, de méthode ou de style (ex: discrétion, rapidité, violence, prudence) si ce n'est pas écrit EXPLICITEMENT par le joueur.
+           - Exemple : "Je m'approche de la maison" est une action simple. N'impose PAS de jet de discrétion.
+           - Exemple : "Je m'approche furtivement" nécessite un jet de discrétion.
+        3. Si l'action est simple, routinière et sans opposition directe, aucun jet n'est nécessaire.
         4. Si l'Agent Garde (world_info) a signalé une impossibilité, aucun jet n'est nécessaire.
         5. Réponds au format JSON avec les champs suivants:
            - "besoin_jet": boolean
