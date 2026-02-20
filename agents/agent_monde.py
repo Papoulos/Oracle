@@ -44,7 +44,7 @@ class AgentMonde:
         - Ne dis JAMAIS "RAS". Donne toujours du contexte narratif issu de l'INTRIGUE.
         - NE RÉVÈLE PAS de secrets futurs, seulement ce qui est pertinent ICI et MAINTENANT.
         - Réponds avec des faits bruts et des descriptions techniques du scénario, pas de narration (le Narrateur s'en chargera).
-        - Si aucune information n'est trouvée dans l'INTRIGUE, décris l'environnement immédiat de manière logique par rapport au dernier lieu connu.
+        - **IMPORTANT** : Si aucune information pertinente n'est trouvée dans l'INTRIGUE (contexte vide), réponds explicitement : "ERREUR : Aucune information trouvée dans le scénario pour ce contexte. Veuillez vérifier l'indexation de l'INTRIGUE." N'invente JAMAIS de lieux ou de PNJ qui ne sont pas dans le contexte.
 
         RÉPONSE (Facts & Scenario details):
         """)
