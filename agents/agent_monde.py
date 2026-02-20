@@ -18,7 +18,8 @@ class AgentMonde:
 
         prompt = ChatPromptTemplate.from_template("""
         Tu es l'Expert du Monde et du Scénario (Agent Monde).
-        Ton rôle est de vérifier la cohérence de l'action avec l'intrigue et l'état du monde.
+        Ton rôle est de vérifier la cohérence de l'action du joueur avec l'intrigue, le lieu et l'état actuel du monde.
+        Tu es le premier à intervenir pour valider si l'action est réaliste et possible dans le contexte narratif.
 
         MÉMOIRE ACTUELLE (Lieu, Histoire):
         {memory}
@@ -30,6 +31,8 @@ class AgentMonde:
         {query}
 
         RÈGLES CRITIQUES:
+        - Si l'action est parfaitement cohérente et ne pose aucun problème narratif, réponds uniquement "RAS".
+        - Si l'action est incohérente, impossible ou pose un problème avec le scénario, explique pourquoi de manière brève et factuelle.
         - Protège les informations cachées (ne les révèle pas si le joueur ne peut pas les savoir).
         - Ne révèle que ce que le personnage peut raisonnablement savoir ou découvrir.
         - Réponds avec des faits bruts, pas de narration.
