@@ -95,8 +95,6 @@ class Orchestrateur:
             # Mise à jour directe via l'Agent Personnage
             res = state.get("personnage_info", {})
             updates = {"personnage_updates": res.get("personnage_updates", {})}
-            if updates["personnage_updates"]:
-                memory_manager.update_personnage(updates["personnage_updates"])
 
             if etape == "CREATION" and res.get("creation_terminee"):
                 memory_manager.update_etape("AVENTURE")
