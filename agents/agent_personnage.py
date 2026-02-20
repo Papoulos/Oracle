@@ -43,26 +43,34 @@ class AgentPersonnage:
         {context}
 
         INSTRUCTIONS CRITIQUES :
-        1. ANALYSE : Lis la réponse du joueur. S'il a répondu à ta question précédente (même de façon brève comme "Arthur" ou "Guerrier"), tu DOIS extraire cette info. La réponse du joueur est PRIORITAIRE sur l'état de la fiche.
-        2. PERSISTANCE : Toute information extraite doit être placée dans l'objet "personnage_updates".
-        3. EXPLICIT_CONFIRMATION : Dans ton message, commence par confirmer ce que tu as enregistré (ex: "Très bien, ton nom est donc [Nom].").
-        4. PROGRESSION : Pose ensuite la question SUIVANTE. Ne boucle pas sur une question déjà répondue.
-           - Si Nom == "À définir" -> Demande le nom.
-           - Si Classe absente -> LISTE EXPLICITEMENT les classes trouvées dans le CODEX et demande un choix.
-           - Si Stats vides -> Explique le calcul (ex: 3d6) et propose de tirer les dés.
-        5. UNE SEULE QUESTION : Ne demande jamais deux choses en même temps.
-        6. JETS DE DÉS : Si le joueur te demande de tirer les dés, simule-le et donne les scores obtenus.
-        7. FIN : Quand Nom, Classe, Stats et Équipement sont OK, mets "creation_terminee" à true.
+        1. CHECKLIST : Utilise le champ "points_de_passage" de la fiche pour suivre la progression.
+        2. ANALYSE : Lis la réponse du joueur. S'il a répondu à ta question précédente, extrais l'info et passe le point de passage correspondant à true dans "personnage_updates".
+        3. PERSISTANCE : Toute information extraite doit être placée dans "personnage_updates". Si un point de passage devient True, inclus-le dans "points_de_passage" dans "personnage_updates".
+        4. EXPLICIT_CONFIRMATION : Dans ton message, confirme ce qui est validé (ex: "Ton nom est Arthur, c'est noté.").
+        5. PROGRESSION RIGOUREUSE : Ne pose la question que pour le PREMIER point de passage qui est encore à False.
+           - Si "nom" est False -> Demande le nom. (Dès que reçu, "nom" devient True).
+           - Si "classe" est False -> LISTE les options du CODEX et demande un choix. (Dès que reçu, "classe" devient True).
+           - Si "stats" est False -> Explique le calcul et propose de tirer les dés. (Dès que fait, "stats" devient True).
+           - Si "equipement" est False -> Propose l'équipement de départ selon la classe. (Dès que validé, "equipement" devient True).
+        6. UNE SEULE QUESTION : Ne demande jamais deux choses.
+        7. JETS DE DÉS : Si demandé, simule les dés (ex: 3d6 pour chaque stat) et affiche-les.
+        8. FIN : Quand TOUS les points de passage sont à True, mets "creation_terminee" à true.
 
         Réponds UNIQUEMENT en JSON avec cette structure:
         {{
-            "reflexion": "Analyse de la situation : qu'est-ce qui est acquis, que manque-t-il, quelle est la prochaine étape ?",
-            "message": "Ta réponse immersive (Confirmation des acquis + Prochaine question)",
+            "reflexion": "Checklist actuelle. Analyse de la réponse. Prochain point à traiter.",
+            "message": "Ta réponse (Confirmation + Question unique)",
             "personnage_updates": {{
-                "nom": "valeur extraite ou inchangée",
-                "classe": "valeur extraite ou inchangée",
+                "nom": "...",
+                "classe": "...",
                 "stats": {{...}},
-                "inventaire": [...]
+                "inventaire": [...],
+                "points_de_passage": {{
+                    "nom": boolean,
+                    "classe": boolean,
+                    "stats": boolean,
+                    "equipement": boolean
+                }}
             }},
             "creation_terminee": boolean
         }}
