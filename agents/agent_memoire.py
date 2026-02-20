@@ -15,8 +15,11 @@ class AgentMemoire:
 
     def extract_updates(self, query, rules_info, world_info, narration):
         prompt = ChatPromptTemplate.from_template("""
-        Tu es l'Agent Mémoire. Ton rôle est d'analyser le tour qui vient de se dérouler pour en extraire les informations essentielles à conserver.
-        Tu dois résumer ce qu'il s'est passé en définissant précisément "qui a fait quoi" et quel a été le résultat.
+        Tu es l'Agent Mémoire. Ton rôle est d'analyser le tour qui vient de se dérouler pour en extraire UNIQUEMENT ce qui s'est réellement passé.
+
+        SOURCES D'INFORMATION:
+        - Narration MJ (SOURCE PRINCIPALE): C'est ce que le joueur a vu et vécu. Si un fait n'est pas ici, il ne s'est PAS passé.
+        - Règles & Monde: Utilisés uniquement pour confirmer des stats techniques (PV, XP) ou des détails géographiques validés.
 
         DERNIER TOUR:
         Joueur: {query}
@@ -24,10 +27,13 @@ class AgentMemoire:
         Monde: {world_info}
         Narration MJ: {narration}
 
-        INSTRUCTIONS:
-        1. Extrais les changements structurels (stats, inventaire, lieu).
-        2. Rédige un résumé factuel et concis de l'action (ex: "Le joueur a tenté de crocheter la porte de la cave, réussite, il est entré discrètement").
-        3. Réponds UNIQUEMENT avec un objet JSON structuré comme suit:
+        CONSIGNES CRITIQUES:
+        - NE PAS inventer d'actions ou de rencontres. Si le joueur n'a pas parlé à un personnage dans la Narration, il ne l'a PAS contacté.
+        - NE PAS extraire de secrets ou d'infos de l'Agent Monde qui n'ont pas été explicitement révélés dans la Narration.
+        - Le champ "nouveau_lieu" doit être un LIEU (ex: "La place du marché"), pas un nom de personne.
+        - Le résumé "resume_action" doit être strictement factuel basé sur la Narration.
+
+        Réponds UNIQUEMENT avec un objet JSON:
         {{
             "personnage_updates": {{
                 "stats": {{...}},
@@ -38,7 +44,7 @@ class AgentMemoire:
                 "nouveau_lieu": "...",
                 "nouvel_evenement": "..."
             }},
-            "resume_action": "Résumé concis de qui a fait quoi et du résultat"
+            "resume_action": "Résumé concis (Qui a fait quoi / Résultat)"
         }}
 
         JSON:

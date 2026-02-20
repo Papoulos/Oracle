@@ -31,10 +31,10 @@ class AgentMonde:
         {query}
 
         RÈGLES CRITIQUES:
-        - Si l'action est parfaitement cohérente et ne pose aucun problème narratif, réponds uniquement "RAS".
-        - Si l'action est incohérente, impossible ou pose un problème avec le scénario, explique pourquoi de manière brève et factuelle.
-        - Protège les informations cachées (ne les révèle pas si le joueur ne peut pas les savoir).
-        - Ne révèle que ce que le personnage peut raisonnablement savoir ou découvrir.
+        - Si l'action est cohérente et ne nécessite aucune intervention particulière du scénario, réponds UNIQUEMENT "RAS".
+        - Si l'action pose un problème (incohérence, impossibilité), explique-le brièvement.
+        - NE RÉVÈLE PAS de secrets, de noms de PNJ cachés ou d'événements futurs si le joueur ne les a pas encore découverts.
+        - Ne donne des informations que si elles sont publiques ou si l'action du joueur permet de les découvrir.
         - Réponds avec des faits bruts, pas de narration.
         - Indique si l'action entraîne une conséquence scénaristique majeure.
         - NE FAIS JAMAIS référence à des actions passées du joueur qui ne sont pas explicitement présentes dans la MÉMOIRE ACTUELLE. Si la mémoire est vide, considère que c'est le tout début.

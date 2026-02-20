@@ -31,6 +31,7 @@ class AgentNarrateur:
         CONSIGNES:
         - Concentre-toi sur la résolution de l'action actuelle.
         - **IMPORTANT** : Ne redécris pas inutilement le lieu (ambiance, décor) si le joueur s'y trouve déjà depuis plusieurs tours. Ne le fais que s'il y a un changement notable ou un nouveau détail important.
+        - N'utilise les infos de l'Agent Monde que si elles sont "RAS" ou si elles signalent un problème à intégrer. Ne révèle pas de secrets d'intrigue par erreur.
         - Incorpore les résultats des tests de règles (succès/échec) de manière fluide dans le récit.
         - Fais parler les PNJ si nécessaire.
         - Pose un choix ou demande une action au joueur à la fin.
