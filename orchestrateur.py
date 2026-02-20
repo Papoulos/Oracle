@@ -81,8 +81,9 @@ class Orchestrateur:
         return {"narration": res}
 
     def _consult_personnage_creation(self, state: AgentState):
-        historique = state["memory"].get("historique", [])[-5:]
-        res = self.agent_personnage.interagir_creation(state["query"], state["memory"], historique)
+        # On utilise le journal spécifique à la création pour une mémoire parfaite
+        journal = state["memory"].get("personnage", {}).get("journal_creation", [])
+        res = self.agent_personnage.interagir_creation(state["query"], state["memory"], journal)
         return {"personnage_info": res, "narration": res["message"]}
 
     def _consult_personnage_evolution(self, state: AgentState):
@@ -100,6 +101,11 @@ class Orchestrateur:
                 "personnage_updates": res.get("personnage_updates", {}),
                 "resume_action": res.get("message", "Mise à jour du personnage")
             }
+
+            if etape == "CREATION":
+                # On archive l'échange dans le journal de création
+                memory_manager.add_to_journal_creation(f"Joueur: {state['query']}")
+                memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
 
             if etape == "CREATION" and res.get("creation_terminee"):
                 memory_manager.update_etape("AVENTURE")
@@ -255,8 +261,8 @@ class Orchestrateur:
 
         if etape == "CREATION":
             # On simule un premier échange pour lancer la création
-            historique = memory.get("historique", [])[-5:]
-            res = self.agent_personnage.interagir_creation("Bonjour", memory, historique)
+            journal = memory.get("personnage", {}).get("journal_creation", [])
+            res = self.agent_personnage.interagir_creation("Bonjour", memory, journal)
             yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
 
             updates = {
@@ -266,6 +272,7 @@ class Orchestrateur:
             if updates["personnage_updates"]:
                 memory_manager.update_personnage(updates["personnage_updates"])
             memory_manager.add_to_history(updates["resume_action"])
+            memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
 
             yield {"update_memory": {"updates": updates}}
         else:
