@@ -22,51 +22,78 @@ class AgentPersonnage:
         self.codex_db = codex_db
         self.intrigue_db = intrigue_db
 
-    def interagir_creation(self, query, memory, journal=[]):
-        context_docs = self.codex_db.similarity_search("règles création personnage caractéristiques classes", k=5) if self.codex_db else []
+    def definir_etapes_creation(self):
+        context_docs = self.codex_db.similarity_search("étapes création personnage règles obligatoires", k=5) if self.codex_db else []
         context_text = "\n\n".join([doc.page_content for doc in context_docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        Tu es l'Agent Personnage, un Maître de Jeu expert en création de personnage.
-        Ton but est de guider le joueur à travers 4 étapes : 1. Nom, 2. Classe, 3. Caractéristiques, 4. Équipement.
+        Tu es l'Expert Technique du système de jeu.
+        En te basant UNIQUEMENT sur le CODEX, liste les étapes obligatoires pour créer un personnage.
 
-        JOURNAL COMPLET DE LA CRÉATION :
+        RÈGLES DU CODEX :
+        {context}
+
+        INSTRUCTIONS :
+        1. Identifie les étapes (ex: Nom, Race, Classe, Caractéristiques, Compétences, Sorts, Équipement...).
+        2. Retourne un dictionnaire JSON où chaque étape est une clé avec la valeur false.
+        3. Ajoute TOUJOURS "nom" en première étape si non mentionné.
+
+        RÉPONDS UNIQUEMENT EN JSON :
+        {{
+            "nom": false,
+            "etape_2": false,
+            ...
+        }}
+        """)
+
+        chain = prompt | self.llm_json | JsonOutputParser()
+        return chain.invoke({"context": context_text})
+
+    def interagir_creation(self, query, memory, journal=[]):
+        # On cherche des infos spécifiques sur l'étape en cours
+        pdp = memory.get("personnage", {}).get("points_de_passage", {})
+        prochaine_etape = next((k for k, v in pdp.items() if not v), "règles générales")
+
+        context_docs = self.codex_db.similarity_search(f"règles création personnage {prochaine_etape} options disponibles", k=8) if self.codex_db else []
+        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+
+        prompt = ChatPromptTemplate.from_template("""
+        Tu es l'Agent Personnage, Maître de Jeu expert.
+        Ton but est de guider le joueur à travers ces étapes : {pdp_keys}.
+
+        JOURNAL DE CRÉATION :
         {journal}
 
-        ÉTAT ACTUEL DE LA FICHE :
+        ÉTAT DE LA FICHE :
         {char_sheet}
 
         RÉPONSE DU JOUEUR :
         {query}
 
-        RÈGLES DU CODEX :
+        EXTRAITS DU CODEX SUR L'ÉTAPE ACTUELLE :
         {context}
 
         INSTRUCTIONS IMPÉRATIVES :
-        1. ANALYSE DU JOURNAL : Regarde ce qui a été demandé et répondu. Ne redemande JAMAIS une information déjà donnée.
-        2. EXTRACTION PRIORITAIRE : Si le joueur donne une info (même en dehors de ta question), tu DOIS l'extraire, mettre à jour la fiche et passer le point de passage à True.
-        3. MISE À JOUR : Dans "personnage_updates", n'inclus QUE les champs qui changent ce tour. Ne remets pas "À définir".
-        4. PROGRESSION : Suis strictement l'ordre : Nom -> Classe -> Stats -> Équipement.
-           - Si points_de_passage["nom"] est False : demande le nom.
-           - Si points_de_passage["classe"] est False : liste les classes du CODEX et demande un choix.
-           - Si points_de_passage["stats"] est False : liste les stats du CODEX, explique le jet (ex: 3d6) et propose de le faire.
-           - Si points_de_passage["equipement"] est False : propose un pack selon la classe.
+        1. ANALYSE DU JOURNAL : Ne redemande JAMAIS ce qui est déjà acquis.
+        2. EXTRACTION : Si le joueur donne une info (ex: une classe parmi celles du CODEX), valide-la et passe son point de passage à True.
+        3. ÉTAPE PAR ÉTAPE : Ne traite qu'UNE SEULE étape à la fois, dans l'ordre de la checklist.
+        4. OPTIONS DU CODEX : Pour des étapes comme la Classe, la Race ou l'Équipement, tu DOIS lister CLAIREMENT les options trouvées dans le CODEX. Ne les invente pas.
         5. MESSAGE AU JOUEUR :
-           - Commence par confirmer ce qui a été validé (ex: "Très bien, tu t'appelles Arthur.").
-           - Affiche la checklist de progression (ex: "[X] Nom, [ ] Classe...").
-           - Pose la question suivante de manière immersive.
+           - Confirme l'acquis précédent.
+           - Affiche la checklist avec l'état actuel (ex: "[X] Nom, [ ] Classe...").
+           - Pose la question pour la prochaine étape NON VALIDÉE.
         6. FIN : Quand tout est à True, mets "creation_terminee" à true.
 
         Réponds UNIQUEMENT en JSON :
         {{
-            "reflexion": "Résumé des acquis, analyse de la réponse, identification du prochain point de passage.",
-            "message": "Confirmation + Checklist + Prochaine Question",
+            "reflexion": "Étape actuelle, options trouvées dans le CODEX, analyse de la réponse du joueur.",
+            "message": "Ta réponse (Confirmation + Checklist + Prochaine Question avec options)",
             "personnage_updates": {{
-                "nom": "valeur réelle",
-                "classe": "valeur réelle",
+                "nom": "valeur",
+                "classe": "valeur",
                 "stats": {{...}},
                 "inventaire": [...],
-                "points_de_passage": {{ "nom": bool, "classe": bool, "stats": bool, "equipement": bool }}
+                "points_de_passage": {{ ... }}
             }},
             "creation_terminee": bool
         }}
@@ -74,6 +101,7 @@ class AgentPersonnage:
 
         chain = prompt | self.llm_json | JsonOutputParser()
         res = chain.invoke({
+            "pdp_keys": ", ".join(pdp.keys()),
             "context": context_text,
             "char_sheet": json.dumps(memory.get("personnage", {})),
             "journal": json.dumps(journal),

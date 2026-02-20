@@ -10,12 +10,7 @@ DEFAULT_MEMORY = {
         "classe": "À définir",
         "stats": {},
         "inventaire": [],
-        "points_de_passage": {
-            "nom": False,
-            "classe": False,
-            "stats": False,
-            "equipement": False
-        },
+        "points_de_passage": {},
         "journal_creation": [],
         "xp": 0,
         "niveau": 1
