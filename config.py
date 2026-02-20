@@ -12,3 +12,11 @@ DATA_PATH = os.getenv("DATA_PATH", "./data")
 # Noms des collections
 COLLECTION_CODEX = "codex"
 COLLECTION_INTRIGUE = "intrigue"
+
+def check_ollama_connectivity():
+    import requests
+    try:
+        response = requests.get(OLLAMA_BASE_URL, timeout=2)
+        return response.status_code == 200
+    except:
+        return False

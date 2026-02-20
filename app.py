@@ -62,6 +62,15 @@ else:
 
 # --- Sidebar ---
 with st.sidebar:
+    st.header("🔌 Connexion")
+    if config.check_ollama_connectivity():
+        st.success(f"Ollama: Connecté ({config.OLLAMA_MODEL})")
+    else:
+        st.error("Ollama: Déconnecté")
+        st.warning("Veuillez lancer Ollama localement.")
+        if st.button("🔄 Actualiser la connexion"):
+            st.rerun()
+
     st.header("📜 État du Jeu")
     memory = memory_manager.load_memory()
     if memory:
@@ -156,12 +165,16 @@ def run_game_turn(user_query):
     })
 
 # --- Introduction Automatique ---
-if not st.session_state.messages and orchestrateur:
+if not st.session_state.messages and orchestrateur and config.check_ollama_connectivity():
     welcome_query = "Le jeu commence. Présente-toi brièvement comme le MJ et décris la scène initiale pour plonger le joueur dans l'aventure selon le lieu actuel et l'intrigue."
-    run_game_turn(welcome_query)
-    st.rerun()
+    try:
+        run_game_turn(welcome_query)
+        st.rerun()
+    except Exception as e:
+        st.error(f"❌ Impossible de se connecter à Ollama pour générer l'introduction : {e}")
+        st.info("Vérifiez qu'Ollama est lancé et que les modèles sont téléchargés.")
 
-if prompt := st.chat_input("Que faites-vous ?"):
+if prompt := st.chat_input("Que faites-vous ?", disabled=not config.check_ollama_connectivity()):
     if not orchestrateur:
         st.error("L'orchestrateur n'est pas prêt. Vérifiez les bases de données.")
     else:
@@ -169,5 +182,8 @@ if prompt := st.chat_input("Que faites-vous ?"):
         with st.chat_message("user"):
             st.markdown(prompt)
 
-        run_game_turn(prompt)
-        st.rerun()
+        try:
+            run_game_turn(prompt)
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Erreur lors de l'exécution : {e}")
