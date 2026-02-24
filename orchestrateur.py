@@ -132,7 +132,8 @@ class Orchestrateur:
                     if v in ["...", "À définir", None, ""]:
                         continue
                     if isinstance(v, dict):
-                        clean_v = {sk: sv for sk, sv in v.items() if sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"]}
+                        # Filter but keep booleans (for points_de_passage)
+                        clean_v = {sk: sv for sk, sv in v.items() if (isinstance(sv, bool) or sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"])}
                         if clean_v:
                             clean_p_up[k] = clean_v
                     else:
@@ -289,7 +290,8 @@ class Orchestrateur:
                     if v in ["...", "À définir", None, ""]:
                         continue
                     if isinstance(v, dict):
-                        clean_v = {sk: sv for sk, sv in v.items() if sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"]}
+                        # Filter but keep booleans (for points_de_passage)
+                        clean_v = {sk: sv for sk, sv in v.items() if (isinstance(sv, bool) or sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"])}
                         if clean_v:
                             clean_p_up[k] = clean_v
                     else:

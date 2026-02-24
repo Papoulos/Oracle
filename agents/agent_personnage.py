@@ -78,167 +78,95 @@ class AgentPersonnage:
 
     def interagir_creation(self, query, memory, journal=[]):
         """
-        Main interaction loop for character creation with a robust two-pass logic.
+        Main interaction loop for character creation in DISCUSSION MODE.
         """
-        pdp = memory.get("personnage", {}).get("points_de_passage", {})
         char_sheet = memory.get("personnage", {})
 
-        # Step 0: Initialization
-        if not pdp:
-            guide = self.generer_guide_creation()
-            pdp = self.extraire_pdp_du_guide(guide)
-            char_sheet["points_de_passage"] = pdp
+        # Step 0: Ensure minimal points_de_passage exist
+        if not char_sheet.get("points_de_passage"):
+            char_sheet["points_de_passage"] = {
+                "nom": False, "race": False, "classe": False, "stats": False, "equipement": False
+            }
 
-        # Determine current step (the one we are asking about)
-        current_step = next((k for k, v in pdp.items() if not v), "fin")
+        # 1. Multi-faceted Search for CODEX context
+        # We search for rules, but also specifically for races, classes and stats to give the DM a full view
+        search_queries = [
+            f"character creation rules {query}",
+            "available races and classes list",
+            "how to calculate stats attributes 3d6"
+        ]
+        context = ""
+        if self.codex_db:
+            for q in search_queries:
+                docs = self.codex_db.similarity_search(q, k=4)
+                context += f"\n--- Results for '{q}' ---\n"
+                context += "\n\n".join([d.page_content for d in docs])
 
-        # Step 1: Search relevant CODEX info for CURRENT step to validate input
-        context_docs = self.codex_db.similarity_search(f"character creation {current_step} options rules", k=10) if self.codex_db else []
-        current_context = "\n\n".join([doc.page_content for doc in context_docs])
+        # 2. Discussion Prompt
+        prompt = ChatPromptTemplate.from_template("""
+        You are the Character Creation DM. Your goal is to build a character through a natural DISCUSSION in French.
 
-        # Step 2: Pass 1 - Analysis and Rule Extraction
-        analysis_prompt = ChatPromptTemplate.from_template("""
-        You are the Character Creation Analyst. Your goal is to update the character sheet state based on the player's response.
+        GOALS: We need to define: Nom (Name), Race, Classe, Statistiques (Stats), and Équipement.
 
-        CURRENT CHECKLIST: {pdp_values}
-        CURRENT CHARACTER SHEET: {char_sheet}
-        CURRENT STEP: {current_step}
-        CODEX CONTEXT: {context}
-        PLAYER'S MESSAGE: {query}
-        HISTORY: {journal}
+        CURRENT CHARACTER SHEET:
+        {char_sheet}
 
-        TASKS:
-        1. DATA EXTRACTION:
-           - Extract any valid info (name, race, class, stats) from the PLAYER'S MESSAGE.
-           - DO NOT store instructions or questions as values. (e.g., NEVER store "Roll 3d6" as a stat).
-           - Only extract the value if it's a final choice.
-        2. VALIDATION: Validate the player's choice against the CODEX. If invalid, do not update.
-        3. CHECKLIST:
-           - A step in 'completed_steps' should be 'true' ONLY if the player provided a final, valid answer for it.
-           - NEVER mark {current_step} as true if the player is just asking a question or hasn't answered yet.
+        RECENT CONVERSATION HISTORY:
+        {history}
+
+        CODEX CONTEXT:
+        {context}
+
+        PLAYER'S MESSAGE:
+        {query}
+
+        MISSION:
+        1. DISCUSSION MODE: Talk like a human DM. Acknowledge the player's input. Suggest options if they are stuck.
+        2. CONTINUITY: Look at the HISTORY and SHEET. If a field is already filled, move to the next logical step.
+        3. DATA EXTRACTION:
+           - Extract ANY valid information (name, race, class, stats) provided by the player into 'personnage_updates'.
+           - NEVER store instructions like "Roll 3d6" as values.
         4. DICE ROLLS:
-           - Check if {current_step} or the next step requires rolling dice for stats.
-           - If the player hasn't agreed yet, set 'ask_for_roll' to the dice format (e.g., "3d6").
-           - If the player explicitly agreed to let you roll ("Oui", "Vas-y", "Fais-le"), set 'perform_roll' to the dice format.
-        5. INFO REQUEST: Set 'is_info_request' to true if the player asks for a list, details, or help.
+           - If stats are missing, EXPLAIN the CODEX rule (e.g., 3d6) and ASK the player if they want you to roll.
+           - If the player explicitly agreed ("Yes", "Ok", "Fais-le"), set 'perform_roll' to the dice format (e.g., "3d6").
+        5. OPTIONS: When presenting options for race or class, provide a CONCISE list of names found in the CODEX. Do not list technical progression tables.
+        6. QUESTION: You MUST end your message with a direct, clear question in French to move the process forward.
+        7. COMPLETION: Set 'creation_terminee' to true ONLY when all main fields (Nom, Race, Classe, Stats, Équipement) are filled.
 
         Respond ONLY in JSON format:
         {{
-            "detected_updates": {{ "nom": "...", "race": "...", "classe": "...", "stats": {{...}} }},
-            "completed_steps": {{ "step_name": true }},
-            "is_info_request": bool,
-            "ask_for_roll": "NdM+K" or null,
+            "reflexion": "Internal thought in English about progress and next step.",
+            "message": "Your response in FRENCH. Always ends with a question.",
+            "personnage_updates": {{ "nom": "...", "race": "...", "classe": "...", "stats": {{...}} }},
             "perform_roll": "NdM+K" or null,
-            "internal_thought": "Internal English explanation"
+            "creation_terminee": bool
         }}
         """)
 
-        analysis_chain = analysis_prompt | self.llm_json | JsonOutputParser()
-        # Filter journal to avoid passing massive technical dumps back into context
-        filtered_journal = []
-        for msg in journal[-5:]:
-            if len(msg) < 500: # Skip very long messages (likely old technical dumps)
-                filtered_journal.append(msg)
+        # Filter journal
+        filtered_journal = [m for m in journal[-6:] if len(m) < 600]
 
-        analysis = analysis_chain.invoke({
-            "pdp_values": json.dumps(pdp),
+        chain = prompt | self.llm_json | JsonOutputParser()
+        res = chain.invoke({
             "char_sheet": json.dumps(char_sheet),
-            "current_step": current_step,
-            "context": current_context,
-            "query": query,
-            "journal": json.dumps(filtered_journal)
-        })
-
-        # Step 3: Update local state to find the REAL next step
-        temp_pdp = pdp.copy()
-        temp_pdp.update(analysis.get("completed_steps", {}))
-        real_next_step = next((k for k, v in temp_pdp.items() if not v), "fin")
-
-        # Step 4: Handle Dice Rolls
-        roll_result = None
-        if analysis.get("perform_roll"):
-            roll_data = simulate_dice_roll(analysis["perform_roll"])
-            if roll_data:
-                roll_result = roll_data["texte"]
-
-        # Step 5: Search CODEX info for the NEXT step to provide options
-        next_context = ""
-        if real_next_step != "fin":
-            # Search for ALL options to avoid skipping any
-            next_docs = self.codex_db.similarity_search(f"character creation list of all {real_next_step} options available", k=10) if self.codex_db else []
-            next_context = "\n\n".join([doc.page_content for doc in next_docs])
-
-        # Step 6: Pass 2 - Response Generation (MJ Persona)
-        generation_prompt = ChatPromptTemplate.from_template("""
-        You are the Game Master (MJ). You are guiding a player through character creation.
-        Your tone is warm and immersive.
-        You speak FRENCH.
-
-        ANALYSIS CONTEXT:
-        - Updates just saved: {updates}
-        - Steps just completed: {completed}
-        - Result of dice roll (if any): {roll_result}
-        - Need to ask for roll? {ask_for_roll}
-        - Is this a request for info? {is_info_request}
-
-        NEXT STEP: {next_step}
-        CODEX FOR NEXT STEP: {next_context}
-        PLAYER QUERY: {query}
-
-        CRITICAL INSTRUCTIONS:
-        1. NO MANUALS: Do not list the creation steps. Do not copy technical tables.
-        2. CONCISE MJ: Be brief. Confirm progress in one short sentence.
-        3. DYNAMIC OPTIONS: If {next_step} is 'race' or 'classe', list the names of the options from the CODEX concisely.
-        4. QUESTION: You MUST end with a clear question regarding {next_step}. (Example: "Quel nom souhaitez-vous donner à votre héros ?").
-        5. DICE RESULTS: If {roll_result} is provided, explain it to the player and save it in 'additional_updates'.
-        6. WELCOME: If PLAYER QUERY is "Début de l'aventure", welcome the player and ask the first question (Name).
-        7. INFO: If 'is_info_request' is true, give the info and ask for a choice.
-
-        Respond ONLY in JSON:
-        {{
-            "message": "MJ response in FRENCH. Always end with a question.",
-            "reflexion": "Internal English reasoning",
-            "additional_updates": {{ "stats": {{ ... }}, "any_field": "..." }}
-        }}
-        """)
-
-        generation_chain = generation_prompt | self.llm_json | JsonOutputParser()
-        gen_res = generation_chain.invoke({
-            "updates": json.dumps(analysis.get("detected_updates", {})),
-            "completed": json.dumps(analysis.get("completed_steps", {})),
-            "roll_result": roll_result or "None",
-            "ask_for_roll": analysis.get("ask_for_roll") or "None",
-            "is_info_request": analysis.get("is_info_request", False),
-            "next_step": real_next_step,
-            "next_context": next_context,
+            "history": json.dumps(filtered_journal),
+            "context": context,
             "query": query
         })
 
-        # Step 7: Consolidate updates
-        personnage_updates = analysis.get("detected_updates", {})
-        if gen_res.get("additional_updates"):
-            personnage_updates.update(gen_res["additional_updates"])
+        # 3. Automated Dice Rolling
+        if res.get("perform_roll"):
+            roll_data = simulate_dice_roll(res["perform_roll"])
+            if roll_data:
+                # Inject the roll result into the message
+                res["message"] = f"{res['message']}\n\n[MJ] J'ai lancé les dés pour vous : {roll_data['texte']}"
 
-        # Merge checklist updates - ONLY set true, NEVER reset to false
-        new_pdp = pdp.copy()
-        for k, v in analysis.get("completed_steps", {}).items():
-            if v is True:
-                new_pdp[k] = True
-        personnage_updates["points_de_passage"] = new_pdp
+                # We also add the raw result to reflexion to help the next turn
+                res["reflexion"] += f" | Dice Roll Performed: {roll_data['texte']}"
 
-        # Check if finished
-        creation_terminee = all(new_pdp.values())
-
-        res = {
-            "reflexion": f"Analysis: {analysis.get('internal_thought')} | Generation: {gen_res.get('reflexion')}",
-            "message": gen_res.get("message"),
-            "personnage_updates": personnage_updates,
-            "creation_terminee": creation_terminee
-        }
-
-        # Special handling for initialization: ensure the pdp we just created is included in updates
-        if not memory.get("personnage", {}).get("points_de_passage"):
-            res["personnage_updates"]["points_de_passage"] = new_pdp
+                # We ensure points_de_passage for stats is NOT true yet,
+                # because the player might need to assign them or the DM needs to confirm.
+                # UNLESS the DM already assigned them in personnage_updates.
 
         return res
 
