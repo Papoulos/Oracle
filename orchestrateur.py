@@ -127,7 +127,16 @@ class Orchestrateur:
             p_up = updates.get("personnage_updates", {})
             if p_up and isinstance(p_up, dict):
                 # Filtre pour éviter d'écraser avec des valeurs fictives ou vides
-                clean_p_up = {k: v for k, v in p_up.items() if v not in ["...", "À définir", None, ""]}
+                clean_p_up = {}
+                for k, v in p_up.items():
+                    if v in ["...", "À définir", None, ""]:
+                        continue
+                    if isinstance(v, dict):
+                        clean_v = {sk: sv for sk, sv in v.items() if sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"]}
+                        if clean_v:
+                            clean_p_up[k] = clean_v
+                    else:
+                        clean_p_up[k] = v
 
                 # Gestion spécifique des ajouts à l'inventaire
                 if clean_p_up.get("inventaire_ajouts"):
@@ -268,9 +277,26 @@ class Orchestrateur:
 
         res = self.agent_personnage.interagir_creation(query, memory, journal)
 
-        # Persistence immédiate
+        # Persistence immédiate avec filtrage
         if res.get("personnage_updates"):
-            memory_manager.update_personnage(res["personnage_updates"])
+            p_up = res["personnage_updates"]
+            if isinstance(p_up, dict):
+                # Filtre pour éviter d'écraser avec des valeurs fictives ou vides
+                # On autorise True/False pour les points de passage
+                # On filtre aussi récursivement pour les dictionnaires (comme stats)
+                clean_p_up = {}
+                for k, v in p_up.items():
+                    if v in ["...", "À définir", None, ""]:
+                        continue
+                    if isinstance(v, dict):
+                        clean_v = {sk: sv for sk, sv in v.items() if sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"]}
+                        if clean_v:
+                            clean_p_up[k] = clean_v
+                    else:
+                        clean_p_up[k] = v
+
+                if clean_p_up:
+                    memory_manager.update_personnage(clean_p_up)
 
         memory_manager.add_to_journal_creation(f"Joueur: {query}")
         memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
