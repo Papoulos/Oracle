@@ -260,25 +260,15 @@ class Orchestrateur:
         etape = memory.get("etape", "CREATION")
 
         if etape == "CREATION":
-            # On définit les étapes dynamiquement si la checklist est vide
-            if not memory.get("personnage", {}).get("points_de_passage"):
-                etapes = self.agent_personnage.definir_etapes_creation()
-                memory_manager.update_personnage({"points_de_passage": etapes})
-                memory = memory_manager.load_memory()
-
-            # On simule un premier échange pour lancer la création
-            journal = memory.get("personnage", {}).get("journal_creation", [])
-            res = self.agent_personnage.interagir_creation("Début de l'aventure", memory, journal)
+            # On génère le guide de création basé sur le CODEX
+            res = self.agent_personnage.interagir_creation("Initialisation du guide", memory)
             yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
 
             updates = {
-                "personnage_updates": res.get("personnage_updates", {}),
-                "resume_action": "Début de la création de personnage"
+                "resume_action": "Affichage du guide de création de personnage"
             }
-            if updates["personnage_updates"]:
-                memory_manager.update_personnage(updates["personnage_updates"])
             memory_manager.add_to_history(updates["resume_action"])
-            memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
+            memory_manager.add_to_journal_creation(f"MJ: Guide affiché")
 
             yield {"update_memory": {"updates": updates}}
         else:

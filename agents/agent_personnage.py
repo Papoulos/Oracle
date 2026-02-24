@@ -22,103 +22,63 @@ class AgentPersonnage:
         self.codex_db = codex_db
         self.intrigue_db = intrigue_db
 
-    def definir_etapes_creation(self):
-        # On fait une recherche large pour ne rien rater des règles de création
-        queries = ["étapes création personnage", "caractéristiques obligatoires", "choix classe race", "équipement de départ"]
+    def generer_guide_creation(self):
+        # Recherche exhaustive pour comprendre le système de création
+        queries = [
+            "étapes création personnage",
+            "races disponibles et bonus",
+            "classes métiers professions",
+            "calcul caractéristiques attributs",
+            "équipement de départ"
+        ]
         context_text = ""
         if self.codex_db:
             for q in queries:
                 docs = self.codex_db.similarity_search(q, k=3)
+                context_text += f"\n\n--- EXTRAIT SUR '{q}' ---\n"
                 context_text += "\n\n".join([d.page_content for d in docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        Tu es l'Expert Technique du système de jeu.
-        Ton rôle est d'analyser le CODEX pour extraire la liste ordonnée des étapes de création d'un personnage joueur.
+        Tu es le Gardien du Savoir (Agent Personnage). Ton but est de prouver ta compréhension parfaite des règles de création de personnage du CODEX.
 
-        EXTRAITS DU CODEX :
+        DOCUMENTS DU CODEX :
         {context}
 
-        INSTRUCTIONS :
-        1. Liste les étapes indispensables (ex: "nom", "race", "classe", "attributs", "competences", "equipement").
-        2. Les clés du JSON doivent être en minuscules, sans accents, et simples (un seul mot).
-        3. Retourne un dictionnaire JSON où chaque clé est une étape avec la valeur false.
-        4. "nom" doit TOUJOURS être la première étape.
+        MISSION :
+        Génère un guide complet de création de personnage. Ce guide doit être structuré, clair et exhaustif selon le CODEX.
 
-        RÉPONDS UNIQUEMENT AVEC LE JSON (pas de texte avant ou après) :
+        CONTENU ATTENDU :
+        1. LES ÉTAPES : Liste les étapes dans l'ordre (ex: 1. Nom, 2. Race...).
+        2. LES OPTIONS : Pour chaque étape de choix (Race, Classe, etc.), liste TOUTES les options mentionnées dans le CODEX avec leurs spécificités.
+        3. LES MÉCANIQUES : Explique comment sont définies les statistiques (tirage de dés, répartition de points...).
+        4. L'ÉQUIPEMENT : Détaille ce qu'un personnage reçoit en commençant.
+
+        Ton message doit montrer au joueur que tu as bien "lu" le CODEX et que tu es prêt à le guider.
+
+        RÉPONDS UNIQUEMENT AVEC CE FORMAT JSON :
         {{
-            "nom": false,
-            "etape_suivante": false
+            "reflexion": "Résumé technique de ce que j'ai trouvé dans le CODEX.",
+            "message": "Le guide complet, formaté pour être lu par le joueur (utilise le Markdown)."
         }}
         """)
 
         chain = prompt | self.llm_json | JsonOutputParser()
         try:
             return chain.invoke({"context": context_text})
-        except:
-            return {"nom": False, "classe": False, "caracteristiques": False, "equipement": False}
+        except Exception as e:
+            return {
+                "reflexion": f"Erreur lors de la génération : {e}",
+                "message": "Je n'ai pas pu compiler le guide de création. Vérifiez que le CODEX est bien indexé."
+            }
 
     def interagir_creation(self, query, memory, journal=[]):
-        # On cherche des infos spécifiques sur l'étape en cours
-        pdp = memory.get("personnage", {}).get("points_de_passage", {})
-        prochaine_etape = next((k for k, v in pdp.items() if not v), "règles générales")
-
-        # On élargit la recherche pour avoir toutes les options d'un coup pour cette étape
-        context_docs = self.codex_db.similarity_search(f"options création {prochaine_etape} liste choix", k=10) if self.codex_db else []
-        context_text = "\n\n".join([doc.page_content for doc in context_docs])
-
-        prompt = ChatPromptTemplate.from_template("""
-        Tu es le Maître de Jeu (MJ) chargé de la création du personnage. Ton ton est immersif, solennel et bienveillant.
-        Tu ne parles JAMAIS comme un robot technique ("aucune info extraite", "joueur a dit"). Tu ES le MJ.
-
-        PLAN DE CRÉATION : {pdp_keys}
-
-        HISTORIQUE DES ÉCHANGES :
-        {journal}
-
-        FICHE ACTUELLE :
-        {char_sheet}
-
-        RÈGLES ET OPTIONS DU CODEX POUR CETTE ÉTAPE ({prochaine_etape}) :
-        {context}
-
-        ACTION DU JOUEUR :
-        {query}
-
-        MISSION :
-        1. ANALYSE : Si le joueur répond à la question précédente, valide son choix par rapport au CODEX.
-        2. EXTRACTION : Toute info validée (nom, classe, etc.) doit être mise dans "personnage_updates" et le point de passage correspondant doit passer à true.
-        3. PREMIER CONTACT : Si le journal est vide, commence par une introduction chaleureuse, présente le plan ({pdp_keys}) et pose la première question (le nom).
-        4. OPTIONS EXPLICITES : Si tu demandes de choisir une Classe ou une Race, tu DOIS lister TOUTES les options trouvées dans le CODEX ci-dessus.
-        5. MESSAGE : Ton message au joueur doit être 100% narratif.
-           - Confirme l'étape validée.
-           - Affiche la progression : [X] Étape validée / [ ] Étape à venir.
-           - Pose la question suivante.
-        6. UNE SEULE ÉTAPE : Ne demande pas deux choses à la fois.
-
-        RÉPONDS UNIQUEMENT EN JSON :
-        {{
-            "reflexion": "Quelle étape est en cours ? Quelle info a été donnée ? Quelle est la suite ?",
-            "message": "Ton message immersif au joueur (Narratif + Checklist + Question)",
-            "personnage_updates": {{
-                "nom": "valeur réelle",
-                "classe": "valeur réelle",
-                "stats": {{...}},
-                "points_de_passage": {{ ... }}
-            }},
-            "creation_terminee": bool
-        }}
-        """)
-
-        chain = prompt | self.llm_json | JsonOutputParser()
-        res = chain.invoke({
-            "pdp_keys": ", ".join(pdp.keys()),
-            "prochaine_etape": prochaine_etape,
-            "context": context_text,
-            "char_sheet": json.dumps(memory.get("personnage", {})),
-            "journal": json.dumps(journal),
-            "query": query
-        })
-        return res
+        # Pour l'instant, on se contente de renvoyer le guide si on est en création
+        guide = self.generer_guide_creation()
+        return {
+            "personnage_info": {},
+            "message": guide["message"],
+            "creation_terminee": False
+        }
 
     def calculer_xp(self, action_query, narration, regles_info, world_info):
         context_query = f"récompense XP action {action_query}"
