@@ -7,6 +7,7 @@ DEFAULT_MEMORY = {
     "etape": "CREATION",
     "personnage": {
         "nom": "À définir",
+        "race": "À définir",
         "classe": "À définir",
         "stats": {},
         "inventaire": [],
