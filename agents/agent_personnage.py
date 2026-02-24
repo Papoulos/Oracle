@@ -72,13 +72,95 @@ class AgentPersonnage:
             }
 
     def interagir_creation(self, query, memory, journal=[]):
-        # Pour l'instant, on se contente de renvoyer le guide si on est en création
-        guide = self.generer_guide_creation()
-        return {
-            "personnage_info": {},
-            "message": guide["message"],
-            "creation_terminee": False
-        }
+        # On cherche des infos spécifiques sur l'étape en cours
+        pdp = memory.get("personnage", {}).get("points_de_passage", {})
+
+        # Si pdp est vide, on initialise avec le guide
+        if not pdp:
+            guide = self.generer_guide_creation()
+            # On demande au LLM d'extraire la checklist du guide pour l'initialiser
+            pdp = self.extraire_pdp_du_guide(guide["message"])
+            return {
+                "reflexion": "Initialisation de la checklist via le guide.",
+                "message": guide["message"],
+                "personnage_updates": {"points_de_passage": pdp},
+                "creation_terminee": False
+            }
+
+        prochaine_etape = next((k for k, v in pdp.items() if not v), "fin")
+
+        context_docs = self.codex_db.similarity_search(f"options création {prochaine_etape} liste choix règles", k=8) if self.codex_db else []
+        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+
+        prompt = ChatPromptTemplate.from_template("""
+        Tu es le Maître de Jeu (MJ). Tu guides le joueur dans la création de son personnage.
+
+        PLAN DE CRÉATION : {pdp_keys}
+        ÉTAT ACTUEL : {pdp_values}
+
+        JOURNAL DES ÉCHANGES :
+        {journal}
+
+        FICHE ACTUELLE :
+        {char_sheet}
+
+        EXTRAITS DU CODEX POUR L'ÉTAPE '{prochaine_etape}' :
+        {context}
+
+        DERNIER MESSAGE DU JOUEUR :
+        {query}
+
+        MISSION :
+        1. ANALYSE : Le joueur a-t-il répondu à la question précédente ? Si oui, valide son choix selon le CODEX.
+        2. PERSISTANCE : Toute information validée (nom, classe, stats...) doit être mise dans "personnage_updates".
+        3. CHECKLIST : Si une étape est validée, passe son point de passage à true dans "personnage_updates".
+        4. OPTIONS : Si l'étape actuelle (ex: classe) demande un choix, tu DOIS lister CLAIREMENT toutes les options trouvées dans le CODEX ci-dessus.
+        5. MESSAGE : Reste immersif. Confirme l'acquis, affiche la checklist [X]/[ ], et pose la question suivante.
+        6. FIN : Si toutes les étapes sont à true, mets "creation_terminee" à true.
+
+        RÉPONDS UNIQUEMENT EN JSON :
+        {{
+            "reflexion": "Analyse de la réponse, point de passage validé, prochaine étape.",
+            "message": "Ton message immersif au joueur",
+            "personnage_updates": {{
+                "nom": "valeur réelle",
+                "classe": "valeur réelle",
+                "stats": {{...}},
+                "points_de_passage": {{ "etape": true }}
+            }},
+            "creation_terminee": bool
+        }}
+        """)
+
+        chain = prompt | self.llm_json | JsonOutputParser()
+        res = chain.invoke({
+            "pdp_keys": ", ".join(pdp.keys()),
+            "pdp_values": json.dumps(pdp),
+            "prochaine_etape": prochaine_etape,
+            "context": context_text,
+            "char_sheet": json.dumps(memory.get("personnage", {})),
+            "journal": json.dumps(journal),
+            "query": query
+        })
+        return res
+
+    def extraire_pdp_du_guide(self, guide_text):
+        prompt = ChatPromptTemplate.from_template("""
+        Analyse ce guide de création et extrais-en la liste des étapes obligatoires (ex: nom, race, classe, caractéristiques, équipement).
+
+        GUIDE :
+        {guide}
+
+        Retourne un objet JSON avec chaque étape en clé et 'false' en valeur.
+        Mets 'nom' en premier.
+
+        JSON:
+        """)
+        chain = prompt | self.llm_json | JsonOutputParser()
+        try:
+            return chain.invoke({"guide": guide_text})
+        except:
+            return {"nom": False, "classe": False, "stats": False, "equipement": False}
 
     def calculer_xp(self, action_query, narration, regles_info, world_info):
         context_query = f"récompense XP action {action_query}"
