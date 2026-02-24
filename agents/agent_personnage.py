@@ -25,12 +25,12 @@ class AgentPersonnage:
 
     def generer_guide_creation(self):
         """
-        Analyzes the CODEX to generate a complete character creation guide.
+        Analyzes the CODEX to extract character creation steps and rules.
         Used internally to set up the creation steps.
         """
         queries = [
             "steps for character creation",
-            "available races and bonuses",
+            "available races",
             "classes occupations professions",
             "calculating characteristics attributes stats",
             "starting equipment"
@@ -43,25 +43,27 @@ class AgentPersonnage:
                 context_text += "\n\n".join([d.page_content for d in docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        You are the Lore Keeper (Agent Personnage). Your goal is to extract character creation rules from the CODEX.
+        You are the System Architect. Your goal is to extract character creation rules from the CODEX for an internal state machine.
 
         CODEX DOCUMENTS:
         {context}
 
         MISSION:
-        Generate a comprehensive character creation guide. It must be structured, clear, and exhaustive based on the CODEX.
+        Extract the structured data needed to guide a player through character creation.
 
-        EXPECTED CONTENT:
-        1. STEPS: List steps in order (e.g., 1. Name, 2. Race...).
-        2. OPTIONS: For each step (Race, Class, etc.), list ALL options from the CODEX with their specifics.
-        3. MECHANICS: Explain how stats are defined (dice rolls, point buy, etc.).
-        4. EQUIPMENT: Detail starting items.
-
-        Respond ONLY in JSON format:
+        EXPECTED JSON STRUCTURE:
         {{
-            "reflexion": "Technical summary of your findings in the CODEX.",
-            "message": "The full guide in Markdown, written in French for the player."
+            "steps": ["nom", "race", "classe", "statistiques", "equipement", ...],
+            "rules_summary": {{
+                "races": ["list of race names"],
+                "classes": ["list of class names"],
+                "stats_method": "e.g., 3d6, point buy...",
+                "starting_equipment": "summary"
+            }},
+            "internal_notes": "Technical summary of rules detected."
         }}
+
+        Respond ONLY in JSON.
         """)
 
         chain = prompt | self.llm_json | JsonOutputParser()
@@ -69,8 +71,9 @@ class AgentPersonnage:
             return chain.invoke({"context": context_text})
         except Exception as e:
             return {
-                "reflexion": f"Error during generation: {e}",
-                "message": "Je n'ai pas pu compiler le guide de création. Vérifiez que le CODEX est bien indexé."
+                "steps": ["nom", "race", "classe", "statistiques", "equipement"],
+                "rules_summary": {},
+                "internal_notes": f"Error during generation: {e}"
             }
 
     def interagir_creation(self, query, memory, journal=[]):
@@ -83,15 +86,15 @@ class AgentPersonnage:
         # Step 0: Initialization
         if not pdp:
             guide = self.generer_guide_creation()
-            pdp = self.extraire_pdp_du_guide(guide["message"])
+            pdp = self.extraire_pdp_du_guide(guide)
             char_sheet["points_de_passage"] = pdp
 
-        # Determine current step
-        prochaine_etape = next((k for k, v in pdp.items() if not v), "fin")
+        # Determine current step (the one we are asking about)
+        current_step = next((k for k, v in pdp.items() if not v), "fin")
 
-        # Step 1: Search relevant CODEX info
-        context_docs = self.codex_db.similarity_search(f"character creation {prochaine_etape} options rules", k=8) if self.codex_db else []
-        context_text = "\n\n".join([doc.page_content for doc in context_docs])
+        # Step 1: Search relevant CODEX info for CURRENT step to validate input
+        context_docs = self.codex_db.similarity_search(f"character creation {current_step} options rules", k=5) if self.codex_db else []
+        current_context = "\n\n".join([doc.page_content for doc in context_docs])
 
         # Step 2: Pass 1 - Analysis and Rule Extraction
         analysis_prompt = ChatPromptTemplate.from_template("""
@@ -99,24 +102,25 @@ class AgentPersonnage:
 
         CURRENT CHECKLIST: {pdp_values}
         CURRENT CHARACTER SHEET: {char_sheet}
-        CURRENT STEP: {prochaine_etape}
+        CURRENT STEP: {current_step}
         CODEX CONTEXT: {context}
         PLAYER'S MESSAGE: {query}
         HISTORY: {journal}
 
         TASKS:
-        1. Extract any new information provided by the player (name, race, class, etc.).
-        2. Validate it against the CODEX.
-        3. Check if the current step requires a dice roll (e.g., stats).
-        4. If the player agreed to a roll OR if the CODEX says you should do it, specify the dice format (e.g., "3d6").
-        5. If a step is completed, mark it as true in the checklist.
+        1. Extract any information provided by the player for the CURRENT STEP or any other step.
+        2. Validate it against the CODEX CONTEXT.
+        3. Determine if the CURRENT STEP is now complete.
+        4. DICE ROLL: Check if the current or NEXT step requires a dice roll (like attributes/stats).
+           - If it does, and the player hasn't agreed, set 'ask_for_roll' to the dice format (e.g., "3d6").
+           - If the player agreed or the MJ should just do it, set 'perform_roll' to the dice format.
 
         Respond ONLY in JSON:
         {{
             "detected_updates": {{ "field": "value", ... }},
             "completed_steps": {{ "etape_name": true, ... }},
-            "needs_dice_roll": "NdM+K" or null,
-            "roll_reason": "Why we are rolling" or null,
+            "ask_for_roll": "NdM+K" or null,
+            "perform_roll": "NdM+K" or null,
             "internal_thought": "..."
         }}
         """)
@@ -125,48 +129,62 @@ class AgentPersonnage:
         analysis = analysis_chain.invoke({
             "pdp_values": json.dumps(pdp),
             "char_sheet": json.dumps(char_sheet),
-            "prochaine_etape": prochaine_etape,
-            "context": context_text,
+            "current_step": current_step,
+            "context": current_context,
             "query": query,
-            "journal": json.dumps(journal[-5:]) # Last 5 exchanges for context
+            "journal": json.dumps(journal[-5:])
         })
 
-        # Step 3: Handle Dice Rolls if requested
+        # Step 3: Update local state to find the REAL next step
+        temp_pdp = pdp.copy()
+        temp_pdp.update(analysis.get("completed_steps", {}))
+        real_next_step = next((k for k, v in temp_pdp.items() if not v), "fin")
+
+        # Step 4: Handle Dice Rolls
         roll_result = None
-        if analysis.get("needs_dice_roll"):
-            roll_data = simulate_dice_roll(analysis["needs_dice_roll"])
+        if analysis.get("perform_roll"):
+            roll_data = simulate_dice_roll(analysis["perform_roll"])
             if roll_data:
                 roll_result = roll_data["texte"]
 
-        # Step 4: Pass 2 - Response Generation
+        # Step 5: Search CODEX info for the NEXT step to provide options
+        next_context = ""
+        if real_next_step != "fin":
+            next_docs = self.codex_db.similarity_search(f"character creation {real_next_step} options list choosing", k=5) if self.codex_db else []
+            next_context = "\n\n".join([doc.page_content for doc in next_docs])
+
+        # Step 6: Pass 2 - Response Generation (MJ Persona)
         generation_prompt = ChatPromptTemplate.from_template("""
-        You are the Game Master (MJ). Write an immersive response in FRENCH to the player.
+        You are the Game Master (MJ). Your goal is to guide the player in creating their character.
+        Be immersive, encouraging, and CONCISE.
+        You speak FRENCH.
 
-        ANALYSIS RESULTS:
-        - Updates detected: {updates}
-        - Steps completed: {completed}
-        - Dice Roll Result: {roll_result}
+        ANALYSIS:
+        - Updates: {updates}
+        - Completed: {completed}
+        - Dice Roll: {roll_result}
+        - Ask for Roll: {ask_for_roll}
 
-        CURRENT CHARACTER SHEET: {char_sheet}
-        CURRENT CHECKLIST: {pdp_values}
-        CODEX CONTEXT: {context}
-        PLAYER'S MESSAGE: {query}
+        NEXT STEP: {next_step}
+        CODEX FOR NEXT STEP: {next_context}
+        PLAYER_QUERY: {query}
 
         INSTRUCTIONS:
-        1. Confirm what has been saved/updated.
-        2. If a dice roll was performed, announce it and explain the results.
-        3. Present the options for the NEXT step (from CODEX).
-        4. Ask the next question.
-        5. Be immersive and concise.
-        6. Do not repeat the whole guide.
-        7. If everything is done, say goodbye and prepare for adventure.
-        8. UPDATES: If you performed a dice roll or made a decision, include it in 'additional_updates' so it can be saved to the character sheet.
+        1. WELCOME: If the PLAYER_QUERY is "Début de l'aventure", start with a warm welcome and introduce the process briefly.
+        2. CONFIRM: Briefly confirm what was saved.
+        2. MJ TONE: Use a narrative, warm tone. Avoid technical lists unless listing options.
+        3. OPTIONS: If moving to a choice (Race, Class), list the options from the CODEX concisely.
+           - DO NOT copy progression tables or technical stats for all levels.
+           - Just list the names and a one-sentence flavor description.
+        4. QUESTION: Always end with a CLEAR QUESTION for the player regarding the NEXT step.
+        5. DICE: If 'ask_for_roll' is set, explain the rule (e.g., "We need to roll 3d6") and ask if you should do it.
+        6. NO SPOILERS: Don't talk about steps beyond the next one.
 
         Respond ONLY in JSON:
         {{
             "message": "Your response in FRENCH",
-            "reflexion": "Internal reasoning in English",
-            "additional_updates": {{ "field": "value", ... }}
+            "reflexion": "Internal thought in English",
+            "additional_updates": {{ ... }}
         }}
         """)
 
@@ -175,9 +193,9 @@ class AgentPersonnage:
             "updates": json.dumps(analysis.get("detected_updates", {})),
             "completed": json.dumps(analysis.get("completed_steps", {})),
             "roll_result": roll_result or "None",
-            "char_sheet": json.dumps(char_sheet),
-            "pdp_values": json.dumps(pdp),
-            "context": context_text,
+            "ask_for_roll": analysis.get("ask_for_roll") or "None",
+            "next_step": real_next_step,
+            "next_context": next_context,
             "query": query
         })
 
@@ -207,27 +225,12 @@ class AgentPersonnage:
 
         return res
 
-    def extraire_pdp_du_guide(self, guide_text):
+    def extraire_pdp_du_guide(self, guide_data):
         """
-        Extracts a checklist of steps from the guide text.
+        Extracts a checklist of steps from the guide data.
         """
-        prompt = ChatPromptTemplate.from_template("""
-        Analyze this character creation guide and extract the mandatory steps (e.g., name, race, class, attributes, equipment).
-
-        GUIDE:
-        {guide}
-
-        Return a JSON object with each step as a key and 'false' as the value.
-        Always start with 'nom' (name).
-        Be concise with key names (e.g., "nom", "race", "classe", "statistiques", "equipement").
-
-        JSON:
-        """)
-        chain = prompt | self.llm_json | JsonOutputParser()
-        try:
-            return chain.invoke({"guide": guide_text})
-        except:
-            return {"nom": False, "race": False, "classe": False, "statistiques": False, "equipement": False}
+        steps = guide_data.get("steps", ["nom", "race", "classe", "statistiques", "equipement"])
+        return {step: False for step in steps}
 
     def calculer_xp(self, action_query, narration, regles_info, world_info):
         context_query = f"XP reward for action {action_query}"
