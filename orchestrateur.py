@@ -242,9 +242,15 @@ class Orchestrateur:
         return workflow.compile()
 
     def run(self, query):
+        memory = memory_manager.load_memory()
+        etape = memory.get("etape", "CREATION")
+
+        if etape == "CREATION":
+            return self.gerer_flux_creation(query)
+
         initial_state = {
             "query": query,
-            "memory": memory_manager.load_memory(),
+            "memory": memory,
             "garde_info": {},
             "regles_info": "",
             "world_info": "",
@@ -254,23 +260,35 @@ class Orchestrateur:
         }
         return self.graph.stream(initial_state)
 
+    def gerer_flux_creation(self, query):
+        # Flux direct pour la création, bypassant le LangGraph
+        memory = memory_manager.load_memory()
+        journal = memory.get("personnage", {}).get("journal_creation", [])
+
+        res = self.agent_personnage.interagir_creation(query, memory, journal)
+
+        # Persistence immédiate
+        if res.get("personnage_updates"):
+            memory_manager.update_personnage(res["personnage_updates"])
+
+        memory_manager.add_to_journal_creation(f"Joueur: {query}")
+        memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
+
+        if res.get("creation_terminee"):
+            memory_manager.update_etape("AVENTURE")
+
+        # Format compatible avec le stream de l'UI
+        yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
+        yield {"update_memory": {"updates": {"personnage_updates": res.get("personnage_updates", {})}}}
+
     def initialiser_aventure(self):
         # On vérifie si on doit passer par la création
         memory = memory_manager.load_memory()
         etape = memory.get("etape", "CREATION")
 
         if etape == "CREATION":
-            # On génère le guide de création basé sur le CODEX
-            res = self.agent_personnage.interagir_creation("Initialisation du guide", memory)
-            yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
-
-            updates = {
-                "resume_action": "Affichage du guide de création de personnage"
-            }
-            memory_manager.add_to_history(updates["resume_action"])
-            memory_manager.add_to_journal_creation(f"MJ: Guide affiché")
-
-            yield {"update_memory": {"updates": updates}}
+            # Appel du flux direct
+            return self.gerer_flux_creation("Début de l'aventure")
         else:
             # Introduction classique au monde
             world_info = self.agent_monde.chercher_introduction()
