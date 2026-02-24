@@ -246,7 +246,8 @@ class Orchestrateur:
         etape = memory.get("etape", "CREATION")
 
         if etape == "CREATION":
-            return self.gerer_flux_creation(query)
+            yield from self.gerer_flux_creation(query)
+            return
 
         initial_state = {
             "query": query,
@@ -288,7 +289,7 @@ class Orchestrateur:
 
         if etape == "CREATION":
             # Appel du flux direct
-            return self.gerer_flux_creation("Début de l'aventure")
+            yield from self.gerer_flux_creation("Début de l'aventure")
         else:
             # Introduction classique au monde
             world_info = self.agent_monde.chercher_introduction()
