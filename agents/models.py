@@ -27,6 +27,8 @@ class LevelUpCheck(BaseModel):
 class CharacterCreationAnalysis(BaseModel):
     updates: Dict[str, Optional[Union[str, int, Dict, List]]] = Field(default_factory=dict)
     player_agreed_to_roll: bool = Field(default=False)
+    missing_fields: List[str] = Field(default_factory=list, description="Fields still missing")
+    stats_to_roll: List[str] = Field(default_factory=list, description="List of stats names that need a roll")
     internal_thought: str = Field(default="", description="English reasoning")
 
 class CharacterCreationResponse(BaseModel):
