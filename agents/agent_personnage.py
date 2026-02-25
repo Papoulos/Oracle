@@ -59,14 +59,12 @@ class AgentPersonnage:
         return len(valid_stats) >= 6
 
     def _compute_missing_fields(self, sheet, analyst_missing=None):
-        if analyst_missing is not None:
-            # We trust the analyst if it provided a list, but we filter to known fields
-            allowed = {"nom", "race", "classe", "stats", "equipement"}
-            filtered = [f for f in analyst_missing if f in allowed]
-            if filtered:
-                return filtered
-
+        """
+        Computes missing fields by combining programmatic checks and analyst feedback.
+        The character sheet content always takes precedence over analyst hallucinations.
+        """
         missing = []
+        # Primary fields check
         if sheet.get("nom") in ["À définir", "...", None, ""]:
             missing.append("nom")
         if sheet.get("race") in ["À définir", "...", None, ""]:
@@ -77,6 +75,16 @@ class AgentPersonnage:
             missing.append("stats")
         if sheet.get("equipement") in ["À définir", "...", None, ""]:
             missing.append("equipement")
+
+        # We can append extra fields identified by the analyst if they are truly missing in the sheet
+        if analyst_missing:
+            for field in analyst_missing:
+                if field not in missing:
+                    # Only add it if it's not already set in the sheet
+                    val = sheet.get(field)
+                    if val in ["À définir", "...", None, ""]:
+                        missing.append(field)
+
         return missing
 
     def generer_guide_creation(self):
