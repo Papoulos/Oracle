@@ -54,9 +54,18 @@ class AgentPersonnage:
         if not isinstance(stats, dict) or not stats:
             return False
         invalid_values = {"À définir", "...", "", None, "Roll 3d6", "Lancer 3d6"}
-        return any(v not in invalid_values for v in stats.values())
+        valid_stats = [v for v in stats.values() if v not in invalid_values]
+        # Most OSR games use 6 stats.
+        return len(valid_stats) >= 6
 
-    def _compute_missing_fields(self, sheet):
+    def _compute_missing_fields(self, sheet, analyst_missing=None):
+        if analyst_missing is not None:
+            # We trust the analyst if it provided a list, but we filter to known fields
+            allowed = {"nom", "race", "classe", "stats", "equipement"}
+            filtered = [f for f in analyst_missing if f in allowed]
+            if filtered:
+                return filtered
+
         missing = []
         if sheet.get("nom") in ["À définir", "...", None, ""]:
             missing.append("nom")
@@ -153,6 +162,9 @@ class AgentPersonnage:
 
         GOALS: We need final values for: nom (name), race, classe, stats (attributes), equipement.
 
+        CODEX CONTEXT (for rules):
+        {context}
+
         CURRENT SHEET:
         {char_sheet}
 
@@ -166,13 +178,18 @@ class AgentPersonnage:
         1. DATA EXTRACTION: Extract any NEW information provided by the player in French.
         2. PERSISTENCE: If a value was already set in the CURRENT SHEET, keep it UNLESS the player explicitly changed it.
         3. NO INSTRUCTIONS: Never store things like "Roll 3d6" or "Lancer les dés" as values. Only store final names or numbers.
-        4. DICE ROLL AGREEMENT: Set 'player_agreed_to_roll' to true ONLY if the player just said "Yes", "Ok", "Fais-le", etc., in response to a roll proposal.
-        5. STATS: If you see dice results in the history (e.g. [MJ] J'ai lancé les dés...), extract the values into the 'stats' field if appropriate.
+        4. DICE ROLL AGREEMENT: Set 'player_agreed_to_roll' to true ONLY if the player just said "Yes", "Ok", "Fais-le", "Prêt", etc., in response to a roll proposal or when prompted to start stats/attribute generation.
+        5. STATS: If you see dice results in the history (e.g. [MJ] J'ai lancé les dés...), extract the values into the 'stats' field.
+        6. MISSING FIELDS: Identify which fields from [nom, race, classe, stats, equipement] are still missing or incomplete.
+           'stats' is incomplete if not all required attributes (Force, Intelligence, Sagesse, Dextérité, Constitution, Charisme) are determined.
+        7. STATS TO ROLL: If 'stats' is missing and player agreed to roll, list the names of the stats that still need a roll (e.g. ["Force", "Intelligence", ...]).
 
         Respond ONLY in JSON matching this structure:
         {{
             "updates": {{ "nom": "...", "race": "...", "classe": "...", "stats": {{...}}, "equipement": "..." }},
             "player_agreed_to_roll": boolean,
+            "missing_fields": ["field1", "field2", ...],
+            "stats_to_roll": ["Stat1", "Stat2", ...],
             "internal_thought": "English explanation"
         }}
         """)
@@ -180,6 +197,7 @@ class AgentPersonnage:
         analysis_chain = analysis_prompt | self.llm_json | JsonOutputParser()
         try:
             analysis_dict = safe_chain_invoke(analysis_chain, {
+                "context": context_text,
                 "char_sheet": json.dumps(char_sheet),
                 "history": json.dumps(filtered_journal),
                 "query": query
@@ -196,15 +214,19 @@ class AgentPersonnage:
                     updated_sheet[k] = v
 
         updated_sheet = self._normalize_character_sheet(updated_sheet)
-        missing_fields = self._compute_missing_fields(updated_sheet)
+        missing_fields = self._compute_missing_fields(updated_sheet, analysis.missing_fields)
         next_step = missing_fields[0] if missing_fields else "termine"
 
         # Step 2: Handle Dice Rolls
-        roll_result = None
+        roll_results = []
         if analysis.player_agreed_to_roll:
-            roll_data = simulate_dice_roll("3d6")
-            if roll_data:
-                roll_result = roll_data["texte"]
+            stats_to_gen = analysis.stats_to_roll if analysis.stats_to_roll else (["Jet"] if "stats" in missing_fields else [])
+            for stat in stats_to_gen:
+                roll_data = simulate_dice_roll("3d6")
+                if roll_data:
+                    roll_results.append(f"{stat}: {roll_data['texte']}")
+
+        roll_result_str = "\n".join(roll_results) if roll_results else None
 
         # Step 3: Pass 2 - The DM (Conversational Response)
         dm_prompt = ChatPromptTemplate.from_template("""
@@ -232,7 +254,7 @@ class AgentPersonnage:
         2. CONTINUITY: Follow NEXT STEP TO HANDLE. Never ask a question about a field that is not in MISSING FIELDS.
         3. NO REPETITION: Do not ask for information that is ALREADY in the UPDATED SHEET.
         4. OPTIONS: List names of options from CODEX concisely in French.
-        5. DICE: If you are at the 'stats' step and DICE ROLL RESULT is None, suggest rolling 3d6 in French.
+        5. DICE: If you are at the 'stats' step and DICE ROLL RESULT is None, suggest rolling 3d6 for all missing attributes in French.
         6. COMPLETION: If NEXT STEP TO HANDLE is 'termine', summarize the full character sheet and set creation_terminee to true.
         7. QUESTION: If creation is not complete, always end with a clear question in French.
 
@@ -250,7 +272,7 @@ class AgentPersonnage:
                 "updated_sheet": json.dumps(updated_sheet),
                 "history": json.dumps(filtered_journal),
                 "context": context_text,
-                "roll_result": roll_result or "None",
+                "roll_result": roll_result_str or "None",
                 "next_step": next_step,
                 "missing_fields": json.dumps(missing_fields)
             })
@@ -271,8 +293,8 @@ class AgentPersonnage:
             "creation_terminee": creation_terminee
         }
 
-        if roll_result:
-            res["message"] += f"\n\n[MJ] J'ai lancé les dés pour vous : {roll_result}"
+        if roll_result_str:
+            res["message"] += f"\n\n[MJ] J'ai lancé les dés pour vous :\n{roll_result_str}"
 
         return res
 
