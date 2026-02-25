@@ -78,95 +78,127 @@ class AgentPersonnage:
 
     def interagir_creation(self, query, memory, journal=[]):
         """
-        Main interaction loop for character creation in DISCUSSION MODE.
+        Main interaction loop for character creation in DISCUSSION MODE using a robust two-pass logic.
         """
         char_sheet = memory.get("personnage", {})
 
-        # Step 0: Ensure minimal points_de_passage exist
-        if not char_sheet.get("points_de_passage"):
-            char_sheet["points_de_passage"] = {
-                "nom": False, "race": False, "classe": False, "stats": False, "equipement": False
-            }
-
-        # 1. Multi-faceted Search for CODEX context
-        # We search for rules, but also specifically for races, classes and stats to give the DM a full view
+        # Step 0: Search Context
         search_queries = [
             f"character creation rules {query}",
             "available races and classes list",
             "how to calculate stats attributes 3d6"
         ]
-        context = ""
+        context_text = ""
         if self.codex_db:
             for q in search_queries:
                 docs = self.codex_db.similarity_search(q, k=4)
-                context += f"\n--- Results for '{q}' ---\n"
-                context += "\n\n".join([d.page_content for d in docs])
+                context_text += f"\n--- Results for '{q}' ---\n"
+                context_text += "\n\n".join([d.page_content for d in docs])
 
-        # 2. Discussion Prompt
-        prompt = ChatPromptTemplate.from_template("""
-        You are the Character Creation DM. Your goal is to build a character through a natural DISCUSSION in French.
+        filtered_journal = [m for m in journal[-6:] if len(m) < 600]
 
-        GOALS: We need to define: Nom (Name), Race, Classe, Statistiques (Stats), and Équipement.
+        # Step 1: Pass 1 - The Analyst (Strict Data Extraction)
+        analysis_prompt = ChatPromptTemplate.from_template("""
+        You are the Character Analyst. Your job is to update the character sheet state based on the conversation.
+        Focus on facts. English instructions, JSON output.
 
-        CURRENT CHARACTER SHEET:
+        GOALS: We need final values for: nom (name), race, classe, stats (attributes), equipement.
+
+        CURRENT SHEET:
         {char_sheet}
 
-        RECENT CONVERSATION HISTORY:
+        HISTORY:
+        {history}
+
+        LATEST PLAYER MESSAGE:
+        {query}
+
+        TASKS:
+        1. DATA EXTRACTION: Extract any NEW information provided by the player. Look at the conversation history to see what was just discussed.
+        2. PERSISTENCE: If a value was already set in the CURRENT SHEET, keep it UNLESS the player explicitly changed it.
+        3. NO INSTRUCTIONS: Never store things like "Roll 3d6" or "Lancer les dés" as values. Only store final names or numbers.
+        4. DICE ROLL AGREEMENT: Set 'player_agreed_to_roll' to true ONLY if the player just said "Yes", "Ok", "Fais-le", etc., in response to a roll proposal.
+        5. STATS: If you see dice results in the history (e.g. [MJ] J'ai lancé les dés...), extract the values into the 'stats' field if appropriate.
+
+        Respond ONLY in JSON:
+        {{
+            "updates": {{ "nom": "...", "race": "...", "classe": "...", "stats": {{...}}, "equipement": "..." }},
+            "player_agreed_to_roll": bool,
+            "internal_thought": "Explain your data extraction logic here."
+        }}
+        """)
+
+        analysis_chain = analysis_prompt | self.llm_json | JsonOutputParser()
+        analysis = analysis_chain.invoke({
+            "char_sheet": json.dumps(char_sheet),
+            "history": json.dumps(filtered_journal),
+            "query": query
+        })
+
+        # Apply updates to a local sheet for the next pass
+        updated_sheet = char_sheet.copy()
+        if analysis.get("updates"):
+            for k, v in analysis["updates"].items():
+                if v not in ["À définir", "...", None, ""]:
+                    updated_sheet[k] = v
+
+        # Step 2: Handle Dice Rolls
+        roll_result = None
+        if analysis.get("player_agreed_to_roll"):
+            # DM logic will decide the format, for now let's assume 3d6 if stats are missing
+            roll_data = simulate_dice_roll("3d6")
+            if roll_data:
+                roll_result = roll_data["texte"]
+
+        # Step 3: Pass 2 - The DM (Conversational Response)
+        dm_prompt = ChatPromptTemplate.from_template("""
+        You are the Character Creation DM. You are having a natural DISCUSSION in French with the player.
+
+        UPDATED SHEET (Truth):
+        {updated_sheet}
+
+        HISTORY:
         {history}
 
         CODEX CONTEXT:
         {context}
 
-        PLAYER'S MESSAGE:
-        {query}
+        DICE ROLL RESULT (If performed): {roll_result}
 
         MISSION:
-        1. DISCUSSION MODE: Talk like a human DM. Acknowledge the player's input. Suggest options if they are stuck.
-        2. CONTINUITY: Look at the HISTORY and SHEET. If a field is already filled, move to the next logical step.
-        3. DATA EXTRACTION:
-           - Extract ANY valid information (name, race, class, stats) provided by the player into 'personnage_updates'.
-           - NEVER store instructions like "Roll 3d6" as values.
-        4. DICE ROLLS:
-           - If stats are missing, EXPLAIN the CODEX rule (e.g., 3d6) and ASK the player if they want you to roll.
-           - If the player explicitly agreed ("Yes", "Ok", "Fais-le"), set 'perform_roll' to the dice format (e.g., "3d6").
-        5. OPTIONS: When presenting options for race or class, provide a CONCISE list of names found in the CODEX. Do not list technical progression tables.
-        6. QUESTION: You MUST end your message with a direct, clear question in French to move the process forward.
-        7. COMPLETION: Set 'creation_terminee' to true ONLY when all main fields (Nom, Race, Classe, Stats, Équipement) are filled.
+        1. DISCUSSION: Acknowledge the player's last message.
+        2. CONTINUITY: Check the UPDATED SHEET. If a field is already filled (not 'À définir'), move to the next logical step (Race -> Classe -> Stats -> Equipement).
+        3. NO REPETITION: Do not ask for information that is ALREADY in the UPDATED SHEET.
+        4. OPTIONS: List names of options from CODEX concisely.
+        5. DICE: If you are at the 'stats' step and DICE ROLL RESULT is None, suggest rolling 3d6.
+        6. QUESTION: Always end with a clear question.
 
-        Respond ONLY in JSON format:
+        Respond ONLY in JSON:
         {{
-            "reflexion": "Internal thought in English about progress and next step.",
-            "message": "Your response in FRENCH. Always ends with a question.",
-            "personnage_updates": {{ "nom": "...", "race": "...", "classe": "...", "stats": {{...}} }},
-            "perform_roll": "NdM+K" or null,
+            "message": "Your response in FRENCH",
+            "reflexion": "Internal thought in English",
             "creation_terminee": bool
         }}
         """)
 
-        # Filter journal
-        filtered_journal = [m for m in journal[-6:] if len(m) < 600]
-
-        chain = prompt | self.llm_json | JsonOutputParser()
-        res = chain.invoke({
-            "char_sheet": json.dumps(char_sheet),
+        dm_chain = dm_prompt | self.llm_json | JsonOutputParser()
+        dm_res = dm_chain.invoke({
+            "updated_sheet": json.dumps(updated_sheet),
             "history": json.dumps(filtered_journal),
-            "context": context,
-            "query": query
+            "context": context_text,
+            "roll_result": roll_result or "None"
         })
 
-        # 3. Automated Dice Rolling
-        if res.get("perform_roll"):
-            roll_data = simulate_dice_roll(res["perform_roll"])
-            if roll_data:
-                # Inject the roll result into the message
-                res["message"] = f"{res['message']}\n\n[MJ] J'ai lancé les dés pour vous : {roll_data['texte']}"
+        # Step 4: Final Consolidation
+        res = {
+            "reflexion": f"Analyst: {analysis.get('internal_thought')} | DM: {dm_res.get('reflexion')}",
+            "message": dm_res.get("message"),
+            "personnage_updates": analysis.get("updates", {}),
+            "creation_terminee": dm_res.get("creation_terminee", False)
+        }
 
-                # We also add the raw result to reflexion to help the next turn
-                res["reflexion"] += f" | Dice Roll Performed: {roll_data['texte']}"
-
-                # We ensure points_de_passage for stats is NOT true yet,
-                # because the player might need to assign them or the DM needs to confirm.
-                # UNLESS the DM already assigned them in personnage_updates.
+        if roll_result:
+            res["message"] += f"\n\n[MJ] J'ai lancé les dés pour vous : {roll_result}"
 
         return res
 
