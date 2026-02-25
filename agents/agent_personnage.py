@@ -5,6 +5,12 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser, JsonOutputParser
 from agents.agent_regles import simulate_dice_roll
+from agents.models import (
+    XPGain, LevelUpCheck, CharacterCreationAnalysis,
+    CharacterCreationResponse, CharacterEvolutionResponse,
+    CreationGuide
+)
+from llm_utils import safe_chain_invoke, handle_llm_error
 import config
 
 class AgentPersonnage:
@@ -12,13 +18,15 @@ class AgentPersonnage:
         self.llm = ChatOllama(
             model=config.OLLAMA_MODEL,
             base_url=config.OLLAMA_BASE_URL,
-            temperature=0.7
+            temperature=0.7,
+            timeout=20
         )
         self.llm_json = ChatOllama(
             model=config.OLLAMA_MODEL,
             base_url=config.OLLAMA_BASE_URL,
             temperature=0,
-            format="json"
+            format="json",
+            timeout=20
         )
         self.codex_db = codex_db
         self.intrigue_db = intrigue_db
@@ -26,7 +34,6 @@ class AgentPersonnage:
     def generer_guide_creation(self):
         """
         Analyzes the CODEX to extract character creation steps and rules.
-        Used internally to set up the creation steps.
         """
         queries = [
             "steps for character creation",
@@ -43,7 +50,7 @@ class AgentPersonnage:
                 context_text += "\n\n".join([d.page_content for d in docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        You are the System Architect. Your goal is to extract character creation rules from the CODEX for an internal state machine.
+        You are the System Architect. Your goal is to extract character creation rules from the CODEX.
 
         CODEX DOCUMENTS:
         {context}
@@ -68,7 +75,9 @@ class AgentPersonnage:
 
         chain = prompt | self.llm_json | JsonOutputParser()
         try:
-            return chain.invoke({"context": context_text})
+            res_dict = safe_chain_invoke(chain, {"context": context_text})
+            validated = CreationGuide(**res_dict)
+            return validated.model_dump()
         except Exception as e:
             return {
                 "steps": ["nom", "race", "classe", "statistiques", "equipement"],
@@ -114,38 +123,41 @@ class AgentPersonnage:
         {query}
 
         TASKS:
-        1. DATA EXTRACTION: Extract any NEW information provided by the player. Look at the conversation history to see what was just discussed.
+        1. DATA EXTRACTION: Extract any NEW information provided by the player in French.
         2. PERSISTENCE: If a value was already set in the CURRENT SHEET, keep it UNLESS the player explicitly changed it.
         3. NO INSTRUCTIONS: Never store things like "Roll 3d6" or "Lancer les dés" as values. Only store final names or numbers.
         4. DICE ROLL AGREEMENT: Set 'player_agreed_to_roll' to true ONLY if the player just said "Yes", "Ok", "Fais-le", etc., in response to a roll proposal.
         5. STATS: If you see dice results in the history (e.g. [MJ] J'ai lancé les dés...), extract the values into the 'stats' field if appropriate.
 
-        Respond ONLY in JSON:
+        Respond ONLY in JSON matching this structure:
         {{
             "updates": {{ "nom": "...", "race": "...", "classe": "...", "stats": {{...}}, "equipement": "..." }},
-            "player_agreed_to_roll": bool,
-            "internal_thought": "Explain your data extraction logic here."
+            "player_agreed_to_roll": boolean,
+            "internal_thought": "English explanation"
         }}
         """)
 
         analysis_chain = analysis_prompt | self.llm_json | JsonOutputParser()
-        analysis = analysis_chain.invoke({
-            "char_sheet": json.dumps(char_sheet),
-            "history": json.dumps(filtered_journal),
-            "query": query
-        })
+        try:
+            analysis_dict = safe_chain_invoke(analysis_chain, {
+                "char_sheet": json.dumps(char_sheet),
+                "history": json.dumps(filtered_journal),
+                "query": query
+            })
+            analysis = CharacterCreationAnalysis(**analysis_dict)
+        except Exception as e:
+            analysis = CharacterCreationAnalysis(internal_thought=f"Error: {e}")
 
         # Apply updates to a local sheet for the next pass
         updated_sheet = char_sheet.copy()
-        if analysis.get("updates"):
-            for k, v in analysis["updates"].items():
+        if analysis.updates:
+            for k, v in analysis.updates.items():
                 if v not in ["À définir", "...", None, ""]:
                     updated_sheet[k] = v
 
         # Step 2: Handle Dice Rolls
         roll_result = None
-        if analysis.get("player_agreed_to_roll"):
-            # DM logic will decide the format, for now let's assume 3d6 if stats are missing
+        if analysis.player_agreed_to_roll:
             roll_data = simulate_dice_roll("3d6")
             if roll_data:
                 roll_result = roll_data["texte"]
@@ -166,48 +178,48 @@ class AgentPersonnage:
         DICE ROLL RESULT (If performed): {roll_result}
 
         MISSION:
-        1. DISCUSSION: Acknowledge the player's last message.
+        1. DISCUSSION: Acknowledge the player's last message in French.
         2. CONTINUITY: Check the UPDATED SHEET. If a field is already filled (not 'À définir'), move to the next logical step (Race -> Classe -> Stats -> Equipement).
         3. NO REPETITION: Do not ask for information that is ALREADY in the UPDATED SHEET.
-        4. OPTIONS: List names of options from CODEX concisely.
-        5. DICE: If you are at the 'stats' step and DICE ROLL RESULT is None, suggest rolling 3d6.
-        6. QUESTION: Always end with a clear question.
+        4. OPTIONS: List names of options from CODEX concisely in French.
+        5. DICE: If you are at the 'stats' step and DICE ROLL RESULT is None, suggest rolling 3d6 in French.
+        6. QUESTION: Always end with a clear question in French.
 
         Respond ONLY in JSON:
         {{
             "message": "Your response in FRENCH",
             "reflexion": "Internal thought in English",
-            "creation_terminee": bool
+            "creation_terminee": boolean
         }}
         """)
 
         dm_chain = dm_prompt | self.llm_json | JsonOutputParser()
-        dm_res = dm_chain.invoke({
-            "updated_sheet": json.dumps(updated_sheet),
-            "history": json.dumps(filtered_journal),
-            "context": context_text,
-            "roll_result": roll_result or "None"
-        })
+        try:
+            dm_dict = safe_chain_invoke(dm_chain, {
+                "updated_sheet": json.dumps(updated_sheet),
+                "history": json.dumps(filtered_journal),
+                "context": context_text,
+                "roll_result": roll_result or "None"
+            })
+            dm_res = CharacterCreationResponse(**dm_dict)
+        except Exception as e:
+            dm_res = CharacterCreationResponse(
+                message=f"Désolé, j'ai eu un petit problème technique : {handle_llm_error(e)}",
+                reflexion=f"Error: {e}"
+            )
 
         # Step 4: Final Consolidation
         res = {
-            "reflexion": f"Analyst: {analysis.get('internal_thought')} | DM: {dm_res.get('reflexion')}",
-            "message": dm_res.get("message"),
-            "personnage_updates": analysis.get("updates", {}),
-            "creation_terminee": dm_res.get("creation_terminee", False)
+            "reflexion": f"Analyst: {analysis.internal_thought} | DM: {dm_res.reflexion}",
+            "message": dm_res.message,
+            "personnage_updates": analysis.updates,
+            "creation_terminee": dm_res.creation_terminee
         }
 
         if roll_result:
             res["message"] += f"\n\n[MJ] J'ai lancé les dés pour vous : {roll_result}"
 
         return res
-
-    def extraire_pdp_du_guide(self, guide_data):
-        """
-        Extracts a checklist of steps from the guide data.
-        """
-        steps = guide_data.get("steps", ["nom", "race", "classe", "statistiques", "equipement"])
-        return {step: False for step in steps}
 
     def calculer_xp(self, action_query, narration, regles_info, world_info):
         context_query = f"XP reward for action {action_query}"
@@ -229,18 +241,23 @@ class AgentPersonnage:
 
         Return JSON:
         {{
-            "xp_gagne": int,
+            "xp_gagne": integer,
             "raison": "Reason in French"
         }}
         """)
 
         chain = prompt | self.llm_json | JsonOutputParser()
-        return chain.invoke({
-            "context": context_text,
-            "query": action_query,
-            "regles": regles_info,
-            "narration": narration
-        })
+        try:
+            xp_dict = safe_chain_invoke(chain, {
+                "context": context_text,
+                "query": action_query,
+                "regles": regles_info,
+                "narration": narration
+            })
+            validated = XPGain(**xp_dict)
+            return validated.model_dump()
+        except Exception as e:
+            return {"xp_gagne": 0, "raison": f"Erreur lors du calcul XP : {handle_llm_error(e)}"}
 
     def verifier_niveau(self, personnage_memory):
         xp = personnage_memory.get("xp", 0)
@@ -250,7 +267,7 @@ class AgentPersonnage:
         context_text = "\n".join([d.page_content for d in context_docs])
 
         prompt = ChatPromptTemplate.from_template("""
-        Check for level up.
+        Check for level up based on the rules.
 
         RULES:
         {context}
@@ -260,16 +277,21 @@ class AgentPersonnage:
         Return JSON:
         {{
             "passage_niveau": boolean,
-            "nouveau_niveau": int
+            "nouveau_niveau": integer
         }}
         """)
 
         chain = prompt | self.llm_json | JsonOutputParser()
-        return chain.invoke({
-            "context": context_text,
-            "niveau": niveau,
-            "xp": xp
-        })
+        try:
+            lvl_dict = safe_chain_invoke(chain, {
+                "context": context_text,
+                "niveau": niveau,
+                "xp": xp
+            })
+            validated = LevelUpCheck(**lvl_dict)
+            return validated.model_dump()
+        except Exception:
+            return {"passage_niveau": False, "nouveau_niveau": niveau}
 
     def gerer_evolution(self, query, memory, historique=[]):
         context_docs = self.codex_db.similarity_search("level up bonus characteristics skills attributes", k=5) if self.codex_db else []
@@ -292,25 +314,35 @@ class AgentPersonnage:
 
         INSTRUCTIONS:
         1. Analyze player choices based on CODEX rules.
-        2. Explicitly confirm changes.
-        3. List remaining choices clearly if any.
+        2. Explicitly confirm changes in French.
+        3. List remaining choices clearly in French if any.
         4. Update 'personnage_updates' with bonuses (stats, new skills, etc.).
         5. Set 'evolution_terminee' to true when all bonuses are applied.
         6. Respond in FRENCH to the player.
 
-        Return JSON:
+        Return JSON matching this structure:
         {{
-            "reflexion": "Internal reasoning in English.",
-            "message": "Your response to the player in FRENCH.",
+            "reflexion": "English reasoning",
+            "message": "Response in FRENCH",
             "personnage_updates": {{...}},
             "evolution_terminee": boolean
         }}
         """)
 
         chain = prompt | self.llm_json | JsonOutputParser()
-        return chain.invoke({
-            "context": context_text,
-            "char_sheet": json.dumps(memory.get("personnage", {})),
-            "historique": json.dumps(historique),
-            "query": query
-        })
+        try:
+            evol_dict = safe_chain_invoke(chain, {
+                "context": context_text,
+                "char_sheet": json.dumps(memory.get("personnage", {})),
+                "historique": json.dumps(historique),
+                "query": query
+            })
+            validated = CharacterEvolutionResponse(**evol_dict)
+            return validated.model_dump()
+        except Exception as e:
+            return {
+                "reflexion": f"Error: {e}",
+                "message": f"Désolé, j'ai eu un problème technique pendant l'évolution : {handle_llm_error(e)}",
+                "personnage_updates": {},
+                "evolution_terminee": False
+            }

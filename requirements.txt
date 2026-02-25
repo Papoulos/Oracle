@@ -9,3 +9,7 @@ streamlit
 python-dotenv
 fpdf2
 requests
+pydantic
+filelock
+pytest
+tenacity
