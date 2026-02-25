@@ -31,6 +31,45 @@ class AgentPersonnage:
         self.codex_db = codex_db
         self.intrigue_db = intrigue_db
 
+    @staticmethod
+    def _normalize_character_sheet(sheet):
+        """Normalize character sheet shape to keep step progression deterministic."""
+        normalized = dict(sheet or {})
+        normalized.setdefault("nom", "À définir")
+        normalized.setdefault("race", "À définir")
+        normalized.setdefault("classe", "À définir")
+        normalized.setdefault("stats", {})
+
+        equipement = normalized.get("equipement")
+        inventaire = normalized.get("inventaire", [])
+        if (not equipement or equipement == "À définir") and inventaire:
+            normalized["equipement"] = ", ".join(inventaire)
+        elif "equipement" not in normalized:
+            normalized["equipement"] = "À définir"
+
+        return normalized
+
+    @staticmethod
+    def _is_stats_complete(stats):
+        if not isinstance(stats, dict) or not stats:
+            return False
+        invalid_values = {"À définir", "...", "", None, "Roll 3d6", "Lancer 3d6"}
+        return any(v not in invalid_values for v in stats.values())
+
+    def _compute_missing_fields(self, sheet):
+        missing = []
+        if sheet.get("nom") in ["À définir", "...", None, ""]:
+            missing.append("nom")
+        if sheet.get("race") in ["À définir", "...", None, ""]:
+            missing.append("race")
+        if sheet.get("classe") in ["À définir", "...", None, ""]:
+            missing.append("classe")
+        if not self._is_stats_complete(sheet.get("stats")):
+            missing.append("stats")
+        if sheet.get("equipement") in ["À définir", "...", None, ""]:
+            missing.append("equipement")
+        return missing
+
     def generer_guide_creation(self):
         """
         Analyzes the CODEX to extract character creation steps and rules.
@@ -85,11 +124,12 @@ class AgentPersonnage:
                 "internal_notes": f"Error during generation: {e}"
             }
 
-    def interagir_creation(self, query, memory, journal=[]):
+    def interagir_creation(self, query, memory, journal=None):
         """
         Main interaction loop for character creation in DISCUSSION MODE using a robust two-pass logic.
         """
-        char_sheet = memory.get("personnage", {})
+        char_sheet = self._normalize_character_sheet(memory.get("personnage", {}))
+        journal = journal or []
 
         # Step 0: Search Context
         search_queries = [
@@ -155,6 +195,10 @@ class AgentPersonnage:
                 if v not in ["À définir", "...", None, ""]:
                     updated_sheet[k] = v
 
+        updated_sheet = self._normalize_character_sheet(updated_sheet)
+        missing_fields = self._compute_missing_fields(updated_sheet)
+        next_step = missing_fields[0] if missing_fields else "termine"
+
         # Step 2: Handle Dice Rolls
         roll_result = None
         if analysis.player_agreed_to_roll:
@@ -169,6 +213,12 @@ class AgentPersonnage:
         UPDATED SHEET (Truth):
         {updated_sheet}
 
+        NEXT STEP TO HANDLE:
+        {next_step}
+
+        MISSING FIELDS:
+        {missing_fields}
+
         HISTORY:
         {history}
 
@@ -179,11 +229,12 @@ class AgentPersonnage:
 
         MISSION:
         1. DISCUSSION: Acknowledge the player's last message in French.
-        2. CONTINUITY: Check the UPDATED SHEET. If a field is already filled (not 'À définir'), move to the next logical step (Race -> Classe -> Stats -> Equipement).
+        2. CONTINUITY: Follow NEXT STEP TO HANDLE. Never ask a question about a field that is not in MISSING FIELDS.
         3. NO REPETITION: Do not ask for information that is ALREADY in the UPDATED SHEET.
         4. OPTIONS: List names of options from CODEX concisely in French.
         5. DICE: If you are at the 'stats' step and DICE ROLL RESULT is None, suggest rolling 3d6 in French.
-        6. QUESTION: Always end with a clear question in French.
+        6. COMPLETION: If NEXT STEP TO HANDLE is 'termine', summarize the full character sheet and set creation_terminee to true.
+        7. QUESTION: If creation is not complete, always end with a clear question in French.
 
         Respond ONLY in JSON:
         {{
@@ -199,7 +250,9 @@ class AgentPersonnage:
                 "updated_sheet": json.dumps(updated_sheet),
                 "history": json.dumps(filtered_journal),
                 "context": context_text,
-                "roll_result": roll_result or "None"
+                "roll_result": roll_result or "None",
+                "next_step": next_step,
+                "missing_fields": json.dumps(missing_fields)
             })
             dm_res = CharacterCreationResponse(**dm_dict)
         except Exception as e:
@@ -208,12 +261,14 @@ class AgentPersonnage:
                 reflexion=f"Error: {e}"
             )
 
+        creation_terminee = dm_res.creation_terminee or not missing_fields
+
         # Step 4: Final Consolidation
         res = {
             "reflexion": f"Analyst: {analysis.internal_thought} | DM: {dm_res.reflexion}",
             "message": dm_res.message,
             "personnage_updates": analysis.updates,
-            "creation_terminee": dm_res.creation_terminee
+            "creation_terminee": creation_terminee
         }
 
         if roll_result:
