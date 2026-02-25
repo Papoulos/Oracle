@@ -1,6 +1,8 @@
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
+from agents.models import MemoryUpdates
+from llm_utils import safe_chain_invoke, handle_llm_error
 import config
 import json
 
@@ -10,40 +12,41 @@ class AgentMemoire:
             model=config.OLLAMA_MODEL,
             base_url=config.OLLAMA_BASE_URL,
             temperature=0,
-            format="json"
+            format="json",
+            timeout=20
         )
 
     def extract_updates(self, query, rules_info, world_info, narration):
         prompt = ChatPromptTemplate.from_template("""
-        Tu es l'Agent Mémoire. Ton rôle est d'analyser le tour qui vient de se dérouler pour en extraire UNIQUEMENT ce qui s'est réellement passé.
+        You are the Memory Agent. Your role is to analyze the turn that just happened to extract ONLY what actually took place.
 
-        SOURCES D'INFORMATION:
-        - Narration MJ (SOURCE PRINCIPALE): C'est ce que le joueur a vu et vécu. Si un fait n'est pas ici, il ne s'est PAS passé.
-        - Règles & Monde: Utilisés uniquement pour confirmer des stats techniques (PV, XP) ou des détails géographiques validés.
+        INFORMATION SOURCES:
+        - GM Narration (MAIN SOURCE): This is what the player saw and experienced. If a fact is not here, it did NOT happen.
+        - Rules & World: Used only to confirm technical stats (HP, XP) or validated geographical details.
 
-        DERNIER TOUR:
-        Joueur: {query}
-        Règles: {rules_info}
-        Monde: {world_info}
-        Narration MJ: {narration}
+        LAST TURN:
+        Player: {query}
+        Rules: {rules_info}
+        World: {world_info}
+        GM Narration: {narration}
 
-        CONSIGNES CRITIQUES:
-        - NE PAS inventer d'actions ou de rencontres. Si le joueur n'a pas parlé à un personnage dans la Narration, il ne l'a PAS contacté.
-        - NE PAS extraire de secrets ou d'infos de l'Agent Monde qui n'ont pas été explicitement révélés dans la Narration.
-        - Le champ "nouveau_lieu" doit être un LIEU (ex: "La place du marché"), pas un nom de personne.
-        - Le résumé "resume_action" doit être strictement factuel basé sur la Narration.
+        CRITICAL INSTRUCTIONS:
+        - DO NOT invent actions or encounters. If the player didn't talk to a character in the Narration, they did NOT contact them.
+        - DO NOT extract secrets or info from the World Agent that were not explicitly revealed in the Narration.
+        - The field "nouveau_lieu" must be a LOCATION (e.g., "The marketplace"), not a person's name.
+        - The summary "resume_action" must be strictly factual in French based on the Narration.
 
-        Réponds UNIQUEMENT avec un objet JSON:
+        Respond ONLY with a JSON object:
         {{
             "personnage_updates": {{
                 "stats": {{...}},
                 "inventaire_ajouts": [...]
             }},
             "monde_updates": {{
-                "nouveau_lieu": "...",
-                "nouvel_evenement": "..."
+                "nouveau_lieu": "string or null",
+                "nouvel_evenement": "string or null"
             }},
-            "resume_action": "Résumé concis (Qui a fait quoi / Résultat)"
+            "resume_action": "Concise summary in French (Who did what / Result)"
         }}
 
         JSON:
@@ -51,13 +54,14 @@ class AgentMemoire:
 
         chain = prompt | self.llm | JsonOutputParser()
         try:
-            updates = chain.invoke({
+            updates_dict = safe_chain_invoke(chain, {
                 "query": query,
                 "rules_info": rules_info,
                 "world_info": world_info,
                 "narration": narration
             })
-            return updates
+            validated = MemoryUpdates(**updates_dict)
+            return validated.model_dump()
         except Exception as e:
-            print(f"Erreur extraction mémoire: {e}")
+            print(f"Error memory extraction: {e}")
             return {}

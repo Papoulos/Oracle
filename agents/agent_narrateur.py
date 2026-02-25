@@ -1,6 +1,7 @@
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
+from llm_utils import safe_chain_invoke, handle_llm_error
 import config
 
 class AgentNarrateur:
@@ -8,79 +9,83 @@ class AgentNarrateur:
         self.llm = ChatOllama(
             model=config.OLLAMA_MODEL,
             base_url=config.OLLAMA_BASE_URL,
-            temperature=0.8
+            temperature=0.8,
+            timeout=20
         )
 
     def narrate(self, query, rules_info, world_info, garde_info, memory):
         prompt = ChatPromptTemplate.from_template("""
-        Tu es le MJ Narrateur. Ton rôle est de décrire la résolution de l'action du joueur et de jouer les PNJ.
-        Tu transformes les informations techniques des autres agents en une narration immersive.
-        **CONTEXTE : C'est un jeu de rôle SOLO. Il n'y a qu'un seul joueur.**
+        You are the GM Narrator (MJ Narrateur). Your role is to describe the resolution of the player's action and play the NPCs.
+        You transform technical information from other agents into an immersive narration in French.
+        **CONTEXT: This is a SOLO roleplaying game. There is only one player.**
 
-        ACTION DU JOUEUR:
+        PLAYER ACTION:
         {query}
 
-        VALIDATION DU GARDE (Agent Garde):
+        GUARD VALIDATION (Agent Garde):
         {garde_info}
 
-        INFOS DES RÈGLES (Agent Règles):
+        RULES INFO (Agent Règles):
         {rules_info}
 
-        INFOS DU MONDE/SCÉNARIO (Agent Monde):
+        WORLD/SCENARIO INFO (Agent Monde):
         {world_info}
 
-        MÉMOIRE DU JEU:
+        GAME MEMORY:
         {memory}
 
-        CONSIGNES:
-        - Concentre-toi sur la résolution de l'action actuelle.
-        - **IMPORTANT : Soumission au Joueur** : Ne fais JAMAIS agir le personnage du joueur (PJ). Ne décris pas ses pensées, ses sentiments, ses mouvements ou ses paroles de manière autonome.
-          - Interdiction : "Vous avancez prudemment", "Vous pensez que...", "Vous dites alors...".
-          - Autorisation : Décrire le résultat de l'action demandée par le joueur.
-        - Si l'Agent Monde signale une "ERREUR : Aucune information trouvée", n'invente rien. Explique au joueur que le MJ a besoin que le scénario soit correctement chargé ou indexé pour continuer, tout en restant un peu dans ton rôle (ex: "Les brumes de l'inconnu s'épaississent car le chemin n'est pas encore tracé...").
-        - Si l'Agent Garde indique que l'action est IMPOSSIBLE, explique-le de manière narrative et immersive (sans dire "L'Agent Garde a dit que"). Raconte pourquoi l'action échoue ou est bloquée.
-        - Si l'action est possible, utilise les INFOS DES RÈGLES et du MONDE pour construire ton récit.
-        - Ne redécris pas inutilement le lieu si le joueur s'y trouve déjà, sauf changement.
-        - Incorpore les résultats des tests de règles (succès/échec) de manière fluide.
-        - Fais parler les PNJ si nécessaire.
-        - Pose un choix ou demande une action au joueur à la fin.
-        - Reste fidèle à l'ambiance et à l'intrigue.
+        INSTRUCTIONS:
+        - Focus on resolving the current action.
+        - **IMPORTANT: Player Autonomy**: NEVER make the player character (PC) act. Do not describe their thoughts, feelings, movements, or words autonomously.
+          - Forbidden: "You advance cautiously", "You think that...", "You then say...".
+          - Allowed: Describe the result of the action requested by the player.
+        - If Agent Monde signals an "ERREUR: Aucune information trouvée", do not invent anything. Explain to the player in French (staying in character) that the GM needs the scenario to be correctly loaded/indexed to continue.
+        - If Agent Garde indicates the action is IMPOSSIBLE, explain it narratively and immersively in French (without saying "Agent Garde said"). Tell why the action fails or is blocked.
+        - If the action is possible, use RULES and WORLD INFO to build your narrative in French.
+        - Do not unnecessarily redescribe the location if the player is already there, unless it changed.
+        - Incorporate rule test results (success/failure) fluidly.
+        - Make NPCs speak if necessary.
+        - Present a choice or ask for an action at the end.
+        - Stay faithful to the atmosphere and plot.
 
-        NARRE LA RÉPONSE AU JOUEUR:
+        NARRATE THE RESPONSE TO THE PLAYER IN FRENCH:
         """)
 
         chain = prompt | self.llm | StrOutputParser()
-        response = chain.invoke({
-            "query": query,
-            "rules_info": rules_info,
-            "world_info": world_info,
-            "garde_info": garde_info,
-            "memory": memory
-        })
-
-        return response
+        try:
+            return safe_chain_invoke(chain, {
+                "query": query,
+                "rules_info": rules_info,
+                "world_info": world_info,
+                "garde_info": garde_info,
+                "memory": memory
+            })
+        except Exception as e:
+            return f"Le MJ Narrateur est momentanément aphone : {handle_llm_error(e)}"
 
     def narrer_introduction(self, world_info):
         prompt = ChatPromptTemplate.from_template("""
-        Tu es le MJ Narrateur. Ton rôle est d'introduire l'aventure au joueur.
-        Tu dois décrire la scène initiale en te basant UNIQUEMENT sur les informations de l'Agent Monde.
-        **CONTEXTE : C'est un jeu de rôle SOLO. Il n'y a qu'un seul joueur.**
+        You are the GM Narrator (MJ Narrateur). Your role is to introduce the adventure to the player.
+        You must describe the initial scene based ONLY on info from Agent Monde.
+        **CONTEXT: SOLO game. One player.**
 
-        INFOS DU SCÉNARIO (Agent Monde) :
+        SCENARIO INFO (Agent Monde):
         {world_info}
 
-        CONSIGNES :
-        1. Présente-toi brièvement comme le MJ.
-        2. Décris le décor, l'ambiance et les PNJ présents selon le scénario.
-        3. **IMPORTANT : PJ Immobile** : Ne fais PAS agir le personnage du joueur (PJ). Ne décris pas ses pensées, ses sentiments, ses mouvements ou sa position de départ de manière active. Le PJ doit être une "caméra" qui découvre la scène. Le joueur doit être totalement libre de sa première action.
-        4. Si l'Agent Monde signale une ERREUR (pas d'intro trouvée), explique au joueur (en restant un peu dans ton rôle) que le destin est encore flou car le scénario n'est pas prêt.
-        5. Termine par une question ouverte invitant le joueur à agir.
+        INSTRUCTIONS:
+        1. Briefly introduce yourself as the GM in French.
+        2. Describe the setting, atmosphere, and NPCs present according to the scenario in French.
+        3. **IMPORTANT: PC Immobile**: DO NOT make the PC act. Do not describe their thoughts, feelings, movements, or starting position actively. The PC should be a "camera" discovering the scene. The player must be totally free for their first action.
+        4. If Agent Monde signals an ERROR (no intro found), explain to the player in French (staying in character) that fate is still blurry because the scenario is not ready.
+        5. End with an open question inviting the player to act.
 
-        NARRE L'INTRODUCTION :
+        NARRATE THE INTRODUCTION IN FRENCH:
         """)
 
         chain = prompt | self.llm | StrOutputParser()
-        response = chain.invoke({
-            "world_info": world_info
-        })
-        return response
+        try:
+            return safe_chain_invoke(chain, {
+                "world_info": world_info
+            })
+        except Exception as e:
+            return f"Le MJ n'arrive pas à lancer l'histoire : {handle_llm_error(e)}"

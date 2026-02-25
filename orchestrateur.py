@@ -45,10 +45,10 @@ class Orchestrateur:
         # L'Agent Règles reçoit l'avis du Garde pour plus de contexte
         char_sheet = json.dumps(state["memory"].get("personnage", {}))
         # On utilise la raison du garde comme info de contexte
-        garde_context = state["garde_info"].get("raison", "")
+        garde_info_str = state["garde_info"].get("raison", "")
 
         # 1. Évaluation du besoin de jet
-        analyse, context_text = self.agent_regles.evaluer_besoin_jet(state["query"], char_sheet, garde_context)
+        analyse, context_text = self.agent_regles.evaluer_besoin_jet(state["query"], char_sheet, garde_info_str)
 
         if analyse.get("besoin_jet") and analyse.get("jet_format"):
             # 2. Simulation du jet (système)
@@ -105,7 +105,7 @@ class Orchestrateur:
             if etape == "CREATION":
                 # On archive l'échange dans le journal de création
                 memory_manager.add_to_journal_creation(f"Joueur: {state['query']}")
-                memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
+                memory_manager.add_to_journal_creation(f"MJ: {res.get('message', '...')}")
 
             if etape == "CREATION" and res.get("creation_terminee"):
                 memory_manager.update_etape("AVENTURE")
@@ -157,7 +157,7 @@ class Orchestrateur:
                     memory_manager.add_evenement(m_up["nouvel_evenement"])
 
             # Gestion XP et Niveau en mode Aventure
-            if etape == "AVENTURE" and state["narration"]:
+            if etape == "AVENTURE" and state.get("narration"):
                 xp_res = self.agent_personnage.calculer_xp(
                     state["query"], state["narration"], state["regles_info"], state["world_info"]
                 )
@@ -206,20 +206,8 @@ class Orchestrateur:
         workflow.add_node("personnage_creation", self._consult_personnage_creation)
         workflow.add_node("personnage_evolution", self._consult_personnage_evolution)
 
-        def route_entree(state: AgentState):
-            if state["query"].strip().lower() == "/levelup":
-                memory_manager.update_etape("LEVEL_UP")
-                return "evolution"
-
-            etape = state["memory"].get("etape", "CREATION")
-            if etape == "CREATION":
-                return "creation"
-            if etape == "LEVEL_UP":
-                return "evolution"
-            return "aventure"
-
         workflow.set_conditional_entry_point(
-            route_entree,
+            self._route_entree,
             {
                 "creation": "personnage_creation",
                 "evolution": "personnage_evolution",
@@ -251,13 +239,20 @@ class Orchestrateur:
 
         return workflow.compile()
 
+    def _route_entree(self, state: AgentState):
+        if state["query"].strip().lower() == "/levelup":
+            memory_manager.update_etape("LEVEL_UP")
+            return "evolution"
+
+        etape = state["memory"].get("etape", "CREATION")
+        if etape == "CREATION":
+            return "creation"
+        if etape == "LEVEL_UP":
+            return "evolution"
+        return "aventure"
+
     def run(self, query):
         memory = memory_manager.load_memory()
-        etape = memory.get("etape", "CREATION")
-
-        if etape == "CREATION":
-            yield from self.gerer_flux_creation(query)
-            return
 
         initial_state = {
             "query": query,
@@ -271,74 +266,41 @@ class Orchestrateur:
         }
         return self.graph.stream(initial_state)
 
-    def gerer_flux_creation(self, query):
-        # Flux direct pour la création, bypassant le LangGraph
-        memory = memory_manager.load_memory()
-        journal = memory.get("personnage", {}).get("journal_creation", [])
-
-        res = self.agent_personnage.interagir_creation(query, memory, journal)
-
-        # Persistence immédiate avec filtrage
-        if res.get("personnage_updates"):
-            p_up = res["personnage_updates"]
-            if isinstance(p_up, dict):
-                # Filtre pour éviter d'écraser avec des valeurs fictives ou vides
-                # On autorise True/False pour les points de passage
-                # On filtre aussi récursivement pour les dictionnaires (comme stats)
-                clean_p_up = {}
-                for k, v in p_up.items():
-                    if v in ["...", "À définir", None, ""]:
-                        continue
-                    if isinstance(v, dict):
-                        # Filter but keep booleans (for points_de_passage)
-                        clean_v = {sk: sv for sk, sv in v.items() if (isinstance(sv, bool) or sv not in ["...", "À définir", None, "", "Roll 3d6", "Lancer 3d6"])}
-                        if clean_v:
-                            clean_p_up[k] = clean_v
-                    else:
-                        clean_p_up[k] = v
-
-                if clean_p_up:
-                    memory_manager.update_personnage(clean_p_up)
-
-        memory_manager.add_to_journal_creation(f"Joueur: {query}")
-        memory_manager.add_to_journal_creation(f"MJ: {res.get('message')}")
-
-        if res.get("creation_terminee"):
-            memory_manager.update_etape("AVENTURE")
-
-        # Format compatible avec le stream de l'UI
-        yield {"personnage_creation": {"personnage_info": res, "narration": res["message"]}}
-        yield {"update_memory": {"updates": {"personnage_updates": res.get("personnage_updates", {})}}}
-
     def initialiser_aventure(self):
         # On vérifie si on doit passer par la création
         memory = memory_manager.load_memory()
         etape = memory.get("etape", "CREATION")
 
         if etape == "CREATION":
-            # Appel du flux direct
-            yield from self.gerer_flux_creation("Début de l'aventure")
+            # Appel du flux via le graphe
+            return self.run("Début de l'aventure")
         else:
             # Introduction classique au monde
-            world_info = self.agent_monde.chercher_introduction()
-            yield {"consult_monde": {"world_info": world_info}}
+            # On pourrait aussi utiliser le graphe ici avec un nœud spécial,
+            # mais on garde ce flux linéaire pour l'intro par souci de simplicité
+            # car il n'y a pas d'action joueur à valider par le Garde au début.
+            def intro_gen():
+                world_info = self.agent_monde.chercher_introduction()
+                yield {"consult_monde": {"world_info": world_info}}
 
-            narration = self.agent_narrateur.narrer_introduction(world_info)
-            yield {"narrate": {"narration": narration}}
+                narration = self.agent_narrateur.narrer_introduction(world_info)
+                yield {"narrate": {"narration": narration}}
 
-            updates = self.agent_memoire.extract_updates(
-                "Début de l'aventure",
-                "N/A",
-                world_info,
-                narration
-            )
+                updates = self.agent_memoire.extract_updates(
+                    "Début de l'aventure",
+                    "N/A",
+                    world_info,
+                    narration
+                )
 
-            if updates:
-                m_up = updates.get("monde_updates", {})
-                if m_up and isinstance(m_up, dict):
-                    if m_up.get("nouveau_lieu"):
-                        memory_manager.update_lieu(m_up["nouveau_lieu"])
-                if updates.get("resume_action"):
-                    memory_manager.add_to_history(updates["resume_action"])
+                if updates:
+                    m_up = updates.get("monde_updates", {})
+                    if m_up and isinstance(m_up, dict):
+                        if m_up.get("nouveau_lieu"):
+                            memory_manager.update_lieu(m_up["nouveau_lieu"])
+                    if updates.get("resume_action"):
+                        memory_manager.add_to_history(updates["resume_action"])
 
-            yield {"update_memory": {"updates": updates}}
+                yield {"update_memory": {"updates": updates}}
+
+            return intro_gen()
