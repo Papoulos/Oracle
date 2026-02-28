@@ -5,28 +5,14 @@ import os
 from agent import RPGAgent
 import config
 
-st.set_page_config(page_title="RPG Oracle - Simplified", page_icon="🎲")
+st.set_page_config(page_title="RPG Oracle - Multi-Agents", page_icon="🎲")
 
 st.title("🎲 RPG Oracle")
-st.caption("Votre assistant de jeu de rôle intelligent")
+st.caption("Votre assistant de jeu de rôle intelligent (Multi-Agents)")
 
 # Initialisation de l'agent dans la session
 if "agent" not in st.session_state:
     st.session_state.agent = RPGAgent()
-
-def save_character_json(text):
-    """Extrait et sauvegarde le JSON du personnage si présent."""
-    json_match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if json_match:
-        try:
-            char_data = json.loads(json_match.group(1))
-            os.makedirs("Memory", exist_ok=True)
-            with open("Memory/character.json", "w", encoding="utf-8") as f:
-                json.dump(char_data, f, indent=4, ensure_ascii=False)
-            return True
-        except Exception as e:
-            st.error(f"Erreur lors de la sauvegarde du JSON : {e}")
-    return False
 
 # Sidebar pour les options
 with st.sidebar:
@@ -37,29 +23,48 @@ with st.sidebar:
 
     st.info(f"Modèle : {config.OLLAMA_MODEL}")
 
+    if st.session_state.agent.character_data:
+        st.header("👤 Personnage")
+        st.json(st.session_state.agent.character_data)
+
+    if st.session_state.agent.scenario_data:
+        st.header("📜 Scénario")
+        st.write(f"**{st.session_state.agent.scenario_data.get('titre', 'Aventure')}**")
+        st.write(st.session_state.agent.scenario_data.get('intrigue', ''))
+
 # Affichage de l'historique
 for message in st.session_state.agent.history.messages:
     role = "user" if message.type == "human" else "assistant"
     with st.chat_message(role):
         st.markdown(message.content)
 
-# Message de bienvenue automatique
-if not st.session_state.agent.history.messages:
+# Message de bienvenue automatique (Création de perso)
+if not st.session_state.agent.history.messages and st.session_state.agent.game_state == "CREATION":
     welcome_msg = "Bienvenue ! Commençons la création de votre personnage. Quel nom souhaitez-vous lui donner ?"
     with st.chat_message("assistant"):
         st.markdown(welcome_msg)
     st.session_state.agent.history.add_ai_message(welcome_msg)
 
-# Zone de saisie
-if prompt := st.chat_input("Votre réponse..."):
-    # Affichage du message utilisateur
-    with st.chat_message("user"):
-        st.markdown(prompt)
+# Interface spécifique selon l'état du jeu
+if st.session_state.agent.game_state == "SUMMARY":
+    st.success("La création de votre personnage est terminée !")
+    if st.button("🚀 Lancer l'aventure"):
+        with st.spinner("Génération du scénario et introduction..."):
+            intro = st.session_state.agent.start_adventure()
+            st.rerun()
 
-    # Réponse de l'agent
-    with st.chat_message("assistant"):
-        with st.spinner("Le MJ réfléchit..."):
-            response = st.session_state.agent.chat(prompt)
-            st.markdown(response)
-            if save_character_json(response):
-                st.success("Personnage sauvegardé dans Memory/character.json !")
+# Zone de saisie (désactivée en mode SUMMARY)
+if st.session_state.agent.game_state != "SUMMARY":
+    if prompt := st.chat_input("Votre réponse..."):
+        # Affichage du message utilisateur
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        # Réponse de l'agent
+        with st.chat_message("assistant"):
+            with st.spinner("L'Orchestrateur et le Narrateur se concertent..."):
+                response = st.session_state.agent.chat(prompt)
+                st.markdown(response)
+                # Si on vient de finir la création, on force un rerun pour afficher le bouton SUMMARY
+                if st.session_state.agent.game_state == "SUMMARY":
+                    st.rerun()
