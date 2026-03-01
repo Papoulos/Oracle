@@ -32,8 +32,9 @@ class CharacterCreator(BaseAgent):
             3. Garde un ton immersif, médiéval-fantastique et encourageant.
             4. Ne sors jamais de ton rôle de MJ.
             5. Dès que tu considères que le personnage est complet, tu DOIS conclure la création et générer un bloc JSON final récapitulant toutes les caractéristiques du personnage.
+            6. Une fois le JSON généré, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt et que l'aventure va pouvoir commencer.
 
-            IMPORTANT : Le bloc JSON doit être unique, complet et entouré des balises ```json et ```.
+            IMPORTANT : Le bloc JSON doit être unique, complet et entouré des balises ```json et ```. C'est ce bloc qui signale techniquement la fin de cette phase.
 
             CODEX :
             {context}
@@ -157,17 +158,24 @@ class RPGAgent(BaseAgent):
 
             response = self.character_creator.generate_response(user_input, self.history.messages)
 
-            # Check for character completion
+            # Check for character completion (handle potential text before/after JSON)
             json_match = re.search(r"```json\s*(\{.*?\})\s*```", response, re.DOTALL)
             if json_match:
                 try:
-                    self.character_data = json.loads(json_match.group(1))
+                    # Nettoyage supplémentaire si nécessaire pour json.loads
+                    json_str = json_match.group(1).strip()
+                    self.character_data = json.loads(json_str)
+
+                    # Sauvegarde
                     os.makedirs("Memory", exist_ok=True)
                     with open("Memory/character.json", "w", encoding="utf-8") as f:
                         json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+
+                    # Transition d'état
                     self.game_state = "SUMMARY"
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Log error but don't break the flow
+                    print(f"Error parsing character JSON: {e}")
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(response)
