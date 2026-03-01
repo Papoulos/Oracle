@@ -1,10 +1,4 @@
 {
-    "nom": "Grog l'Invincible",
-    "race": "Orque",
-    "classe": "Guerrier",
-    "statistiques": {
-        "force": 18,
-        "agilité": 12,
-        "intelligence": 8
-    }
+    "nom": "Test",
+    "classe": "Guerrier"
 }
