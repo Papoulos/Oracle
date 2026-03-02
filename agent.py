@@ -28,11 +28,13 @@ class CharacterCreator(BaseAgent):
 
             CONSIGNES :
             1. Sois proactif : pose une seule question à la fois pour guider le joueur.
-            2. Utilise le CODEX pour proposer des options valides (races, classes, statistiques, compétences, etc.).
-            3. Garde un ton immersif, médiéval-fantastique et encourageant.
-            4. Ne sors jamais de ton rôle de MJ.
-            5. Dès que tu considères que le personnage est complet, tu DOIS conclure la création et générer un bloc JSON final récapitulant toutes les caractéristiques du personnage.
-            6. Une fois le JSON généré, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt et que l'aventure va pouvoir commencer.
+            2. Utilise le CODEX pour proposer des options valides (races, classes, statistiques, compétences, équipement, etc.).
+            3. Lors de la détermination des caractéristiques (Force, Dextérité, etc.), propose CLAIREMENT au joueur de lancer les dés pour lui ou de le laisser faire/utiliser une autre méthode.
+            4. N'oublie JAMAIS l'étape de l'équipement de départ en suivant scrupuleusement les règles du CODEX pour la classe choisie.
+            5. Garde un ton immersif, médiéval-fantastique et encourageant.
+            6. Ne sors jamais de ton rôle de MJ.
+            7. Dès que tu considères que le personnage est complet, tu DOIS conclure la création et générer un bloc JSON final récapitulant toutes les caractéristiques du personnage.
+            8. Une fois le JSON généré, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt et que l'aventure va pouvoir commencer.
 
             IMPORTANT : Le bloc JSON doit être unique, complet et entouré des balises ```json et ```. C'est ce bloc qui signale techniquement la fin de cette phase.
 
@@ -74,7 +76,9 @@ class Narrator(BaseAgent):
             - Ne modifie JAMAIS l'état du jeu.
             - Utilise un ton narratif riche et immersif.
             - Réagis en fonction de l'historique de la conversation pour rester cohérent.
-            - Termine toujours par une question ou une incitation à l'action pour le joueur.
+            - Termine la narration par une question ou une incitation à l'action pour le joueur.
+            - APRÈS la question, ajoute une ligne de séparation "---" suivie d'un bloc intitulé "📌 Résumé des informations" contenant les points clés de l'action, les indices trouvés ou les informations importantes récoltées.
+            - Ne liste JAMAIS les "PNJs présents" ou "Lieux présents" sous forme de liste technique à la fin.
             """),
             MessagesPlaceholder(variable_name="history"),
             ("system", "CONSIGNES DE L'ORCHESTRATEUR : {instructions}"),
@@ -241,7 +245,7 @@ class RPGAgent(BaseAgent):
             Contexte Scénario (Faits): {scenario_context}
             Résumé Scénario Global: {self.scenario_data['intrigue']}
             Résultat technique : {"Pas de jet nécessaire" if not roll_info else f"{roll_info} -> {roll_result}"}
-            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO et le résultat technique.
+            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO et le résultat technique. Inclus les points clés/indices dans le résumé final.
             """
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
@@ -256,7 +260,7 @@ class RPGAgent(BaseAgent):
     def start_adventure(self):
         if self.generate_scenario():
             self.game_state = "ADVENTURE"
-            intro_instruction = f"L'aventure commence. Voici le scénario : {self.scenario_data['intrigue']}. Présente la situation initiale : {self.scenario_data['situation_initiale']}. Liste aussi les PNJs ({self.scenario_data.get('personnages_cles')}) et Lieux ({self.scenario_data.get('lieux_cles')}) si pertinent."
+            intro_instruction = f"L'aventure commence. Voici le scénario : {self.scenario_data['intrigue']}. Présente la situation initiale : {self.scenario_data['situation_initiale']}. N'oublie pas le résumé des points clés à la fin."
             intro_response = self.narrator.generate_response("L'aventure commence !", self.history.messages, intro_instruction)
             self.history.add_ai_message(intro_response)
             return intro_response
