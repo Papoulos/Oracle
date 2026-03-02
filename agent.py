@@ -11,16 +11,16 @@ import chromadb
 import config
 
 class BaseAgent:
-    def __init__(self):
+    def __init__(self, model=None, temperature=0.7):
         self.llm = ChatOllama(
-            model=config.OLLAMA_MODEL,
+            model=model if model else config.OLLAMA_MODEL,
             base_url=config.OLLAMA_BASE_URL,
-            temperature=0.7
+            temperature=temperature
         )
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
-        super().__init__()
+        super().__init__(model=config.CHARACTER_MODEL, temperature=config.CHARACTER_TEMP)
         self.vector_store = vector_store
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """Tu es un Maître du Jeu (MJ) expert en jeux de rôle.
@@ -63,7 +63,7 @@ class CharacterCreator(BaseAgent):
 
 class Narrator(BaseAgent):
     def __init__(self):
-        super().__init__()
+        super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP)
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """Tu es le Narrateur d'une aventure de jeu de rôle.
             Ton rôle est de décrire les scènes, de jouer les PNJs et de présenter les choix au joueur.
@@ -93,7 +93,7 @@ class Narrator(BaseAgent):
 
 class RPGAgent(BaseAgent):
     def __init__(self):
-        super().__init__()
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.ORCHESTRATOR_TEMP)
         self.embeddings = OllamaEmbeddings(
             model=config.OLLAMA_EMBED_MODEL,
             base_url=config.OLLAMA_BASE_URL
