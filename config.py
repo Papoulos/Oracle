@@ -10,7 +10,9 @@ OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
 
 # Chemins
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-DATA_PATH = os.getenv("DATA_PATH", "./data")
+CORE_DATA_PATH = os.getenv("CORE_DATA_PATH", "./data/core")
+SCENARIO_DATA_PATH = os.getenv("SCENARIO_DATA_PATH", "./data/scenario")
 
-# Nom de la collection VectorDB
-COLLECTION_NAME = "rpg_collection"
+# Noms des collections VectorDB
+CORE_COLLECTION_NAME = "core_collection"
+SCENARIO_COLLECTION_NAME = "scenario_collection"
