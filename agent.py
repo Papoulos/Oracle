@@ -89,6 +89,38 @@ class CharacterCreator(BaseAgent):
         response = self.chain.invoke(inputs)
         return response.content
 
+class ChronicleAgent(BaseAgent):
+    def __init__(self):
+        super().__init__(model=config.CHRONICLE_MODEL, temperature=config.CHRONICLE_TEMP)
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", """Tu es le Chroniqueur d'une aventure de jeu de rôle.
+            Ton rôle est de tenir à jour un résumé factuel et concis de l'histoire jusqu'à présent.
+            Tu reçois l'ancien résumé, l'action du joueur et la réponse du narrateur.
+            Tu dois produire un NOUVEAU résumé mis à jour qui intègre ces nouveaux événements.
+
+            CONSIGNES :
+            - Sois concis et factuel.
+            - Garde les éléments importants (lieux, rencontres, objets obtenus, blessures).
+            - Utilise le français.
+            - Réponds uniquement avec le nouveau résumé, sans fioritures.
+            """),
+            ("human", """ANCIEN RÉSUMÉ : {old_chronicle}
+            ACTION JOUEUR : {user_input}
+            RÉPONSE NARRATEUR : {narrator_response}
+
+            Nouveau résumé mis à jour :"""),
+        ])
+        self.chain = self.prompt | self.llm
+
+    def update(self, old_chronicle, user_input, narrator_response):
+        inputs = {
+            "old_chronicle": old_chronicle if old_chronicle else "L'aventure commence à peine.",
+            "user_input": user_input,
+            "narrator_response": narrator_response
+        }
+        response = self.chain.invoke(inputs)
+        return response.content
+
 class Narrator(BaseAgent):
     def __init__(self):
         super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP)
@@ -143,11 +175,13 @@ class RPGAgent(BaseAgent):
 
         self.character_creator = CharacterCreator(self.core_store)
         self.narrator = Narrator()
+        self.chronicle_agent = ChronicleAgent()
 
         self.history = ChatMessageHistory()
         self.game_state = "CREATION" # CREATION, SUMMARY, ADVENTURE
         self.character_data = None
         self.scenario_data = None
+        self.chronicle_data = None
 
     def get_core_context(self, query):
         try:
@@ -276,6 +310,9 @@ class RPGAgent(BaseAgent):
             if roll_info:
                 final_response += f"\n\n---\n*🎲 {roll_info} ({roll_result})*"
 
+            # Mise à jour de la chronique
+            self.update_chronicle(user_input, final_response)
+
             self.history.add_user_message(user_input)
             self.history.add_ai_message(final_response)
             return final_response
@@ -285,12 +322,55 @@ class RPGAgent(BaseAgent):
             self.game_state = "ADVENTURE"
             intro_instruction = f"L'aventure commence. Voici le scénario : {self.scenario_data['intrigue']}. Présente la situation initiale : {self.scenario_data['situation_initiale']}. N'oublie pas le résumé des points clés à la fin."
             intro_response = self.narrator.generate_response("L'aventure commence !", self.history.messages, intro_instruction)
+
+            # Initialisation de la chronique
+            self.update_chronicle("L'aventure commence !", intro_response)
+
             self.history.add_ai_message(intro_response)
             return intro_response
         return "Erreur lors de la génération du scénario."
+
+    def update_chronicle(self, user_input, response):
+        old_summary = ""
+        if self.chronicle_data and isinstance(self.chronicle_data, dict):
+            old_summary = self.chronicle_data.get("summary", "")
+
+        new_summary = self.chronicle_agent.update(old_summary, user_input, response)
+        self.chronicle_data = {"summary": new_summary}
+
+        os.makedirs("Memory", exist_ok=True)
+        with open("Memory/Chronicle.json", "w", encoding="utf-8") as f:
+            json.dump(self.chronicle_data, f, indent=4, ensure_ascii=False)
+
+    def load_game(self):
+        try:
+            if os.path.exists("Memory/character.json"):
+                with open("Memory/character.json", "r", encoding="utf-8") as f:
+                    self.character_data = json.load(f)
+
+            if os.path.exists("Memory/scenario.json"):
+                with open("Memory/scenario.json", "r", encoding="utf-8") as f:
+                    self.scenario_data = json.load(f)
+
+            if os.path.exists("Memory/Chronicle.json"):
+                with open("Memory/Chronicle.json", "r", encoding="utf-8") as f:
+                    self.chronicle_data = json.load(f)
+
+            if self.character_data and self.scenario_data:
+                self.game_state = "ADVENTURE"
+                return True
+        except Exception as e:
+            print(f"Erreur lors du chargement : {e}")
+        return False
 
     def clear_history(self):
         self.history.clear()
         self.game_state = "CREATION"
         self.character_data = None
         self.scenario_data = None
+        self.chronicle_data = None
+        # On supprime les fichiers de sauvegarde
+        for file in ["character.json", "scenario.json", "Chronicle.json"]:
+            path = os.path.join("Memory", file)
+            if os.path.exists(path):
+                os.remove(path)
