@@ -2,6 +2,7 @@ langchain
 langchain-core
 langchain-community
 langchain-ollama
+langchain-openai
 langchain-chroma
 langgraph
 pypdf

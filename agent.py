@@ -3,6 +3,7 @@ import re
 import random
 import os
 from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -10,13 +11,38 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 import chromadb
 import config
 
-class BaseAgent:
-    def __init__(self, model=None, temperature=0.7):
-        self.llm = ChatOllama(
-            model=model if model else config.OLLAMA_MODEL,
-            base_url=config.OLLAMA_BASE_URL,
+def get_llm(model_name, temperature):
+    if config.LLM_PROVIDER == "ollama":
+        return ChatOllama(
+            model=model_name,
+            base_url=config.LLM_BASE_URL,
             temperature=temperature
         )
+    else: # openai / llama-cpp
+        return ChatOpenAI(
+            model=model_name,
+            base_url=config.LLM_BASE_URL,
+            temperature=temperature,
+            api_key="sk-no-key-required"
+        )
+
+def get_embeddings():
+    if config.EMBEDDING_PROVIDER == "ollama":
+        return OllamaEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            base_url=config.EMBEDDING_BASE_URL
+        )
+    else: # openai / llama-cpp
+        return OpenAIEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            base_url=config.EMBEDDING_BASE_URL,
+            api_key="sk-no-key-required"
+        )
+
+class BaseAgent:
+    def __init__(self, model=None, temperature=0.7):
+        model_name = model if model else config.LLM_MODEL
+        self.llm = get_llm(model_name, temperature)
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
@@ -98,10 +124,7 @@ class Narrator(BaseAgent):
 class RPGAgent(BaseAgent):
     def __init__(self):
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.ORCHESTRATOR_TEMP)
-        self.embeddings = OllamaEmbeddings(
-            model=config.OLLAMA_EMBED_MODEL,
-            base_url=config.OLLAMA_BASE_URL
-        )
+        self.embeddings = get_embeddings()
         self.client = chromadb.PersistentClient(path=config.CHROMA_PATH)
 
         # Collection pour les règles (Core)

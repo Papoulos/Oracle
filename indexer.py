@@ -4,9 +4,23 @@ import shutil
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
+from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 import chromadb
 import config
+
+def get_embeddings():
+    if config.EMBEDDING_PROVIDER == "ollama":
+        return OllamaEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            base_url=config.EMBEDDING_BASE_URL
+        )
+    else: # openai / llama-cpp
+        return OpenAIEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            base_url=config.EMBEDDING_BASE_URL,
+            api_key="sk-no-key-required"
+        )
 
 def index_directory(source_dir, collection_name, client, embeddings):
     print(f"Indexation des PDFs de {source_dir} dans la collection '{collection_name}'...")
@@ -54,10 +68,7 @@ def main():
         else:
             print("Aucune base de données à supprimer.")
 
-    embeddings = OllamaEmbeddings(
-        model=config.OLLAMA_EMBED_MODEL,
-        base_url=config.OLLAMA_BASE_URL
-    )
+    embeddings = get_embeddings()
 
     client = chromadb.PersistentClient(path=config.CHROMA_PATH)
 
