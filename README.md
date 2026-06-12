@@ -31,5 +31,6 @@ Ce projet est une version simplifiée du système RPG Oracle, utilisant un agent
 
 2. **Lancement de l'interface** :
    ```bash
-   streamlit run app.py
+   python run.py
    ```
+   *Note : Vous pouvez configurer l'adresse IP et le port dans `config.py` ou via les variables d'environnement `SERVER_ADDRESS` et `SERVER_PORT`.*
