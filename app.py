@@ -23,6 +23,7 @@ with st.sidebar:
         st.rerun()
 
     st.info(f"Modèle : {config.OLLAMA_MODEL}")
+    st.info(f"Interface : http://{config.SERVER_ADDRESS}:{config.SERVER_PORT}")
 
     if st.session_state.agent.character_data:
         st.header("👤 Personnage")
