@@ -2,47 +2,14 @@ import json
 import re
 import random
 import os
-from langchain_ollama import ChatOllama, OllamaEmbeddings
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
 import chromadb
 import config
-
-def get_llm(model_name, temperature):
-    if config.LLM_PROVIDER == "ollama":
-        return ChatOllama(
-            model=model_name,
-            base_url=config.LLM_BASE_URL,
-            temperature=temperature
-        )
-    else: # openai / llama-cpp
-        return ChatOpenAI(
-            model=model_name,
-            base_url=config.LLM_BASE_URL,
-            temperature=temperature,
-            api_key="sk-no-key-required"
-        )
-
-def get_embeddings():
-    if config.EMBEDDING_PROVIDER == "ollama":
-        return OllamaEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.EMBEDDING_BASE_URL
-        )
-    else: # openai / llama-cpp
-        return OpenAIEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.EMBEDDING_BASE_URL,
-            api_key="sk-no-key-required"
-        )
-
-class BaseAgent:
-    def __init__(self, model=None, temperature=0.7):
-        model_name = model if model else config.LLM_MODEL
-        self.llm = get_llm(model_name, temperature)
+from base_utils import BaseAgent, get_llm, get_embeddings
+from scenario_agents import NPCSetupAgent, ScenarioSetupAgent
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
@@ -177,6 +144,13 @@ class RPGAgent(BaseAgent):
         self.narrator = Narrator()
         self.chronicle_agent = ChronicleAgent()
 
+        # Agents de setup (one-shot, début de partie)
+        self.npc_setup_agent = NPCSetupAgent(self.scenario_store)
+        self.scenario_setup_agent = ScenarioSetupAgent(self.scenario_store, self.core_store)
+
+        # Données PNJ en mémoire vive
+        self.npcs_data = None
+
         self.history = ChatMessageHistory()
         self.game_state = "CREATION" # CREATION, SUMMARY, ADVENTURE
         self.character_data = None
@@ -200,47 +174,33 @@ class RPGAgent(BaseAgent):
     def roll_dice(self, sides=20):
         return random.randint(1, sides)
 
-    def generate_scenario(self):
-        # On tente d'extraire des infos du vector store scenario
-        try:
-            # On cherche de manière large pour l'extraction globale
-            scenario_docs = self.scenario_store.similarity_search("intrigue personnages lieux objectifs", k=10)
-            raw_context = "\n\n".join([doc.page_content for doc in scenario_docs])
-        except Exception:
-            raw_context = "Aucun document de scénario trouvé."
-
-        # Prompt pour extraire le scénario
-        extraction_prompt = f"""Tu es un assistant MJ. À partir des extraits de documents suivants, extrais les informations clés pour lancer une partie de JDR.
-        Si les documents sont vides ou insuffisants, invente une suite cohérente basée sur le personnage du joueur.
-
-        PERSONNAGE :
-        {json.dumps(self.character_data, indent=2, ensure_ascii=False)}
-
-        EXTRAITS DU SCÉNARIO :
-        {raw_context}
-
-        Génère un scénario structuré au format JSON avec les clés suivantes :
-        - titre: Le titre de l'aventure
-        - intrigue: Un résumé global de l'intrigue
-        - personnages_cles: Liste des PNJs importants mentionnés
-        - lieux_cles: Liste des lieux importants
-        - situation_initiale: La scène exacte où commence le joueur
-        - objectifs: Liste des objectifs immédiats
-
-        Réponds uniquement avec le bloc JSON entouré de ```json et ```.
+    def setup_world(self) -> bool:
         """
-        response = self.llm.invoke(extraction_prompt)
-        json_match = re.search(r"```json\s*(\{.*?\})\s*```", response.content, re.DOTALL)
-        if json_match:
-            try:
-                self.scenario_data = json.loads(json_match.group(1))
-                os.makedirs("Memory", exist_ok=True)
-                with open("Memory/scenario.json", "w", encoding="utf-8") as f:
-                    json.dump(self.scenario_data, f, indent=4, ensure_ascii=False)
-                return True
-            except Exception:
-                return False
-        return False
+        Pipeline de setup complet (one-shot, exécuté après la création du PJ).
+
+        Étape 1 → NPCSetupAgent  : génère Memory/npcs.json
+        Étape 2 → ScenarioSetupAgent : génère Memory/scenario.json (enrichi)
+
+        Retourne True si le scénario a été généré avec succès.
+        """
+        print("[RPGAgent] ── Setup du monde ──")
+
+        # Étape 1 : PNJ
+        print("[RPGAgent] Génération des fiches PNJ...")
+        npcs = self.npc_setup_agent.generate_npcs(self.character_data)
+        self.npcs_data = npcs  # peut être [] si le scénario est vide
+
+        # Étape 2 : Trame scénario
+        print("[RPGAgent] Génération de la trame scénario...")
+        scenario = self.scenario_setup_agent.generate_scenario(
+            self.character_data, self.npcs_data or []
+        )
+
+        if not scenario:
+            return False
+
+        self.scenario_data = scenario
+        return True
 
     def chat(self, user_input):
         if self.game_state == "CREATION":
@@ -265,11 +225,15 @@ class RPGAgent(BaseAgent):
         elif self.game_state == "ADVENTURE":
             core_context = self.get_core_context(user_input)
             scenario_context = self.get_scenario_context(user_input)
+            npcs_summary = self.get_npcs_context()
 
             # 1. L'Orchestrateur analyse l'action avec le Codex (règles)
             analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
             Basé sur les RÈGLES suivantes :
             {core_context}
+
+            PNJs présents et leurs secrets (si pertinent) :
+            {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
             Selon le personnage ({json.dumps(self.character_data, ensure_ascii=False)}), un jet de dé est-il nécessaire ?
             Réponds au format JSON :
@@ -300,9 +264,11 @@ class RPGAgent(BaseAgent):
             # 2. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO
             decision_instruction = f"""Action Joueur: {user_input}
             Contexte Scénario (Faits): {scenario_context}
-            Résumé Scénario Global: {self.scenario_data['intrigue']}
+            Résumé Scénario Global: {self.scenario_data['intrigue_complete']}
+            PNJs disponibles (sans secrets) :
+            {npcs_summary}
             Résultat technique : {"Pas de jet nécessaire" if not roll_info else f"{roll_info} -> {roll_result}"}
-            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO et le résultat technique. Inclus les points clés/indices dans le résumé final.
+            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO, les PNJs si nécessaire, et le résultat technique. Inclus les points clés/indices dans le résumé final.
             """
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
@@ -318,17 +284,31 @@ class RPGAgent(BaseAgent):
             return final_response
 
     def start_adventure(self):
-        if self.generate_scenario():
-            self.game_state = "ADVENTURE"
-            intro_instruction = f"L'aventure commence. Voici le scénario : {self.scenario_data['intrigue']}. Présente la situation initiale : {self.scenario_data['situation_initiale']}. N'oublie pas le résumé des points clés à la fin."
-            intro_response = self.narrator.generate_response("L'aventure commence !", self.history.messages, intro_instruction)
+        """Lance le pipeline de setup puis démarre la narration."""
+        if not self.setup_world():
+            return "Erreur lors de la génération du monde."
 
-            # Initialisation de la chronique
-            self.update_chronicle("L'aventure commence !", intro_response)
+        self.game_state = "ADVENTURE"
 
-            self.history.add_ai_message(intro_response)
-            return intro_response
-        return "Erreur lors de la génération du scénario."
+        acte1 = self.scenario_data.get("actes", [{}])[0]
+        intro_instruction = (
+            f"Scénario : {self.scenario_data['intrigue_complete']}\n"
+            f"Situation initiale : {self.scenario_data['situation_initiale']}\n"
+            f"Premier acte — '{acte1.get('titre', '')}' : {acte1.get('objectif_principal', '')}\n"
+            "Présente la scène d'ouverture de manière immersive. "
+            "Termine par le bloc 📌 Résumé des informations."
+        )
+
+        intro_response = self.narrator.generate_response(
+            "L'aventure commence !", self.history.messages, intro_instruction
+        )
+
+        pitch = self.scenario_data.get('pitch', '')
+        full_response = f"**{self.scenario_data.get('titre', 'Aventure')}**\n\n*{pitch}*\n\n{intro_response}"
+
+        self.update_chronicle("L'aventure commence !", full_response)
+        self.history.add_ai_message(full_response)
+        return full_response
 
     def update_chronicle(self, user_input, response):
         old_summary = ""
@@ -343,10 +323,16 @@ class RPGAgent(BaseAgent):
             json.dump(self.chronicle_data, f, indent=4, ensure_ascii=False)
 
     def load_game(self):
+        """Charge la sauvegarde complète (PJ + PNJ + Scénario + Chronique)."""
         try:
             if os.path.exists("Memory/character.json"):
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
                     self.character_data = json.load(f)
+
+            if os.path.exists("Memory/npcs.json"):
+                with open("Memory/npcs.json", "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    self.npcs_data = data.get("npcs", [])
 
             if os.path.exists("Memory/scenario.json"):
                 with open("Memory/scenario.json", "r", encoding="utf-8") as f:
@@ -358,19 +344,48 @@ class RPGAgent(BaseAgent):
 
             if self.character_data and self.scenario_data:
                 self.game_state = "ADVENTURE"
+                nb_npcs = len(self.npcs_data) if self.npcs_data else 0
+                print(f"[RPGAgent] Partie chargée — {nb_npcs} PNJ disponibles.")
                 return True
+
         except Exception as e:
-            print(f"Erreur lors du chargement : {e}")
+            print(f"[RPGAgent] Erreur chargement : {e}")
+
         return False
 
     def clear_history(self):
+        """Réinitialise complètement la partie."""
         self.history.clear()
         self.game_state = "CREATION"
         self.character_data = None
         self.scenario_data = None
         self.chronicle_data = None
-        # On supprime les fichiers de sauvegarde
-        for file in ["character.json", "scenario.json", "Chronicle.json"]:
+        self.npcs_data = None
+
+        for file in ["character.json", "npcs.json", "scenario.json", "Chronicle.json"]:
             path = os.path.join("Memory", file)
             if os.path.exists(path):
                 os.remove(path)
+                print(f"[RPGAgent] Supprimé : {path}")
+
+    def get_npc(self, npc_id: str) -> dict | None:
+        """Retourne la fiche d'un PNJ par son id, ou None."""
+        if not self.npcs_data:
+            return None
+        return next((n for n in self.npcs_data if n.get("id") == npc_id), None)
+
+    def get_npcs_context(self) -> str:
+        """
+        Retourne un résumé des PNJ (SANS leurs secrets) pour le Narrateur.
+        Les secrets restent côté Orchestrateur uniquement.
+        """
+        if not self.npcs_data:
+            return "Aucun PNJ disponible."
+        lines = []
+        for n in self.npcs_data:
+            lines.append(
+                f"- {n['nom']} ({n['classe']}, niv.{n['niveau']}) "
+                f"| Relation PJ: {n['relation_pj']} "
+                f"| Lieu: {n.get('localisation_actuelle', '?')}"
+            )
+        return "\n".join(lines)

@@ -41,6 +41,9 @@ SCENARIO_DATA_PATH = os.getenv("SCENARIO_DATA_PATH", "./data/scenario")
 CORE_COLLECTION_NAME = "core_collection"
 SCENARIO_COLLECTION_NAME = "scenario_collection"
 
+# --- RAG ---
+RAG_SEARCH_K = int(os.getenv("RAG_SEARCH_K", 12))
+
 # --- Compatibilité Ollama (Anciennes variables) ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", LLM_BASE_URL)
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", LLM_MODEL)

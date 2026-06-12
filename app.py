@@ -32,7 +32,7 @@ with st.sidebar:
     if st.session_state.agent.scenario_data:
         st.header("📜 Scénario")
         st.write(f"**{st.session_state.agent.scenario_data.get('titre', 'Aventure')}**")
-        st.write(st.session_state.agent.scenario_data.get('intrigue', ''))
+        st.write(st.session_state.agent.scenario_data.get('pitch', ''))
 
     if st.session_state.agent.chronicle_data:
         st.header("📖 Chronique")
@@ -74,7 +74,8 @@ if not st.session_state.agent.history.messages and st.session_state.agent.game_s
 
 # Message de bienvenue pour partie reprise
 if not st.session_state.agent.history.messages and st.session_state.agent.game_state == "ADVENTURE" and st.session_state.agent.chronicle_data:
-    resume_msg = f"Ravi de vous revoir ! Voici où nous en étions :\n\n{st.session_state.agent.chronicle_data.get('summary', '')}\n\nQue souhaitez-vous faire ?"
+    pitch = st.session_state.agent.scenario_data.get('pitch', '')
+    resume_msg = f"Ravi de vous revoir ! \n\n**Rappel de l'intrigue :** {pitch}\n\n**Où nous en étions :**\n\n{st.session_state.agent.chronicle_data.get('summary', '')}\n\nQue souhaitez-vous faire ?"
     with st.chat_message("assistant"):
         st.markdown(resume_msg)
     st.session_state.agent.history.add_ai_message(resume_msg)

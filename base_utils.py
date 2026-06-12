@@ -1,0 +1,36 @@
+from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+import config
+
+def get_llm(model_name, temperature):
+    if config.LLM_PROVIDER == "ollama":
+        return ChatOllama(
+            model=model_name,
+            base_url=config.LLM_BASE_URL,
+            temperature=temperature
+        )
+    else: # openai / llama-cpp
+        return ChatOpenAI(
+            model=model_name,
+            base_url=config.LLM_BASE_URL,
+            temperature=temperature,
+            api_key="sk-no-key-required"
+        )
+
+def get_embeddings():
+    if config.EMBEDDING_PROVIDER == "ollama":
+        return OllamaEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            base_url=config.EMBEDDING_BASE_URL
+        )
+    else: # openai / llama-cpp
+        return OpenAIEmbeddings(
+            model=config.EMBEDDING_MODEL,
+            base_url=config.EMBEDDING_BASE_URL,
+            api_key="sk-no-key-required"
+        )
+
+class BaseAgent:
+    def __init__(self, model=None, temperature=0.7):
+        model_name = model if model else config.LLM_MODEL
+        self.llm = get_llm(model_name, temperature)
