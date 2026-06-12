@@ -34,3 +34,35 @@ Ce projet est une version simplifiée du système RPG Oracle, utilisant un agent
    python run.py
    ```
    *Note : Vous pouvez configurer l'adresse IP et le port dans `config.py` ou via les variables d'environnement `SERVER_ADDRESS` et `SERVER_PORT`.*
+
+## Architecture des Agents
+
+Le système repose sur une architecture multi-agents coordonnée, où chaque agent possède un rôle spécifique et des paramètres de configuration dédiés.
+
+### 1. Orchestrateur (`RPGAgent`)
+- **Rôle fonctionnel** : C'est le cerveau du système. Il gère la logique globale, les transitions d'état (Création, Résumé, Aventure), effectue les jets de dés (D20) et analyse techniquement les actions du joueur.
+- **Détails techniques** :
+  - **Modèle** : Défini par `ORCHESTRATOR_MODEL` (température `ORCHESTRATOR_TEMP`).
+  - **Sources de données** : Accède à `core_collection` (règles) et `scenario_collection` (intrigue).
+  - **Responsabilité** : Il donne des instructions au Narrateur basées sur l'analyse technique des règles et du scénario.
+
+### 2. Créateur de Personnage (`CharacterCreator`)
+- **Rôle fonctionnel** : Guide le joueur dans la conception de son personnage. Il propose les options (races, classes) et s'assure que toutes les étapes (statistiques, équipement) sont respectées.
+- **Détails techniques** :
+  - **Modèle** : Défini par `CHARACTER_MODEL` (température `CHARACTER_TEMP`).
+  - **Sources de données** : Utilise exclusivement `core_collection` pour garantir le respect des règles.
+  - **Sortie** : Génère un bloc JSON final qui verrouille la fiche de personnage.
+
+### 3. Narrateur (`Narrator`)
+- **Rôle fonctionnel** : La voix du Maître du Jeu. Il transforme les décisions de l'Orchestrateur en un récit immersif, interprète les PNJs et décrit les environnements.
+- **Détails techniques** :
+  - **Modèle** : Défini par `NARRATOR_MODEL` (température `NARRATOR_TEMP`).
+  - **Fonctionnement** : Reçoit des instructions précises de l'Orchestrateur et s'appuie sur l'historique des échanges.
+  - **Format** : Termine chaque intervention par une question et un bloc "📌 Résumé des informations".
+
+### 4. Chroniqueur (`ChronicleAgent`)
+- **Rôle fonctionnel** : Historien de l'aventure. Il maintient un résumé factuel et concis des événements au fur et à mesure de la progression.
+- **Détails techniques** :
+  - **Modèle** : Défini par `CHRONICLE_MODEL` (température `CHRONICLE_TEMP`, par défaut 0.1).
+  - **Persistance** : Met à jour le fichier `Memory/Chronicle.json` après chaque interaction.
+  - **Objectif** : Fournir une mémoire à long terme résumée pour les sessions prolongées.
