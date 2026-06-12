@@ -11,6 +11,8 @@ Ce projet est une version simplifiée du système RPG Oracle, utilisant un agent
 
 ## Installation
 
+**Prérequis** : Python 3.9 à 3.13 (Python 3.14+ n'est pas encore supporté par ChromaDB).
+
 1. Installez les dépendances :
    ```bash
    pip install -r requirements.txt
