@@ -2,6 +2,16 @@ import subprocess
 import sys
 import config
 
+def check_python_version():
+    """
+    Vérifie que la version de Python est compatible avec ChromaDB (3.13 ou moins)
+    """
+    if sys.version_info.major == 3 and sys.version_info.minor >= 14:
+        print("⚠️  AVERTISSEMENT : Vous utilisez Python " + ".".join(map(str, sys.version_info[:3])))
+        print("ChromaDB et Pydantic V1 sont actuellement incompatibles avec Python 3.14+.")
+        print("Veuillez utiliser Python 3.13 ou une version inférieure.")
+        print("-" * 50)
+
 def run_app():
     """
     Lance l'interface Streamlit en utilisant les paramètres définis dans config.py
@@ -27,4 +37,5 @@ def run_app():
         sys.exit(1)
 
 if __name__ == "__main__":
+    check_python_version()
     run_app()
