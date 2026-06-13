@@ -18,14 +18,39 @@ def display_character_info(character_data):
         if key.lower() in ["personnage", "character", "pj"]:
             character_data = character_data[key]
 
+    # Liste des clés déjà affichées pour éviter les doublons dans le "catch-all"
+    displayed_keys = set()
+
     def get_val(keys, default="N/A"):
+        nonlocal displayed_keys
         if isinstance(keys, str): keys = [keys]
-        for k in keys:
-            if k in character_data: return character_data[k]
-            # Test case-insensitive
-            for actual_key in character_data.keys():
-                if actual_key.lower() == k.lower():
-                    return character_data[actual_key]
+
+        def search(data, target_keys):
+            for k in target_keys:
+                if k in data:
+                    return k, data[k]
+                for actual_key in data.keys():
+                    if actual_key.lower() == k.lower():
+                        return actual_key, data[actual_key]
+            return None, None
+
+        # Recherche récursive (limitée à 2 niveaux pour éviter les boucles)
+        def deep_search(data, target_keys, depth=0):
+            if depth > 1: return None, None
+            k, v = search(data, target_keys)
+            if v is not None: return k, v
+
+            for v_child in data.values():
+                if isinstance(v_child, dict):
+                    k_res, v_res = deep_search(v_child, target_keys, depth + 1)
+                    if v_res is not None: return k_res, v_res
+            return None, None
+
+        actual_key, value = deep_search(character_data, keys)
+        if value is not None:
+            if actual_key in character_data:
+                displayed_keys.add(actual_key)
+            return value
         return default
 
     nom = get_val(["nom", "name"], "Aventurier Inconnu")
@@ -49,7 +74,7 @@ def display_character_info(character_data):
 
     # Essayer de trouver les stats (souvent dans 'statistiques', 'stats' ou 'abilities')
     stats = None
-    stats_keys = ["statistiques", "stats", "abilities", "caractéristiques", "caracteristiques"]
+    stats_keys = ["statistiques", "stats", "abilities", "caractéristiques", "caracteristiques", "attributs", "attributes"]
     for k in stats_keys:
         val = get_val(k, None)
         if isinstance(val, dict):
@@ -59,11 +84,11 @@ def display_character_info(character_data):
     # Si pas de dictionnaire de stats, on cherche les clés individuelles communes
     if not stats:
         stat_mapping = {
-            "Force": ["force", "str"],
+            "Force": ["force", "str", "for"],
             "Dextérité": ["dextérité", "dexterite", "dex"],
             "Constitution": ["constitution", "con"],
             "Intelligence": ["intelligence", "int"],
-            "Sagesse": ["sagesse", "wis"],
+            "Sagesse": ["sagesse", "wis", "sag"],
             "Charisme": ["charisme", "cha"]
         }
         extracted_stats = {}
@@ -109,6 +134,19 @@ def display_character_info(character_data):
             st.markdown(f"**Équipement :** {', '.join(items)}")
         else:
             st.markdown(f"**Équipement :** {equip}")
+
+    # Section Catch-all pour les informations non affichées
+    other_info = {k: v for k, v in character_data.items() if k not in displayed_keys and k.lower() not in ["nom", "name", "image", "portrait"]}
+    if other_info:
+        with st.expander("Autres informations"):
+            for k, v in other_info.items():
+                if isinstance(v, (str, int, float)):
+                    st.write(f"**{k.capitalize()} :** {v}")
+                elif isinstance(v, list):
+                    st.write(f"**{k.capitalize()} :** {', '.join(map(str, v))}")
+                elif isinstance(v, dict):
+                    st.write(f"**{k.capitalize()} :**")
+                    st.json(v)
 
 st.title("🎲 RPG Oracle")
 st.caption("Votre assistant de jeu de rôle intelligent (Multi-Agents)")
