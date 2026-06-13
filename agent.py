@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_community.chat_message_histories import ChatMessageHistory
 import chromadb
 import config
-from base_utils import BaseAgent, get_llm, get_embeddings
+from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
 from scenario_agents import NPCSetupAgent, ScenarioSetupAgent
 
 class CharacterCreator(BaseAgent):
@@ -206,17 +206,13 @@ class RPGAgent(BaseAgent):
         if self.game_state == "CREATION":
             response = self.character_creator.generate_response(user_input, self.history.messages)
 
-            json_match = re.search(r"```json\s*(\{.*?\})\s*```", response, re.DOTALL)
-            if json_match:
-                try:
-                    json_str = json_match.group(1).strip()
-                    self.character_data = json.loads(json_str)
-                    os.makedirs("Memory", exist_ok=True)
-                    with open("Memory/character.json", "w", encoding="utf-8") as f:
-                        json.dump(self.character_data, f, indent=4, ensure_ascii=False)
-                    self.game_state = "SUMMARY"
-                except Exception as e:
-                    print(f"Error parsing character JSON: {e}")
+            character_data = extract_json(response)
+            if isinstance(character_data, dict):
+                self.character_data = character_data
+                os.makedirs("Memory", exist_ok=True)
+                with open("Memory/character.json", "w", encoding="utf-8") as f:
+                    json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+                self.game_state = "SUMMARY"
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(response)
@@ -249,8 +245,10 @@ class RPGAgent(BaseAgent):
             roll_result = None
 
             try:
-                json_match = re.search(r"(\{.*?\})", analysis_response, re.DOTALL)
-                analysis_data = json.loads(json_match.group(1)) if json_match else {"need_roll": False}
+                analysis_data = extract_json(analysis_response)
+                if not analysis_data:
+                    print(f"[RPGAgent] ✗ Échec de l'extraction JSON de l'analyse : {analysis_response[:200]}...")
+                    analysis_data = {"need_roll": False}
 
                 if analysis_data.get("need_roll"):
                     die_roll = self.roll_dice(20)
