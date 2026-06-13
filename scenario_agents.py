@@ -2,7 +2,7 @@ import json
 import re
 import os
 import config
-from base_utils import BaseAgent
+from base_utils import BaseAgent, extract_json
 
 class NPCSetupAgent(BaseAgent):
     """
@@ -65,29 +65,22 @@ RÈGLES IMPORTANTES :
 - Inclure uniquement les PNJ avec un rôle narratif réel
 
 Réponds UNIQUEMENT avec un tableau JSON valide entouré de ```json et ```.
+Sois concis pour éviter de tronquer la réponse.
 """
 
         response = self.llm.invoke(prompt)
         raw = response.content
 
-        # Tentative 1 : balises json
-        match = re.search(r"```json\s*(\[.*?\])\s*```", raw, re.DOTALL)
-        # Tentative 2 : array brut
-        if not match:
-            match = re.search(r"(\[[\s\S]*\])", raw)
+        npcs = extract_json(raw)
 
-        if match:
-            try:
-                npcs = json.loads(match.group(1))
-                os.makedirs("Memory", exist_ok=True)
-                with open("Memory/npcs.json", "w", encoding="utf-8") as f:
-                    json.dump({"npcs": npcs, "version": 1}, f, indent=4, ensure_ascii=False)
-                print(f"[NPCSetupAgent] ✓ {len(npcs)} PNJ générés → Memory/npcs.json")
-                return npcs
-            except json.JSONDecodeError as e:
-                print(f"[NPCSetupAgent] ✗ Erreur JSON : {e}")
+        if isinstance(npcs, list):
+            os.makedirs("Memory", exist_ok=True)
+            with open("Memory/npcs.json", "w", encoding="utf-8") as f:
+                json.dump({"npcs": npcs, "version": 1}, f, indent=4, ensure_ascii=False)
+            print(f"[NPCSetupAgent] ✓ {len(npcs)} PNJ générés → Memory/npcs.json")
+            return npcs
 
-        print("[NPCSetupAgent] ✗ Aucun JSON détecté dans la réponse LLM.")
+        print(f"[NPCSetupAgent] ✗ Aucun JSON valide détecté dans la réponse LLM. Réponse reçue : \n{raw[:500]}...")
         return []
 
 
@@ -187,26 +180,21 @@ RÈGLES :
 - Les IDs dans "pnj_impliques" doivent correspondre aux "id" des PNJ
 
 Réponds UNIQUEMENT avec le bloc JSON entouré de ```json et ```.
+Sois concis et direct pour éviter que la réponse ne soit tronquée.
 """
 
         response = self.llm.invoke(prompt)
         raw = response.content
 
-        match = re.search(r"```json\s*(\{.*?\})\s*```", raw, re.DOTALL)
-        if not match:
-            match = re.search(r"(\{[\s\S]*\})", raw)
+        scenario = extract_json(raw)
 
-        if match:
-            try:
-                scenario = json.loads(match.group(1))
-                os.makedirs("Memory", exist_ok=True)
-                with open("Memory/scenario.json", "w", encoding="utf-8") as f:
-                    json.dump(scenario, f, indent=4, ensure_ascii=False)
-                nb_actes = len(scenario.get("actes", []))
-                print(f"[ScenarioSetupAgent] ✓ '{scenario.get('titre')}' — {nb_actes} actes → Memory/scenario.json")
-                return scenario
-            except json.JSONDecodeError as e:
-                print(f"[ScenarioSetupAgent] ✗ Erreur JSON : {e}")
+        if isinstance(scenario, dict):
+            os.makedirs("Memory", exist_ok=True)
+            with open("Memory/scenario.json", "w", encoding="utf-8") as f:
+                json.dump(scenario, f, indent=4, ensure_ascii=False)
+            nb_actes = len(scenario.get("actes", []))
+            print(f"[ScenarioSetupAgent] ✓ '{scenario.get('titre')}' — {nb_actes} actes → Memory/scenario.json")
+            return scenario
 
-        print("[ScenarioSetupAgent] ✗ Aucun JSON détecté dans la réponse LLM.")
+        print(f"[ScenarioSetupAgent] ✗ Aucun JSON valide détecté dans la réponse LLM. Réponse reçue : \n{raw[:500]}...")
         return {}
