@@ -289,10 +289,13 @@ class RPGAgent(BaseAgent):
         self.game_state = "ADVENTURE"
 
         acte1 = self.scenario_data.get("actes", [{}])[0]
+        intrigue = self.scenario_data.get('intrigue_complete', 'Une nouvelle aventure commence.')
+        situation = self.scenario_data.get('situation_initiale', 'Le héros se tient prêt.')
+
         intro_instruction = (
-            f"Scénario : {self.scenario_data['intrigue_complete']}\n"
-            f"Situation initiale : {self.scenario_data['situation_initiale']}\n"
-            f"Premier acte — '{acte1.get('titre', '')}' : {acte1.get('objectif_principal', '')}\n"
+            f"Scénario : {intrigue}\n"
+            f"Situation initiale : {situation}\n"
+            f"Premier acte — '{acte1.get('titre', 'Introduction')}' : {acte1.get('objectif_principal', 'Découvrir les lieux')}\n"
             "Présente la scène d'ouverture de manière immersive. "
             "Termine par le bloc 📌 Résumé des informations."
         )

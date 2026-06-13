@@ -85,8 +85,14 @@ if st.session_state.agent.game_state == "SUMMARY":
     st.success("La création de votre personnage est terminée !")
     if st.button("🚀 Lancer l'aventure"):
         with st.spinner("Génération du scénario et introduction..."):
-            intro = st.session_state.agent.start_adventure()
-            st.rerun()
+            try:
+                intro = st.session_state.agent.start_adventure()
+                if "Erreur" in intro:
+                    st.error(intro)
+                else:
+                    st.rerun()
+            except Exception as e:
+                st.error(f"Une erreur critique est survenue : {e}")
 
 # Zone de saisie (désactivée en mode SUMMARY)
 if st.session_state.agent.game_state != "SUMMARY":
