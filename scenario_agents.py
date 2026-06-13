@@ -17,8 +17,9 @@ class NPCSetupAgent(BaseAgent):
 
     def _get_full_scenario_context(self) -> str:
         try:
+            # On cible plus précisément les descriptions de personnages
             docs = self.scenario_store.similarity_search(
-                "personnages PNJ antagoniste allié faction maître ennemi",
+                "Description physique et personnalité des personnages non-joueurs PNJ. Liste des membres, alliés et ennemis.",
                 k=config.RAG_SEARCH_K
             )
             return "\n\n".join([doc.page_content for doc in docs])
@@ -74,11 +75,19 @@ Sois concis pour éviter de tronquer la réponse.
         npcs = extract_json(raw)
 
         if isinstance(npcs, list):
+            # Nettoyage et validation minimale
+            valid_npcs = []
+            for n in npcs:
+                if isinstance(n, dict) and "nom" in n:
+                    if "id" not in n:
+                        n["id"] = re.sub(r'[^a-z0-9]+', '_', n["nom"].lower()).strip('_')
+                    valid_npcs.append(n)
+
             os.makedirs("Memory", exist_ok=True)
             with open("Memory/npcs.json", "w", encoding="utf-8") as f:
-                json.dump({"npcs": npcs, "version": 1}, f, indent=4, ensure_ascii=False)
-            print(f"[NPCSetupAgent] ✓ {len(npcs)} PNJ générés → Memory/npcs.json")
-            return npcs
+                json.dump({"npcs": valid_npcs, "version": 1}, f, indent=4, ensure_ascii=False)
+            print(f"[NPCSetupAgent] ✓ {len(valid_npcs)} PNJ générés → Memory/npcs.json")
+            return valid_npcs
 
         print(f"[NPCSetupAgent] ✗ Aucun JSON valide détecté dans la réponse LLM. Réponse reçue : \n{raw[:500]}...")
         return []
@@ -189,6 +198,22 @@ Sois concis et direct pour éviter que la réponse ne soit tronquée.
         scenario = extract_json(raw)
 
         if isinstance(scenario, dict):
+            # Garantir la présence des champs obligatoires
+            if "intrigue_complete" not in scenario:
+                scenario["intrigue_complete"] = scenario.get("pitch", "Une mystérieuse aventure commence.")
+            if "situation_initiale" not in scenario:
+                scenario["situation_initiale"] = "Le héros commence son périple dans un lieu calme."
+            if "titre" not in scenario:
+                scenario["titre"] = "Une Aventure Sans Nom"
+            if "actes" not in scenario or not scenario["actes"]:
+                scenario["actes"] = [{
+                    "numero": 1,
+                    "titre": "Le Commencement",
+                    "objectif_principal": "Explorer les environs",
+                    "evenements_cles": ["Départ"],
+                    "pnj_impliques": []
+                }]
+
             os.makedirs("Memory", exist_ok=True)
             with open("Memory/scenario.json", "w", encoding="utf-8") as f:
                 json.dump(scenario, f, indent=4, ensure_ascii=False)
