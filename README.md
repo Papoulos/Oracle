@@ -68,3 +68,11 @@ Le système repose sur une architecture multi-agents coordonnée, où chaque age
   - **Modèle** : Défini par `CHRONICLE_MODEL` (température `CHRONICLE_TEMP`, par défaut 0.1).
   - **Persistance** : Met à jour le fichier `Memory/Chronicle.json` après chaque interaction.
   - **Objectif** : Fournir une mémoire à long terme résumée pour les sessions prolongées.
+
+## Fonctionnalités de Reprise de Session
+
+Le système vérifie automatiquement la présence de fichiers de sauvegarde dans le dossier `Memory/` lors du lancement :
+
+1. **Reprise de Personnage seul** : Si un fichier `character.json` est détecté sans scénario associé, l'interface affiche la fiche du personnage et propose de lancer une nouvelle aventure avec lui ou d'en créer un nouveau.
+2. **Reprise de Partie complète** : Si `character.json` et `scenario.json` sont présents, l'utilisateur peut reprendre la partie là où il s'est arrêté ou démarrer une nouvelle partie.
+3. **Résumé de Session** : Un bouton "📋 Afficher le résumé de la partie" permet de prévisualiser les statistiques du personnage et la dernière chronique avant de confirmer la reprise.

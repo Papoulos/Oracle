@@ -320,6 +320,19 @@ class RPGAgent(BaseAgent):
         with open("Memory/Chronicle.json", "w", encoding="utf-8") as f:
             json.dump(self.chronicle_data, f, indent=4, ensure_ascii=False)
 
+    def load_character(self):
+        """Charge uniquement le personnage et passe en mode SUMMARY."""
+        try:
+            if os.path.exists("Memory/character.json"):
+                with open("Memory/character.json", "r", encoding="utf-8") as f:
+                    self.character_data = json.load(f)
+                self.game_state = "SUMMARY"
+                print(f"[RPGAgent] Personnage chargé : {self.character_data.get('nom')}")
+                return True
+        except Exception as e:
+            print(f"[RPGAgent] Erreur chargement personnage : {e}")
+        return False
+
     def load_game(self):
         """Charge la sauvegarde complète (PJ + PNJ + Scénario + Chronique)."""
         try:
@@ -344,6 +357,10 @@ class RPGAgent(BaseAgent):
                 self.game_state = "ADVENTURE"
                 nb_npcs = len(self.npcs_data) if self.npcs_data else 0
                 print(f"[RPGAgent] Partie chargée — {nb_npcs} PNJ disponibles.")
+                return True
+            elif self.character_data:
+                self.game_state = "SUMMARY"
+                print(f"[RPGAgent] Personnage chargé (partie incomplète).")
                 return True
 
         except Exception as e:
