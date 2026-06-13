@@ -72,6 +72,10 @@ def main():
 
     client = chromadb.PersistentClient(path=config.CHROMA_PATH)
 
+    # Création des répertoires si nécessaire
+    os.makedirs(config.CORE_DATA_PATH, exist_ok=True)
+    os.makedirs(config.SCENARIO_DATA_PATH, exist_ok=True)
+
     # Indexation du Core
     index_directory(config.CORE_DATA_PATH, config.CORE_COLLECTION_NAME, client, embeddings)
 

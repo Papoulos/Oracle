@@ -22,7 +22,15 @@ class NPCSetupAgent(BaseAgent):
                 "Description physique et personnalité des personnages non-joueurs PNJ. Liste des membres, alliés et ennemis.",
                 k=config.RAG_SEARCH_K
             )
-            return "\n\n".join([doc.page_content for doc in docs])
+            context = "\n\n".join([doc.page_content for doc in docs])
+            if not context.strip():
+                # Fallback : recherche plus large
+                docs = self.scenario_store.similarity_search("histoire personnages", k=config.RAG_SEARCH_K)
+                context = "\n\n".join([doc.page_content for doc in docs])
+
+            if not context.strip():
+                return "Aucun document de scénario disponible."
+            return context
         except Exception:
             return "Aucun document de scénario disponible."
 
@@ -62,8 +70,9 @@ RÈGLES IMPORTANTES :
 - "relation_pj" ∈ ["Inconnu", "Connaissance", "Ami", "Allié", "Ennemi", "Neutre"]
 - "secret" est confidentiel — le Narrateur ne le révèle JAMAIS sans déclencheur narratif
 - "niveau" reflète la puissance (1 = civil, 20 = légende)
-- N'invente de PNJ que si le scénario est lacunaire, reste cohérent avec l'univers
-- Inclure uniquement les PNJ avec un rôle narratif réel
+- Si le SCÉNARIO est absent ou vide, INVENTE 2-3 PNJ intéressants liés au passé du personnage joueur.
+- Reste cohérent avec l'univers médiéval-fantastique.
+- Inclure uniquement les PNJ avec un rôle narratif réel.
 
 Réponds UNIQUEMENT avec un tableau JSON valide entouré de ```json et ```.
 Sois concis pour éviter de tronquer la réponse.
@@ -110,7 +119,15 @@ class ScenarioSetupAgent(BaseAgent):
                 "intrigue acte objectif lieu quête antagoniste résolution enjeu",
                 k=config.RAG_SEARCH_K
             )
-            return "\n\n".join([doc.page_content for doc in docs])
+            context = "\n\n".join([doc.page_content for doc in docs])
+            if not context.strip():
+                # Fallback : recherche plus large
+                docs = self.scenario_store.similarity_search("histoire intrigue", k=config.RAG_SEARCH_K)
+                context = "\n\n".join([doc.page_content for doc in docs])
+
+            if not context.strip():
+                return "Aucun document de scénario disponible."
+            return context
         except Exception:
             return "Aucun document de scénario disponible."
 
@@ -183,10 +200,11 @@ Génère un objet JSON avec EXACTEMENT ce format :
 }}
 
 RÈGLES :
-- Génère 3 à 5 actes avec une vraie progression dramatique
-- "tension_actuelle" : entier 1 (calme) → 5 (crise maximale)
-- "pitch" ≠ "intrigue_complete" : le joueur ne sait pas tout
-- Les IDs dans "pnj_impliques" doivent correspondre aux "id" des PNJ
+- Génère 3 à 5 actes avec une vraie progression dramatique.
+- Si le SCÉNARIO est absent ou vide, INVENTE une quête épique basée sur le personnage joueur.
+- "tension_actuelle" : entier 1 (calme) → 5 (crise maximale).
+- "pitch" ≠ "intrigue_complete" : le joueur ne sait pas tout.
+- Les IDs dans "pnj_impliques" doivent correspondre aux "id" des PNJ.
 
 Réponds UNIQUEMENT avec le bloc JSON entouré de ```json et ```.
 Sois concis et direct pour éviter que la réponse ne soit tronquée.
@@ -198,14 +216,14 @@ Sois concis et direct pour éviter que la réponse ne soit tronquée.
         scenario = extract_json(raw)
 
         if isinstance(scenario, dict):
-            # Garantir la présence des champs obligatoires
-            if "intrigue_complete" not in scenario:
-                scenario["intrigue_complete"] = scenario.get("pitch", "Une mystérieuse aventure commence.")
-            if "situation_initiale" not in scenario:
+            # Garantir la présence des champs obligatoires et non-nuls
+            if not scenario.get("intrigue_complete"):
+                scenario["intrigue_complete"] = scenario.get("pitch") or "Une mystérieuse aventure commence."
+            if not scenario.get("situation_initiale"):
                 scenario["situation_initiale"] = "Le héros commence son périple dans un lieu calme."
-            if "titre" not in scenario:
+            if not scenario.get("titre"):
                 scenario["titre"] = "Une Aventure Sans Nom"
-            if "actes" not in scenario or not scenario["actes"]:
+            if not scenario.get("actes"):
                 scenario["actes"] = [{
                     "numero": 1,
                     "titre": "Le Commencement",
