@@ -8,29 +8,68 @@ import config
 st.set_page_config(page_title="RPG Oracle - Multi-Agents", page_icon="🎲")
 
 def display_character_info(character_data):
-    st.markdown(f"### 👤 {character_data.get('nom', 'Aventurier')}")
+    if not character_data:
+        st.warning("Aucune donnée de personnage disponible.")
+        return
+
+    # Si les données sont imbriquées (ex: {"personnage": {...}})
+    if len(character_data) == 1 and isinstance(list(character_data.values())[0], dict):
+        key = list(character_data.keys())[0]
+        if key.lower() in ["personnage", "character", "pj"]:
+            character_data = character_data[key]
+
+    def get_val(keys, default="N/A"):
+        if isinstance(keys, str): keys = [keys]
+        for k in keys:
+            if k in character_data: return character_data[k]
+            # Test case-insensitive
+            for actual_key in character_data.keys():
+                if actual_key.lower() == k.lower():
+                    return character_data[actual_key]
+        return default
+
+    nom = get_val(["nom", "name"], "Aventurier Inconnu")
+    classe = get_val(["classe", "class"])
+    race = get_val("race")
+    niveau = get_val(["niveau", "level"])
+    pv = get_val(["points_de_vie", "pv", "hp", "health"])
+    ca = get_val(["ca", "ac", "armure"])
+
+    st.markdown(f"### 👤 {nom}")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**Classe :** {character_data.get('classe', 'N/A')}")
-        if 'race' in character_data: st.markdown(f"**Race :** {character_data.get('race')}")
-        if 'niveau' in character_data: st.markdown(f"**Niveau :** {character_data.get('niveau')}")
+        st.markdown(f"**Classe :** {classe}")
+        if race != "N/A": st.markdown(f"**Race :** {race}")
+        if niveau != "N/A": st.markdown(f"**Niveau :** {niveau}")
 
     with col2:
-        if 'points_de_vie' in character_data: st.markdown(f"**PV :** {character_data.get('points_de_vie')}")
-        elif 'pv' in character_data: st.markdown(f"**PV :** {character_data.get('pv')}")
-        if 'ca' in character_data: st.markdown(f"**CA :** {character_data.get('ca')}")
+        if pv != "N/A": st.markdown(f"**PV :** {pv}")
+        if ca != "N/A": st.markdown(f"**CA :** {ca}")
 
-    # Essayer de trouver les stats (souvent dans 'statistiques' ou 'stats')
-    stats = character_data.get('statistiques') or character_data.get('stats')
-    if stats and isinstance(stats, dict):
+    # Essayer de trouver les stats (souvent dans 'statistiques', 'stats' ou 'abilities')
+    stats = None
+    for k in ["statistiques", "stats", "abilities", "caractéristiques", "caracteristiques"]:
+        val = get_val(k, None)
+        if isinstance(val, dict):
+            stats = val
+            break
+
+    if stats:
         st.markdown("**Statistiques :**")
         st.info(" | ".join([f"**{k.capitalize()}**: {v}" for k,v in stats.items()]))
 
-    if 'équipement' in character_data:
-        equip = character_data['équipement']
+    equip = get_val(["équipement", "equipement", "equipment", "inventaire"], None)
+    if equip:
         if isinstance(equip, list):
             st.markdown(f"**Équipement :** {', '.join(equip)}")
+        elif isinstance(equip, dict):
+            # Si l'équipement est un dict (ex: armes, armure)
+            items = []
+            for k, v in equip.items():
+                if isinstance(v, list): items.extend(v)
+                else: items.append(str(v))
+            st.markdown(f"**Équipement :** {', '.join(items)}")
         else:
             st.markdown(f"**Équipement :** {equip}")
 
