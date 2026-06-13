@@ -49,15 +49,52 @@ def display_character_info(character_data):
 
     # Essayer de trouver les stats (souvent dans 'statistiques', 'stats' ou 'abilities')
     stats = None
-    for k in ["statistiques", "stats", "abilities", "caractéristiques", "caracteristiques"]:
+    stats_keys = ["statistiques", "stats", "abilities", "caractéristiques", "caracteristiques"]
+    for k in stats_keys:
         val = get_val(k, None)
         if isinstance(val, dict):
             stats = val
             break
 
+    # Si pas de dictionnaire de stats, on cherche les clés individuelles communes
+    if not stats:
+        stat_mapping = {
+            "Force": ["force", "str"],
+            "Dextérité": ["dextérité", "dexterite", "dex"],
+            "Constitution": ["constitution", "con"],
+            "Intelligence": ["intelligence", "int"],
+            "Sagesse": ["sagesse", "wis"],
+            "Charisme": ["charisme", "cha"]
+        }
+        extracted_stats = {}
+        for label, keys in stat_mapping.items():
+            val = get_val(keys, None)
+            if val is not None and val != "N/A":
+                extracted_stats[label] = val
+        if extracted_stats:
+            stats = extracted_stats
+
     if stats:
         st.markdown("**Statistiques :**")
-        st.info(" | ".join([f"**{k.capitalize()}**: {v}" for k,v in stats.items()]))
+        # Affichage en colonnes pour les stats (3 par ligne max)
+        num_stats = len(stats)
+        cols_per_row = 3
+        for i in range(0, num_stats, cols_per_row):
+            batch = list(stats.items())[i:i+cols_per_row]
+            cols = st.columns(cols_per_row)
+            for j, (k, v) in enumerate(batch):
+                cols[j].metric(label=k, value=str(v))
+
+    # Compétences
+    skills = get_val(["compétences", "competences", "skills"], None)
+    if skills:
+        if isinstance(skills, list):
+            st.markdown(f"**Compétences :** {', '.join(skills)}")
+        elif isinstance(skills, dict):
+            items = [f"{k}: {v}" for k, v in skills.items()]
+            st.markdown(f"**Compétences :** {', '.join(items)}")
+        else:
+            st.markdown(f"**Compétences :** {skills}")
 
     equip = get_val(["équipement", "equipement", "equipment", "inventaire"], None)
     if equip:
