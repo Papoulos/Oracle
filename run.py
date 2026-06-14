@@ -37,5 +37,6 @@ def run_app():
         sys.exit(1)
 
 if __name__ == "__main__":
+    config.check_config()
     check_python_version()
     run_app()
