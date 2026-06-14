@@ -15,22 +15,20 @@ def extract_json(text: str, expected_type: type = dict):
     open_char  = "{" if expected_type == dict else "["
     close_char = "}" if expected_type == dict else "]"
 
-    # 1. Balises ```json
-    m = re.search(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*?{re.escape(close_char)})\s*```", text)
+    # 1. Balises ```json (on cherche de manière gourmande pour gérer les JSON imbriqués)
+    m = re.search(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*{re.escape(close_char)})\s*```", text)
     if m:
         try:
             return json.loads(m.group(1))
-        except Exception:
+        except json.JSONDecodeError:
             pass
 
-    # 2. Premier bloc complet
+    # 2. Premier bloc complet (gourmand aussi)
     m = re.search(rf"({re.escape(open_char)}[\s\S]*{re.escape(close_char)})", text)
     if m:
         try:
-            # On prend le plus long match possible pour éviter les faux positifs si plusieurs blocs existent
-            # Mais re.search avec [\s\S]* est déjà gourmand par défaut
             return json.loads(m.group(1))
-        except Exception:
+        except json.JSONDecodeError:
             pass
 
     return None

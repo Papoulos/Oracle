@@ -223,13 +223,34 @@ class RPGAgent(BaseAgent):
 
         return True
 
+    def _unwrap_character_data(self, data):
+        """Désadresse les données du personnage si elles sont imbriquées dans une clé racine."""
+        if not isinstance(data, dict):
+            return data
+
+        # Liste des clés racines courantes
+        root_keys = ["personnage", "character", "pj", "sheet", "fiche"]
+
+        # Si on n'a qu'une seule clé et qu'elle est dans notre liste
+        if len(data) == 1:
+            key = list(data.keys())[0]
+            if key.lower() in root_keys and isinstance(data[key], dict):
+                return data[key]
+
+        # Sinon on cherche si une de ces clés existe au premier niveau et contient un dictionnaire significatif
+        for key in root_keys:
+            if key in data and isinstance(data[key], dict) and len(data[key]) > 2:
+                return data[key]
+
+        return data
+
     def chat(self, user_input):
         if self.game_state == "CREATION":
             response = self.character_creator.generate_response(user_input, self.history.messages)
 
             character_data = extract_json(response)
             if isinstance(character_data, dict):
-                self.character_data = character_data
+                self.character_data = self._unwrap_character_data(character_data)
                 os.makedirs("Memory", exist_ok=True)
                 with open("Memory/character.json", "w", encoding="utf-8") as f:
                     json.dump(self.character_data, f, indent=4, ensure_ascii=False)
@@ -349,9 +370,11 @@ class RPGAgent(BaseAgent):
         try:
             if os.path.exists("Memory/character.json"):
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
-                    self.character_data = json.load(f)
+                    data = json.load(f)
+                    self.character_data = self._unwrap_character_data(data)
                 self.game_state = "SUMMARY"
-                print(f"[RPGAgent] Personnage chargé : {self.character_data.get('nom')}")
+                nom = self.character_data.get('nom') if self.character_data else "Inconnu"
+                print(f"[RPGAgent] Personnage chargé : {nom}")
                 return True
         except Exception as e:
             print(f"[RPGAgent] Erreur chargement personnage : {e}")
@@ -362,7 +385,8 @@ class RPGAgent(BaseAgent):
         try:
             if os.path.exists("Memory/character.json"):
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
-                    self.character_data = json.load(f)
+                    data = json.load(f)
+                    self.character_data = self._unwrap_character_data(data)
 
             if os.path.exists("Memory/npcs.json"):
                 with open("Memory/npcs.json", "r", encoding="utf-8") as f:

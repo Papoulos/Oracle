@@ -79,8 +79,16 @@ Réponds UNIQUEMENT avec ce JSON :
         scenario = extract_json(response.content, expected_type=dict)
 
         if not scenario:
-            print(f"[ScenarioSummaryAgent] ✗ Échec de l'extraction JSON. Réponse : {response.content[:200]}...")
+            print(f"[ScenarioSummaryAgent] ✗ Échec de l'extraction JSON. Réponse brute :\n{response.content}")
             return {}
+
+        # Validation minimale des champs obligatoires pour éviter des crashs plus tard
+        required_fields = ["titre", "pitch", "intrigue_complete", "situation_initiale", "actes"]
+        for field in required_fields:
+            if field not in scenario:
+                print(f"[ScenarioSummaryAgent] ⚠ Champ '{field}' manquant dans le JSON.")
+                if field == "actes": scenario["actes"] = []
+                else: scenario[field] = "Inconnu"
 
         os.makedirs("Memory", exist_ok=True)
         with open("Memory/scenario.json", "w", encoding="utf-8") as f:
