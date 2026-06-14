@@ -1,50 +1,81 @@
 import os
+import sys
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # --- Configuration LLM (Texte) ---
-# Provider: "ollama" ou "openai" (pour llama-cpp ou autre API compatible)
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:26b")
+LLM_PROVIDER = os.getenv("LLM_PROVIDER")
+LLM_BASE_URL = os.getenv("LLM_BASE_URL")
+LLM_MODEL = os.getenv("LLM_MODEL")
 
 # --- Configuration Embeddings ---
-# Provider: "ollama" ou "openai"
-EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "ollama")
-EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "http://localhost:11434")
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
 # --- Configuration par Agent ---
-CHARACTER_MODEL = os.getenv("CHARACTER_MODEL", LLM_MODEL)
-CHARACTER_TEMP = float(os.getenv("CHARACTER_TEMP", 0.7))
+CHARACTER_MODEL = os.getenv("CHARACTER_MODEL")
+CHARACTER_TEMP = float(os.getenv("CHARACTER_TEMP")) if os.getenv("CHARACTER_TEMP") else None
 
-NARRATOR_MODEL = os.getenv("NARRATOR_MODEL", LLM_MODEL)
-NARRATOR_TEMP = float(os.getenv("NARRATOR_TEMP", 0.7))
+NARRATOR_MODEL = os.getenv("NARRATOR_MODEL")
+NARRATOR_TEMP = float(os.getenv("NARRATOR_TEMP")) if os.getenv("NARRATOR_TEMP") else None
 
-ORCHESTRATOR_MODEL = os.getenv("ORCHESTRATOR_MODEL", LLM_MODEL)
-ORCHESTRATOR_TEMP = float(os.getenv("ORCHESTRATOR_TEMP", 0.7))
+ORCHESTRATOR_MODEL = os.getenv("ORCHESTRATOR_MODEL")
+ORCHESTRATOR_TEMP = float(os.getenv("ORCHESTRATOR_TEMP")) if os.getenv("ORCHESTRATOR_TEMP") else None
 
-CHRONICLE_MODEL = os.getenv("CHRONICLE_MODEL", LLM_MODEL)
-CHRONICLE_TEMP = float(os.getenv("CHRONICLE_TEMP", 0.1)) # On veut un résumé factuel, température basse
+CHRONICLE_MODEL = os.getenv("CHRONICLE_MODEL")
+CHRONICLE_TEMP = float(os.getenv("CHRONICLE_TEMP")) if os.getenv("CHRONICLE_TEMP") else None
 
 # --- Configuration Serveur ---
-SERVER_ADDRESS = os.getenv("SERVER_ADDRESS", "localhost")
-SERVER_PORT = int(os.getenv("SERVER_PORT", 8501))
+SERVER_ADDRESS = os.getenv("SERVER_ADDRESS")
+SERVER_PORT = int(os.getenv("SERVER_PORT")) if os.getenv("SERVER_PORT") else None
 
 # --- Autres paramètres ---
-CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma_db")
-CORE_DATA_PATH = os.getenv("CORE_DATA_PATH", "./data/core")
-SCENARIO_DATA_PATH = os.getenv("SCENARIO_DATA_PATH", "./data/scenario")
+CHROMA_PATH = os.getenv("CHROMA_PATH")
+CORE_DATA_PATH = os.getenv("CORE_DATA_PATH")
+SCENARIO_DATA_PATH = os.getenv("SCENARIO_DATA_PATH")
 
 # Noms des collections VectorDB
-CORE_COLLECTION_NAME = "core_collection"
-SCENARIO_COLLECTION_NAME = "scenario_collection"
+CORE_COLLECTION_NAME = os.getenv("CORE_COLLECTION_NAME")
+SCENARIO_COLLECTION_NAME = os.getenv("SCENARIO_COLLECTION_NAME")
 
 # --- RAG ---
-RAG_SEARCH_K = int(os.getenv("RAG_SEARCH_K", 12))
+RAG_SEARCH_K = int(os.getenv("RAG_SEARCH_K")) if os.getenv("RAG_SEARCH_K") else None
 
 # --- Compatibilité Ollama (Anciennes variables) ---
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", LLM_BASE_URL)
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", LLM_MODEL)
-OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL", EMBEDDING_MODEL)
+OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
+OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL")
+
+def check_config():
+    """
+    Vérifie que toutes les variables de configuration nécessaires sont présentes.
+    S'arrête si une variable obligatoire est manquante.
+    """
+    required_vars = [
+        "LLM_PROVIDER", "LLM_BASE_URL", "LLM_MODEL",
+        "EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL",
+        "CHARACTER_MODEL", "CHARACTER_TEMP",
+        "NARRATOR_MODEL", "NARRATOR_TEMP",
+        "ORCHESTRATOR_MODEL", "ORCHESTRATOR_TEMP",
+        "CHRONICLE_MODEL", "CHRONICLE_TEMP",
+        "SERVER_ADDRESS", "SERVER_PORT",
+        "CHROMA_PATH", "CORE_DATA_PATH", "SCENARIO_DATA_PATH",
+        "CORE_COLLECTION_NAME", "SCENARIO_COLLECTION_NAME",
+        "RAG_SEARCH_K"
+    ]
+
+    missing_vars = []
+    for var in required_vars:
+        val = os.getenv(var)
+        if val is None or val.strip() == "":
+            missing_vars.append(var)
+
+    if missing_vars:
+        print("\n❌ ERREUR DE CONFIGURATION")
+        print("Les variables d'environnement suivantes sont manquantes dans votre fichier .env :")
+        for var in missing_vars:
+            print(f"  - {var}")
+        print("\nVeuillez copier .env.example vers .env et configurer les variables manquantes.")
+        sys.exit(1)
