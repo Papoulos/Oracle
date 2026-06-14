@@ -7,7 +7,7 @@ load_dotenv()
 # Provider: "ollama" ou "openai" (pour llama-cpp ou autre API compatible)
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "ollama")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "gemma3")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma4:26b")
 
 # --- Configuration Embeddings ---
 # Provider: "ollama" ou "openai"

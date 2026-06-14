@@ -4,44 +4,34 @@ import config
 import re
 import json
 
-def extract_json(text):
+def extract_json(text: str, expected_type: type = dict):
     """
-    Extrait le premier bloc JSON (objet ou tableau) d'un texte.
-    Gère les balises ```json ... ``` et tente de trouver le contenu entre { } ou [ ].
+    Extrait un bloc JSON (objet ou tableau) d'un texte.
+    expected_type = dict ou list
     """
-    # Nettoyage préliminaire : enlever d'éventuelles balises markdown
-    # On cherche d'abord entre balises ```json ... ```
-    match = re.search(r"```json\s*([\s\S]*?)\s*```", text)
-    if match:
-        content = match.group(1).strip()
+    if not text:
+        return None
+
+    open_char  = "{" if expected_type == dict else "["
+    close_char = "}" if expected_type == dict else "]"
+
+    # 1. Balises ```json
+    m = re.search(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*?{re.escape(close_char)})\s*```", text)
+    if m:
         try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            # Si le contenu dans les balises échoue, on continue avec la recherche globale sur ce contenu
-            text = content
+            return json.loads(m.group(1))
+        except Exception:
+            pass
 
-    # Recherche du premier '{' ou '[' et du dernier '}' ou ']'
-    start_brace = text.find('{')
-    start_bracket = text.find('[')
-
-    if start_brace != -1 and (start_bracket == -1 or start_brace < start_bracket):
-        # On a probablement un objet
-        end_brace = text.rfind('}')
-        if end_brace != -1:
-            content = text[start_brace:end_brace+1]
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                pass
-    elif start_bracket != -1:
-        # On a probablement un tableau
-        end_bracket = text.rfind(']')
-        if end_bracket != -1:
-            content = text[start_bracket:end_bracket+1]
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                pass
+    # 2. Premier bloc complet
+    m = re.search(rf"({re.escape(open_char)}[\s\S]*{re.escape(close_char)})", text)
+    if m:
+        try:
+            # On prend le plus long match possible pour éviter les faux positifs si plusieurs blocs existent
+            # Mais re.search avec [\s\S]* est déjà gourmand par défaut
+            return json.loads(m.group(1))
+        except Exception:
+            pass
 
     return None
 

@@ -9,7 +9,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 import chromadb
 import config
 from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
-from scenario_agents import NPCSetupAgent, ScenarioSetupAgent
+from scenario_agents import NPCExtractorAgent, ScenarioSummaryAgent
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
@@ -146,8 +146,8 @@ class RPGAgent(BaseAgent):
         self.chronicle_agent = ChronicleAgent()
 
         # Agents de setup (one-shot, début de partie)
-        self.npc_setup_agent = NPCSetupAgent(self.scenario_store)
-        self.scenario_setup_agent = ScenarioSetupAgent(self.scenario_store, self.core_store)
+        self.npc_extractor_agent = NPCExtractorAgent(self.scenario_store)
+        self.scenario_summary_agent = ScenarioSummaryAgent(self.scenario_store)
 
         # Données PNJ en mémoire vive
         self.npcs_data = None
@@ -157,6 +157,26 @@ class RPGAgent(BaseAgent):
         self.character_data = None
         self.scenario_data = None
         self.chronicle_data = None
+
+    def _check_collections(self):
+        checks = [
+            (config.CORE_COLLECTION_NAME,     "Règles"),
+            (config.SCENARIO_COLLECTION_NAME, "Scénario"),
+        ]
+        all_ok = True
+        for coll_name, label in checks:
+            try:
+                collection = self.client.get_collection(coll_name)
+                count = collection.count()
+                if count == 0:
+                    print(f"⚠ [{label}] Collection '{coll_name}' est vide — lance 'python indexer.py'")
+                    all_ok = False
+                else:
+                    print(f"✓ [{label}] {count} chunks disponibles.")
+            except Exception:
+                print(f"✗ [{label}] Collection '{coll_name}' introuvable.")
+                all_ok = False
+        return all_ok
 
     def get_core_context(self, query):
         try:
@@ -179,28 +199,28 @@ class RPGAgent(BaseAgent):
         """
         Pipeline de setup complet (one-shot, exécuté après la création du PJ).
 
-        Étape 1 → NPCSetupAgent  : génère Memory/npcs.json
-        Étape 2 → ScenarioSetupAgent : génère Memory/scenario.json (enrichi)
+        Étape 1 → ScenarioSummaryAgent : génère Memory/scenario.json
+        Étape 2 → NPCExtractorAgent  : génère Memory/npcs.json
 
         Retourne True si le scénario a été généré avec succès.
         """
-        print("[RPGAgent] ── Setup du monde ──")
-
-        # Étape 1 : PNJ
-        print("[RPGAgent] Génération des fiches PNJ...")
-        npcs = self.npc_setup_agent.generate_npcs(self.character_data)
-        self.npcs_data = npcs  # peut être [] si le scénario est vide
-
-        # Étape 2 : Trame scénario
-        print("[RPGAgent] Génération de la trame scénario...")
-        scenario = self.scenario_setup_agent.generate_scenario(
-            self.character_data, self.npcs_data or []
-        )
-
-        if not scenario:
+        if not self._check_collections():
             return False
 
+        print("[RPGAgent] ── Setup du monde ──")
+
+        # Étape 1 : Trame scénario
+        print("[RPGAgent] Extraction du scénario...")
+        scenario = self.scenario_summary_agent.generate()
+        if not scenario:
+            return False
         self.scenario_data = scenario
+
+        # Étape 2 : PNJ
+        print("[RPGAgent] Extraction des PNJ...")
+        npcs = self.npc_extractor_agent.extract(self.scenario_data)
+        self.npcs_data = npcs  # peut être [] sans bloquer
+
         return True
 
     def chat(self, user_input):
