@@ -6,8 +6,8 @@ import json
 
 def extract_json(text: str, expected_type: type = dict):
     """
-    Extrait un bloc JSON (objet ou tableau) d'un texte.
-    expected_type = dict ou list
+    Extrait un bloc JSON (objet ou tableau) d'un texte de manière robuste.
+    Tente de trouver tous les blocs JSON et retourne le dernier valide.
     """
     if not text:
         return None
@@ -15,21 +15,36 @@ def extract_json(text: str, expected_type: type = dict):
     open_char  = "{" if expected_type == dict else "["
     close_char = "}" if expected_type == dict else "]"
 
-    # 1. Balises ```json (on cherche de manière gourmande pour gérer les JSON imbriqués)
-    m = re.search(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*{re.escape(close_char)})\s*```", text)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except json.JSONDecodeError:
-            pass
+    # 1. Extraction de tous les blocs markdown ```json ... ```
+    # On utilise une recherche non-gourmande pour les blocs eux-mêmes,
+    # mais on veut quand même supporter l'imbrication à l'intérieur d'un bloc.
+    # Note : Le regex [\s\S]*? s'arrête au premier ``` suivant.
+    markdown_blocks = re.findall(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*?{re.escape(close_char)})\s*```", text)
 
-    # 2. Premier bloc complet (gourmand aussi)
-    m = re.search(rf"({re.escape(open_char)}[\s\S]*{re.escape(close_char)})", text)
-    if m:
+    # Inverser pour tester du plus récent (bas du message) au plus ancien
+    for block in reversed(markdown_blocks):
         try:
-            return json.loads(m.group(1))
+            return json.loads(block)
         except json.JSONDecodeError:
-            pass
+            continue
+
+    # 2. Si aucun bloc markdown n'est valide, on cherche des structures JSON brutes
+    # On cherche tous les blocs commençant par open_char et finissant par close_char
+    # de manière gourmande pour capturer le maximum.
+    raw_matches = re.findall(rf"({re.escape(open_char)}[\s\S]*{re.escape(close_char)})", text)
+    for match in reversed(raw_matches):
+        # On tente de trouver le JSON valide à l'intérieur (au cas où il y aurait du texte autour)
+        # On essaie de réduire le match de la fin vers le début pour trouver le bon crochet fermant
+        temp_match = match
+        while temp_match:
+            try:
+                return json.loads(temp_match)
+            except json.JSONDecodeError:
+                # Retirer le dernier caractère et chercher le précédent close_char
+                last_close = temp_match.rfind(close_char, 0, -1)
+                if last_close == -1:
+                    break
+                temp_match = temp_match[:last_close + 1]
 
     return None
 
