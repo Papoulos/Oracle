@@ -237,9 +237,12 @@ if "game_loaded" not in st.session_state:
             if st.button("🚀 Lancer l'aventure"):
                 if st.session_state.agent.load_character():
                     with st.spinner("Génération du scénario et introduction..."):
-                        st.session_state.agent.start_adventure()
-                    st.session_state.game_loaded = True
-                    st.rerun()
+                        intro = st.session_state.agent.start_adventure()
+                        if "Erreur" in intro:
+                            st.error(intro)
+                        else:
+                            st.session_state.game_loaded = True
+                            st.rerun()
                 else:
                     st.error("Échec du chargement du personnage.")
         with col2:
