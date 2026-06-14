@@ -28,6 +28,9 @@ ORCHESTRATOR_TEMP = float(os.getenv("ORCHESTRATOR_TEMP", 0.7))
 CHRONICLE_MODEL = os.getenv("CHRONICLE_MODEL", LLM_MODEL)
 CHRONICLE_TEMP = float(os.getenv("CHRONICLE_TEMP", 0.1)) # On veut un résumé factuel, température basse
 
+SHEET_MANAGER_MODEL = os.getenv("SHEET_MANAGER_MODEL", LLM_MODEL)
+SHEET_MANAGER_TEMP = float(os.getenv("SHEET_MANAGER_TEMP", 0.1))
+
 # --- Configuration Serveur ---
 SERVER_ADDRESS = os.getenv("SERVER_ADDRESS", "localhost")
 SERVER_PORT = int(os.getenv("SERVER_PORT", 8501))
