@@ -24,12 +24,13 @@ class CharacterCreator(BaseAgent):
             2. Utilise le CODEX pour proposer des options valides (races, classes, statistiques, compétences, équipement, etc.).
             3. Lors de la détermination des caractéristiques (Force, Dextérité, etc.), propose CLAIREMENT au joueur de lancer les dés pour lui ou de le laisser faire/utiliser une autre méthode.
             4. N'oublie JAMAIS l'étape de l'équipement de départ en suivant scrupuleusement les règles du CODEX pour la classe choisie.
-            5. Garde un ton immersif, médiéval-fantastique et encourageant.
-            6. Ne sors jamais de ton rôle de MJ.
-            7. Dès que tu considères que le personnage est complet, tu DOIS conclure la création et générer un bloc JSON final récapitulant toutes les caractéristiques du personnage.
-            8. Une fois le JSON généré, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt et que l'aventure va pouvoir commencer.
+            5. Détermine et calcule TOUTES les statistiques dérivées à partir des règles du CODEX : Points de Vie (PV), Classe d'Armure (CA), Jets de Protection (Saves), et toute autre caractéristique pertinente selon la classe et la race choisies. Guide le joueur si un choix ou un jet de dé est nécessaire pour ces valeurs.
+            6. Garde un ton immersif, médiéval-fantastique et encourageant.
+            7. Ne sors jamais de ton rôle de MJ.
+            8. Dès que tu considères que le personnage est complet, tu DOIS conclure la création et générer un bloc JSON final récapitulant TOUTES les caractéristiques du personnage, y compris les statistiques dérivées (PV, CA, Jets de Protection, etc.).
+            9. Une fois le JSON généré, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt et que l'aventure va pouvoir commencer.
 
-            IMPORTANT : Le bloc JSON doit être unique, complet et entouré des balises ```json et ```. C'est ce bloc qui signale techniquement la fin de cette phase.
+            IMPORTANT : Le bloc JSON doit être unique, complet (incluant nom, classe, race, niveau, statistiques, PV, CA, jets de protection, équipement, compétences) et entouré des balises ```json et ```. C'est ce bloc qui signale techniquement la fin de cette phase.
 
             CODEX (Règles et Monde) :
             {context}
@@ -41,7 +42,7 @@ class CharacterCreator(BaseAgent):
 
     def get_context(self, query):
         try:
-            docs = self.vector_store.similarity_search(query, k=3)
+            docs = self.vector_store.similarity_search(query, k=config.RAG_SEARCH_K)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucun contexte trouvé."
@@ -159,14 +160,14 @@ class RPGAgent(BaseAgent):
 
     def get_core_context(self, query):
         try:
-            docs = self.core_store.similarity_search(query, k=3)
+            docs = self.core_store.similarity_search(query, k=config.RAG_SEARCH_K)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucune règle trouvée."
 
     def get_scenario_context(self, query):
         try:
-            docs = self.scenario_store.similarity_search(query, k=3)
+            docs = self.scenario_store.similarity_search(query, k=config.RAG_SEARCH_K)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucun élément de scénario trouvé."
