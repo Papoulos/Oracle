@@ -89,6 +89,57 @@ class ChronicleAgent(BaseAgent):
         response = self.chain.invoke(inputs)
         return response.content
 
+class SheetManagerAgent(BaseAgent):
+    def __init__(self, vector_store):
+        super().__init__(model=config.SHEET_MANAGER_MODEL, temperature=config.SHEET_MANAGER_TEMP)
+        self.vector_store = vector_store
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", """Tu es le Gestionnaire de Fiche de Personnage.
+            Ton rôle est de mettre à jour la fiche JSON du personnage en fonction des événements qui viennent de se produire, en respectant les règles du CODEX.
+            Tu reçois la fiche actuelle, l'action du joueur, la réponse du narrateur et les règles pertinentes.
+            Tu dois retourner la NOUVELLE fiche JSON complète et à jour.
+
+            CONSIGNES :
+            - Mets à jour les Points de Vie (PV) si le personnage a été blessé ou soigné.
+            - Ajoute ou retire des objets de l'inventaire si nécessaire.
+            - Mets à jour l'expérience (XP) ou le niveau si mentionné, en suivant les tables de progression du CODEX.
+            - Ne modifie pas les statistiques de base (Force, etc.) sauf si un événement permanent l'exige.
+            - Assure-toi que le JSON est valide et complet.
+            - Réponds UNIQUEMENT avec le bloc JSON entouré de ```json et ```.
+
+            RÈGLES DU CODEX (Contexte) :
+            {context}
+            """),
+            ("human", """FICHE ACTUELLE :
+            {character_sheet}
+
+            DERNIERS ÉVÉNEMENTS :
+            Action joueur : {user_input}
+            Réponse narrateur : {narrator_response}
+
+            Nouvelle fiche JSON mise à jour :"""),
+        ])
+        self.chain = self.prompt | self.llm
+
+    def get_context(self, query):
+        try:
+            docs = self.vector_store.similarity_search(query, k=config.RAG_SEARCH_K)
+            return "\n\n".join([doc.page_content for doc in docs])
+        except Exception:
+            return "Aucune règle trouvée pour la mise à jour."
+
+    def update_sheet(self, character_sheet, user_input, narrator_response):
+        context = self.get_context(f"Règles pour : {user_input} {narrator_response}")
+        inputs = {
+            "context": context,
+            "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2),
+            "user_input": user_input,
+            "narrator_response": narrator_response
+        }
+        response = self.chain.invoke(inputs)
+        new_sheet = extract_json(response.content)
+        return new_sheet
+
 class Narrator(BaseAgent):
     def __init__(self):
         super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP)
@@ -144,6 +195,7 @@ class RPGAgent(BaseAgent):
         self.character_creator = CharacterCreator(self.core_store)
         self.narrator = Narrator()
         self.chronicle_agent = ChronicleAgent()
+        self.sheet_manager = SheetManagerAgent(self.core_store)
 
         # Agents de setup (one-shot, début de partie)
         self.npc_extractor_agent = NPCExtractorAgent(self.scenario_store)
@@ -267,17 +319,21 @@ class RPGAgent(BaseAgent):
 
             # 1. L'Orchestrateur analyse l'action avec le Codex (règles)
             analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
-            Basé sur les RÈGLES suivantes :
+            Basé sur les RÈGLES du CODEX suivantes :
             {core_context}
 
             PNJs présents et leurs secrets (si pertinent) :
             {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
             Selon le personnage ({json.dumps(self.character_data, ensure_ascii=False)}), un jet de dé est-il nécessaire ?
+            Si oui, identifie le bonus approprié en appliquant RIGOUREUSEMENT les règles du CODEX ci-dessus à la fiche de personnage du joueur.
+
             Réponds au format JSON :
             {{
                 "need_roll": boolean,
                 "stat": "nom_stat_ou_null",
+                "bonus": integer_ou_null,
+                "calculation_breakdown": "explication du bonus (ex: +3 Force, +2 Athlétisme)",
                 "dc": integer_ou_null,
                 "reason": "explication courte"
             }}
@@ -294,10 +350,16 @@ class RPGAgent(BaseAgent):
 
                 if analysis_data.get("need_roll"):
                     die_roll = self.roll_dice(20)
+                    bonus = analysis_data.get("bonus")
+                    if bonus is None:
+                        bonus = 0
+                    total = die_roll + bonus
                     stat_name = analysis_data.get("stat", "Inconnu")
                     dc = analysis_data.get("dc", 10)
-                    roll_info = f"Jet de {stat_name} (DC {dc}) : {die_roll}"
-                    roll_result = "Succès" if die_roll >= dc else "Échec"
+                    breakdown = analysis_data.get("calculation_breakdown", f"bonus +{bonus}")
+
+                    roll_info = f"Jet de {stat_name} (DC {dc}) : {die_roll} + {bonus} ({breakdown}) = {total}"
+                    roll_result = "Succès" if total >= dc else "Échec"
             except Exception:
                 analysis_data = {"need_roll": False}
 
@@ -315,6 +377,18 @@ class RPGAgent(BaseAgent):
 
             if roll_info:
                 final_response += f"\n\n---\n*🎲 {roll_info} ({roll_result})*"
+
+            # Mise à jour de la fiche de personnage
+            try:
+                new_sheet = self.sheet_manager.update_sheet(self.character_data, user_input, final_response)
+                if new_sheet and isinstance(new_sheet, dict):
+                    self.character_data = self._unwrap_character_data(new_sheet)
+                    os.makedirs("Memory", exist_ok=True)
+                    with open("Memory/character.json", "w", encoding="utf-8") as f:
+                        json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+                    print("[RPGAgent] Fiche de personnage mise à jour.")
+            except Exception as e:
+                print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la fiche : {e}")
 
             # Mise à jour de la chronique
             self.update_chronicle(user_input, final_response)

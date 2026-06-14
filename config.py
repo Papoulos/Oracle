@@ -27,6 +27,9 @@ ORCHESTRATOR_TEMP = float(os.getenv("ORCHESTRATOR_TEMP")) if os.getenv("ORCHESTR
 CHRONICLE_MODEL = os.getenv("CHRONICLE_MODEL")
 CHRONICLE_TEMP = float(os.getenv("CHRONICLE_TEMP")) if os.getenv("CHRONICLE_TEMP") else None
 
+SHEET_MANAGER_MODEL = os.getenv("SHEET_MANAGER_MODEL", LLM_MODEL)
+SHEET_MANAGER_TEMP = float(os.getenv("SHEET_MANAGER_TEMP", 0.1))
+
 # --- Configuration Serveur ---
 SERVER_ADDRESS = os.getenv("SERVER_ADDRESS")
 SERVER_PORT = int(os.getenv("SERVER_PORT")) if os.getenv("SERVER_PORT") else None
