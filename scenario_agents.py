@@ -87,35 +87,45 @@ class NPCExtractorAgent(BaseAgent):
         self.scenario_store = scenario_store
 
     def extract(self, scenario_summary: dict) -> list:
-        print("[NPCExtractorAgent] Extraction des fiches PNJ depuis le RAG...")
+        titre = scenario_summary.get("titre", "l'aventure")
+        print(f"[NPCExtractorAgent] Recherche de PNJ pour '{titre}'...")
 
         # Étape 1 : Identifier les PNJ nommés
+        # On utilise des requêtes plus larges et liées au titre de l'aventure
         identification_queries = [
-            "personnages PNJ alliés ennemis antagonistes",
-            "rencontres habitants notables",
-            "liste des personnages du scénario"
+            f"Personnages et PNJ de {titre}",
+            "Liste des personnages nommés",
+            "Protagonistes, alliés et antagonistes",
+            "Habitants, gardes nommés, marchands et chefs",
+            "Qui sont les personnages clés de cette histoire ?"
         ]
 
         all_docs = []
         for q in identification_queries:
-            docs = self.scenario_store.similarity_search(q, k=6)
+            docs = self.scenario_store.similarity_search(q, k=8)
             all_docs.extend(docs)
 
         unique_contents = {doc.page_content: doc for doc in all_docs}
+        print(f"[NPCExtractorAgent] {len(unique_contents)} extraits uniques trouvés pour l'identification.")
+
         contexte_identification = "\n\n---\n\n".join(unique_contents.keys())
 
-        identification_prompt = f"""Tu es un assistant de préparation de jeu de rôle.
-Identifie TOUS les personnages nommés (PNJ) mentionnés dans les extraits suivants.
-Ignore les créatures génériques sans nom (ex: "un garde", "les loups").
-Extrais uniquement leurs noms et leurs rôles apparents.
+        identification_prompt = f"""Tu es un assistant MJ expert.
+Ta mission est de lister TOUS les personnages nommés (PNJ) présents dans les extraits du scénario "{titre}" ci-dessous.
 
-EXTRAITS :
+CONSIGNES :
+- Liste chaque individu possédant un NOM PROPRE (ex: "Alaric", "Maître Elrond").
+- Inclus les personnages secondaires s'ils ont un nom.
+- Ignore les ennemis génériques non nommés (ex: "les gobelins", "les brigands").
+- Pour chaque personnage, indique brièvement son rôle (ex: "Aubergiste", "Chef de la garde", "Antagoniste principal").
+
+EXTRAITS DU SCÉNARIO :
 {contexte_identification}
 
 Réponds UNIQUEMENT avec un JSON au format suivant :
 {{
   "pnjs": [
-    {{"nom": "Nom du personnage", "role": "Rôle ou fonction"}}
+    {{"nom": "Nom complet", "role": "Fonction ou rôle dans l'intrigue"}}
   ]
 }}
 """
@@ -150,12 +160,13 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
 
         for pnj in pnj_list:
             nom = pnj.get("nom")
-            role = pnj.get("role")
-            print(f"[NPCExtractorAgent] Extraction des détails pour : {nom}...")
+            role = pnj.get("role", "Personnage")
+            print(f"[NPCExtractorAgent] Extraction des détails pour : {nom} ({role})...")
 
             # Passe 2 — requêtes ciblées
-            query = f"{nom} {role}"
-            specific_docs = self.scenario_store.similarity_search(query, k=4)
+            # On cherche par nom et par rôle, et aussi des termes généraux liés au personnage
+            query = f"Détails sur le personnage {nom} {role}"
+            specific_docs = self.scenario_store.similarity_search(query, k=5)
 
             unique_specific = {doc.page_content: doc for doc in specific_docs}
             chunks_cibles = "\n\n".join(unique_specific.keys())
@@ -196,9 +207,10 @@ Réponds UNIQUEMENT avec un objet JSON :
             npc_data = extract_json(response.content, expected_type=dict)
 
             if npc_data:
+                print(f"[NPCExtractorAgent] ✓ {nom} extrait.")
                 extracted_npcs.append(npc_data)
             else:
-                print(f"[NPCExtractorAgent] ✗ Échec pour {nom}")
+                print(f"[NPCExtractorAgent] ✗ Échec de l'extraction JSON pour {nom}.")
 
         self._save_npcs(extracted_npcs)
         return extracted_npcs
