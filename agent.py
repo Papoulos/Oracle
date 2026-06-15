@@ -144,19 +144,56 @@ class Narrator(BaseAgent):
     def __init__(self):
         super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es le Narrateur d'une aventure de jeu de rôle.
-            Ton rôle est de décrire les scènes, de jouer les PNJs et de présenter les choix au joueur.
-            Tu reçois des instructions de l'Orchestrateur (MJ) et tu dois les transformer en un récit immersif en français.
+            ("system", """Tu es le Narrateur d'une aventure de jeu de rôle. Tu reçois des instructions
+structurées de l'Orchestrateur (MJ) et tu les transformes en narration à la
+deuxième personne du singulier, en français, de manière immersive.
 
-            CONSIGNES :
-            - Ne décide JAMAIS des règles ou des résultats des actions (c'est l'Orchestrateur qui le fait).
-            - Ne modifie JAMAIS l'état du jeu.
-            - Utilise un ton narratif riche et immersif.
-            - Réagis en fonction de l'historique de la conversation pour rester cohérent.
-            - Termine la narration par une question ou une incitation à l'action pour le joueur.
-            - APRÈS la question, ajoute une ligne de séparation "---" suivie d'un bloc intitulé "📌 Résumé des informations" contenant les points clés de l'action, les indices trouvés ou les informations importantes récoltées.
-            - Ne liste JAMAIS les "PNJs présents" ou "Lieux présents" sous forme de liste technique à la fin.
-            """),
+RÈGLES ABSOLUES :
+- Tu ne décides JAMAIS des règles, des jets de dés ou des résultats d'actions.
+- Tu ne modifies JAMAIS l'état du jeu.
+- Tu n'interprètes JAMAIS à la place du joueur — tu décris ce que son personnage
+  perçoit, pas ce qu'il comprend ou conclut.
+
+STRUCTURE DE CHAQUE RÉPONSE :
+
+① PERCEPTION IMMÉDIATE (2-4 phrases)
+  Ce que le personnage voit, entend, sent à l'instant T.
+  Concret et sensoriel. Pas de conclusions, pas d'interprétations.
+  ❌ "Vous comprenez que quelque chose a été tué ici."
+  ✅ "Le sol est couvert d'une substance sombre et poisseuse. Une odeur
+      âcre de fer et de chair vous prend à la gorge."
+
+② DÉTAILS ET ENVIRONNEMENT (2-3 phrases)
+  Ce que le personnage remarque en regardant autour de lui.
+  Toujours du point de vue du personnage — ce qu'il voit réellement,
+  pas ce que le MJ sait.
+
+③ TENSION OU IMPULSION (1-2 phrases)
+  Un élément actif qui pousse le joueur à réagir :
+  un bruit, un mouvement, une présence, un choix visible.
+  Ne laisse jamais la description en suspension.
+
+④ QUESTION OU AMORCE D'ACTION
+  Une question directe ou une proposition concrète.
+  ❌ "Que faites-vous ?" (trop vague)
+  ✅ "Le couloir nord semble plus sombre — aucune torche n'y brûle.
+      À l'est, vous distinguez ce qui ressemble à une porte.
+      Vous avancez, ou vous faites demi-tour ?"
+
+⑤ BLOC RÉSUMÉ (toujours en dernier)
+  ---
+  📌 Résumé des informations
+  - [fait découvert 1]
+  - [fait découvert 2]
+  - [changement d'état ou indice important]
+
+STYLE :
+- Deuxième personne du singulier ("vous").
+- Présent de narration.
+- Phrases courtes et rythmées pour les moments de tension,
+  plus longues pour les descriptions calmes.
+- Ne liste jamais les PNJ présents ou les lieux de façon technique.
+"""),
             MessagesPlaceholder(variable_name="history"),
             ("system", "CONSIGNES DE L'ORCHESTRATEUR : {instructions}"),
             ("human", "{input}"),
@@ -364,14 +401,43 @@ class RPGAgent(BaseAgent):
                 analysis_data = {"need_roll": False}
 
             # 2. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO
-            decision_instruction = f"""Action Joueur: {user_input}
-            Contexte Scénario (Faits): {scenario_context}
-            Résumé Scénario Global: {self.scenario_data['intrigue_complete']}
-            PNJs disponibles (sans secrets) :
-            {npcs_summary}
-            Résultat technique : {"Pas de jet nécessaire" if not roll_info else f"{roll_info} -> {roll_result}"}
-            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO, les PNJs si nécessaire, et le résultat technique. Inclus les points clés/indices dans le résumé final.
-            """
+            decision_instruction = f"""
+ACTION DU JOUEUR : {user_input}
+
+RÉSULTAT TECHNIQUE : {"Aucun jet requis" if not roll_info else f"{roll_info} → {roll_result}"}
+
+CONTEXTE SCÉNARIO (extraits RAG) : {scenario_context}
+INTRIGUE GLOBALE (MJ uniquement) : {self.scenario_data['intrigue_complete']}
+PNJ DISPONIBLES : {npcs_summary}
+
+TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur.
+
+STRUCTURE OBLIGATOIRE de ta réponse :
+
+1. CONSÉQUENCE IMMÉDIATE
+   Ce qui se passe concrètement suite à l'action. Si jet réussi : avantage clair.
+   Si jet échoué : information manquante, mauvaise interprétation, ou complication.
+   Ne révèle que ce que le personnage peut percevoir à cet instant.
+
+2. PERCEPTIONS SENSORIELLES
+   Ce que le personnage voit, entend, sent, touche ou ressent physiquement.
+   Sois précis et concret — pas d'atmosphère vague.
+   Exemples : "il voit trois torches éteintes et une porte entrouverte à gauche",
+   "il entend un souffle rythmique venant du couloir nord".
+
+3. ÉLÉMENTS INCONNUS OU AMBIGUS
+   Ce que le personnage ne peut pas encore déterminer (en lien avec le jet raté si applicable).
+   Formule-le du point de vue du personnage, pas du MJ.
+   Exemple : "l'origine du bruit reste indéterminée" plutôt que "c'est un rat".
+
+4. IMPULSION NARRATIVE
+   Donne une direction active au joueur : un détail qui appelle une réaction,
+   un PNJ qui agit, un bruit qui se rapproche, un choix qui se présente.
+   Ne laisse JAMAIS la scène en suspension sans amorce concrète.
+
+5. POINTS CLÉS POUR LE RÉSUMÉ
+   Liste 2-3 faits importants découverts lors de cette action (indices, informations, changements d'état).
+"""
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
 
@@ -408,13 +474,35 @@ class RPGAgent(BaseAgent):
         intrigue = self.scenario_data.get('intrigue_complete', 'Une nouvelle aventure commence.')
         situation = self.scenario_data.get('situation_initiale', 'Le héros se tient prêt.')
 
-        intro_instruction = (
-            f"Scénario : {intrigue}\n"
-            f"Situation initiale : {situation}\n"
-            f"Premier acte — '{acte1.get('titre', 'Introduction')}' : {acte1.get('objectif_principal', 'Découvrir les lieux')}\n"
-            "Présente la scène d'ouverture de manière immersive. "
-            "Termine par le bloc 📌 Résumé des informations."
-        )
+        intro_instruction = f"""
+ACTION DU JOUEUR : L'aventure commence !
+
+RÉSULTAT TECHNIQUE : Aucun jet requis
+
+CONTEXTE SCÉNARIO :
+- Intrigue : {intrigue}
+- Situation initiale : {situation}
+- Premier acte : {acte1.get('titre', 'Introduction')} - {acte1.get('objectif_principal', 'Découvrir les lieux')}
+
+TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur pour lancer l'aventure.
+
+STRUCTURE OBLIGATOIRE de ta réponse :
+
+1. CONSÉQUENCE IMMÉDIATE
+   Décris l'entrée en matière du personnage dans l'histoire.
+
+2. PERCEPTIONS SENSORIELLES
+   Ce que le personnage voit, entend, sent ou ressent en arrivant dans cette première scène.
+
+3. ÉLÉMENTS INCONNUS OU AMBIGUS
+   Des zones d'ombre ou des mystères immédiats qui piquent la curiosité.
+
+4. IMPULSION NARRATIVE
+   Un événement ou un détail qui force le joueur à prendre sa première décision.
+
+5. POINTS CLÉS POUR LE RÉSUMÉ
+   Liste les éléments fondamentaux de la situation initiale.
+"""
 
         intro_response = self.narrator.generate_response(
             "L'aventure commence !", self.history.messages, intro_instruction
