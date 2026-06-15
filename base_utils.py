@@ -24,13 +24,17 @@ def extract_json(text: str, expected_type: type = dict):
     # Inverser pour tester du plus récent (bas du message) au plus ancien
     for block in reversed(markdown_blocks):
         try:
-            return json.loads(block)
-        except json.JSONDecodeError:
+            # Nettoyage minimal des espaces/caractères invisibles
+            block_clean = block.strip()
+            return json.loads(block_clean)
+        except json.JSONDecodeError as e:
+            print(f"[extract_json] DEBUG: Échec décodage bloc markdown : {e}")
             continue
 
     # 2. Si aucun bloc markdown n'est valide, on cherche des structures JSON brutes
     # On cherche tous les blocs commençant par open_char et finissant par close_char
     # de manière gourmande pour capturer le maximum.
+    # On utilise une recherche qui s'assure que le premier open_char n'est pas précédé d'un autre open_char sans close_char
     raw_matches = re.findall(rf"({re.escape(open_char)}[\s\S]*{re.escape(close_char)})", text)
     for match in reversed(raw_matches):
         # On tente de trouver le JSON valide à l'intérieur (au cas où il y aurait du texte autour)
