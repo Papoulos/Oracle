@@ -1,78 +1,175 @@
-# RPG Oracle - Version Simplifiée
+# 🎲 RPG Oracle - Multi-Agent RAG System
 
-Ce projet est une version simplifiée du système RPG Oracle, utilisant un agent unique avec RAG (Retrieval-Augmented Generation) et mémoire en RAM.
+RPG Oracle is an advanced Tabletop Role-Playing Game (TTRPG) assistant that uses a multi-agent architecture and Retrieval-Augmented Generation (RAG) to provide a complete, autonomous gaming experience. It handles everything from character creation to complex narrative orchestration.
 
-## Structure
-- `agent.py` : Logique de l'agent RPGAgent (LangChain + Ollama).
-- `indexer.py` : Outil CLI pour indexer les PDFs du dossier `data/`.
-- `app.py` : Interface utilisateur Streamlit.
-- `config.py` : Configuration globale.
-- `data/` : Dossier où placer les PDFs à indexer.
+---
 
-## Installation
+## 🏗 Architecture & Agents
 
-**Prérequis** : Python 3.9 à 3.13 (Python 3.14+ n'est pas encore supporté par ChromaDB).
+The system is powered by several specialized agents, each with its own prompt, model configuration, and specific responsibilities.
 
-1. Installez les dépendances :
-   ```bash
-   pip install -r requirements.txt
-   ```
+### 1. The Orchestrator (`RPGAgent`)
+*   **Role**: The "Brain" of the system. It handles high-level logic, state transitions (Creation → Summary → Adventure), and technical rules analysis.
+*   **Key Functions**:
+    *   Determines when a dice roll is needed based on the rules.
+    *   Calculates bonuses using character data and RAG context.
+    *   Coordinates other agents by providing precise MJ instructions.
+*   **Context**: Accesses both `core_collection` (rules) and `scenario_collection` (plot).
 
-2. Assurez-vous qu'Ollama est lancé avec les modèles requis :
-   ```bash
-   ollama run gemma3
-   ollama pull nomic-embed-text
-   ```
+### 2. Character Creator (`CharacterCreator`)
+*   **Role**: Guides the player through a step-by-step character building process.
+*   **Key Functions**:
+    *   Proposes races, classes, and equipment based on the Codex.
+    *   Calculates derived stats (HP, AC, Saves).
+    *   Generates a persistent JSON character sheet.
+*   **Context**: Strictly uses `core_collection` for rule compliance.
 
-## Utilisation
+### 3. The Narrator (`Narrator`)
+*   **Role**: The "Voice" of the Game Master. It transforms technical decisions into immersive storytelling.
+*   **Key Functions**:
+    *   Strict 5-part response structure: Immediate Perception, Environment Details, Narrative Tension, Action Hook, and Information Summary.
+    *   Always writes in the second person ("You").
+    *   Strictly prohibited from deciding rules or interpreting player intent.
 
-1. **Indexation** : Placez vos documents PDF dans le dossier `data/` et lancez :
-   ```bash
-   python indexer.py
-   ```
+### 4. Sheet Manager (`SheetManagerAgent`)
+*   **Role**: Maintains the character's state in real-time.
+*   **Key Functions**:
+    *   Updates HP, inventory, and experience based on narrative events.
+    *   Ensures character sheet updates follow the game's mechanics.
+*   **Context**: Uses `core_collection` to validate mechanical changes.
 
-2. **Lancement de l'interface** :
-   ```bash
-   python run.py
-   ```
-   *Note : Vous pouvez configurer l'adresse IP et le port dans `config.py` ou via les variables d'environnement `SERVER_ADDRESS` et `SERVER_PORT`.*
+### 5. Chronicle Agent (`ChronicleAgent`)
+*   **Role**: The historian. It maintains a factual, concise summary of the adventure.
+*   **Key Functions**:
+    *   Updates `Memory/Chronicle.json` after every turn.
+    *   Provides long-term memory for consistent storytelling over long sessions.
 
-## Architecture des Agents
+### 6. Setup Agents (One-shot)
+*   **Scenario Summary Agent**: Extracts the title, pitch, and initial situation from the scenario RAG.
+*   **NPC Extractor Agent**: Identifies named NPCs, extracts their profiles, goals, and "secrets" (visible only to the Orchestrator).
 
-Le système repose sur une architecture multi-agents coordonnée, où chaque agent possède un rôle spécifique et des paramètres de configuration dédiés.
+---
 
-### 1. Orchestrateur (`RPGAgent`)
-- **Rôle fonctionnel** : C'est le cerveau du système. Il gère la logique globale, les transitions d'état (Création, Résumé, Aventure), effectue les jets de dés (D20) et analyse techniquement les actions du joueur.
-- **Détails techniques** :
-  - **Modèle** : Défini par `ORCHESTRATOR_MODEL` (température `ORCHESTRATOR_TEMP`).
-  - **Sources de données** : Accède à `core_collection` (règles) et `scenario_collection` (intrigue).
-  - **Responsabilité** : Il donne des instructions au Narrateur basées sur l'analyse technique des règles et du scénario.
+## 🔄 Data Flows
 
-### 2. Créateur de Personnage (`CharacterCreator`)
-- **Rôle fonctionnel** : Guide le joueur dans la conception de son personnage. Il propose les options (races, classes) et s'assure que toutes les étapes (statistiques, équipement) sont respectées.
-- **Détails techniques** :
-  - **Modèle** : Défini par `CHARACTER_MODEL` (température `CHARACTER_TEMP`).
-  - **Sources de données** : Utilise exclusivement `core_collection` pour garantir le respect des règles.
-  - **Sortie** : Génère un bloc JSON final qui verrouille la fiche de personnage.
+### Character Creation Flow
+```mermaid
+sequenceDiagram
+    participant Player
+    participant CC as Character Creator
+    participant RAG as Core RAG (Rules)
+    participant Mem as Memory (character.json)
 
-### 3. Narrateur (`Narrator`)
-- **Rôle fonctionnel** : La voix du Maître du Jeu. Il transforme les décisions de l'Orchestrateur en un récit immersif, interprète les PNJs et décrit les environnements.
-- **Détails techniques** :
-  - **Modèle** : Défini par `NARRATOR_MODEL` (température `NARRATOR_TEMP`).
-  - **Fonctionnement** : Reçoit des instructions précises de l'Orchestrateur et s'appuie sur l'historique des échanges.
-  - **Format** : Termine chaque intervention par une question et un bloc "📌 Résumé des informations".
+    Player->>CC: Input (Name, Choice, etc.)
+    CC->>RAG: Query Rules
+    RAG-->>CC: Rule Context
+    CC->>Player: Narrative Proposal + JSON State
+    CC->>Mem: Update JSON
+```
 
-### 4. Chroniqueur (`ChronicleAgent`)
-- **Rôle fonctionnel** : Historien de l'aventure. Il maintient un résumé factuel et concis des événements au fur et à mesure de la progression.
-- **Détails techniques** :
-  - **Modèle** : Défini par `CHRONICLE_MODEL` (température `CHRONICLE_TEMP`, par défaut 0.1).
-  - **Persistance** : Met à jour le fichier `Memory/Chronicle.json` après chaque interaction.
-  - **Objectif** : Fournir une mémoire à long terme résumée pour les sessions prolongées.
+### Adventure Initialization
+```mermaid
+graph TD
+    A[Character Completed] --> B[ScenarioSummaryAgent]
+    B -->|Search Scenario RAG| C[Generate scenario.json]
+    C --> D[NPCExtractorAgent]
+    D -->|Search Scenario RAG| E[Generate npcs.json]
+    E --> F[Generate Introduction]
+    F --> G[Start Adventure Mode]
+```
 
-## Fonctionnalités de Reprise de Session
+### Core Gameplay Loop
+```mermaid
+sequenceDiagram
+    participant Player
+    participant Orch as Orchestrator
+    participant RAG as RAG (Rules & Plot)
+    participant Narr as Narrator
+    participant SM as Sheet Manager
+    participant Chron as Chronicle
 
-Le système vérifie automatiquement la présence de fichiers de sauvegarde dans le dossier `Memory/` lors du lancement :
+    Player->>Orch: Action
+    Orch->>RAG: Technical Analysis (Rules)
+    RAG-->>Orch: Bonus/DC Logic
+    Orch->>Orch: Internal Dice Roll
+    Orch->>RAG: Narrative Analysis (Plot)
+    Orch->>Narr: MJ Instructions + Roll Results
+    Narr->>Player: Immersive Response
+    Orch->>SM: (Async) Update State
+    Orch->>Chron: (Async) Update History
+```
 
-1. **Reprise de Personnage seul** : Si un fichier `character.json` est détecté sans scénario associé, l'interface affiche la fiche du personnage et propose de lancer une nouvelle aventure avec lui ou d'en créer un nouveau.
-2. **Reprise de Partie complète** : Si `character.json` et `scenario.json` sont présents, l'utilisateur peut reprendre la partie là où il s'est arrêté ou démarrer une nouvelle partie.
-3. **Résumé de Session** : Un bouton "📋 Afficher le résumé de la partie" permet de prévisualiser les statistiques du personnage et la dernière chronique avant de confirmer la reprise.
+---
+
+## 📚 RAG & Indexing
+
+The project uses a dual-path RAG system to separate general rules from specific adventure plots.
+
+### Directory Structure
+*   `data/core/`: Place PDFs containing general game rules, world settings, and bestiaries here.
+*   `data/scenario/`: Place PDFs containing the specific adventure module or campaign plot here.
+
+### Using the Indexer
+The `indexer.py` script processes these PDFs into a ChromaDB vector store.
+```bash
+# Basic indexing
+python indexer.py
+
+# Clear existing database and re-index
+python indexer.py --clear
+```
+*Note: The system supports bilingual RAG. Queries are generated in both French and English to ensure maximum retrieval accuracy from diverse source materials.*
+
+---
+
+## ⚙️ Configuration (.env)
+
+The system is highly configurable via the `.env` file. You can assign different models and temperatures to each agent.
+
+| Variable | Description |
+| :--- | :--- |
+| `LLM_PROVIDER` | `ollama` or `openai` (compatible with llama-cpp) |
+| `LLM_MODEL` | Default fallback model |
+| `CHARACTER_MODEL` | Model specialized in rule-heavy character creation |
+| `NARRATOR_MODEL` | Model specialized in creative writing |
+| `ORCHESTRATOR_MODEL` | High-reasoning model for MJ logic |
+| `RAG_SEARCH_K` | Number of document chunks to retrieve (default: 12) |
+| `SERVER_PORT` | Streamlit port (default: 8501) |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+*   **Python 3.9 to 3.13**: (Python 3.14+ is currently incompatible with ChromaDB/Pydantic V1).
+*   An LLM Backend (Ollama or an OpenAI-compatible API).
+
+### Installation
+1.  Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+2.  Configure your environment:
+    ```bash
+    cp .env.example .env
+    # Edit .env with your model names and URLs
+    ```
+3.  Index your data:
+    ```bash
+    python indexer.py
+    ```
+4.  Run the application:
+    ```bash
+    python run.py
+    ```
+
+---
+
+## 💾 Session Management
+The system automatically saves game state in the `Memory/` directory:
+*   `character.json`: Current character sheet.
+*   `scenario.json`: Adventure metadata.
+*   `npcs.json`: Profiles of all encountered/relevant NPCs.
+*   `Chronicle.json`: Running story summary.
+
+At startup, the UI will detect these files and offer to **Resume** your adventure or **Start New**.
