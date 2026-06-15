@@ -411,7 +411,6 @@ ACTION DU JOUEUR : {user_input}
 RÉSULTAT TECHNIQUE : {"Aucun jet requis" if not roll_info else f"{roll_info} → {roll_result}"}
 
 CONTEXTE SCÉNARIO (extraits RAG) : {scenario_context}
-INTRIGUE GLOBALE (MJ uniquement) : {self.scenario_data['intrigue_complete']}
 PNJ DISPONIBLES : {npcs_summary}
 
 TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur.
@@ -483,9 +482,8 @@ ACTION DU JOUEUR : L'aventure commence !
 RÉSULTAT TECHNIQUE : Aucun jet requis
 
 CONTEXTE SCÉNARIO :
-- Intrigue : {intrigue}
+- Pitch : {pitch}
 - Situation initiale : {situation}
-- Premier acte : {acte1.get('titre', 'Introduction')} - {acte1.get('objectif_principal', 'Découvrir les lieux')}
 
 TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur pour lancer l'aventure.
 
