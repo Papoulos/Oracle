@@ -19,11 +19,9 @@ class ScenarioSummaryAgent(BaseAgent):
         print("[ScenarioSummaryAgent] Extraction des éléments du scénario...")
 
         queries = [
-            ("intrigue objectif principal enjeu quête",              "intrigue"),
-            ("lieu endroit village ville donjon carte",               "lieux"),
-            ("acte chapitre scène événement séquence",               "actes"),
-            ("récompense trésor expérience XP butin",                "recompenses"),
-            ("personnage PNJ antagoniste allié ennemi nom propre",   "personnages"),
+            ("titre de l'aventure", "titre"),
+            ("pitch résumé introduction début", "pitch"),
+            ("situation initiale scène d'ouverture", "situation"),
         ]
 
         all_docs = []
@@ -42,7 +40,7 @@ class ScenarioSummaryAgent(BaseAgent):
             raise ValueError("Erreur : scenario_collection vide ou sans résultat — vérifie ton indexation avec python indexer.py --verify")
 
         prompt = f"""Tu es un assistant de préparation de jeu de rôle.
-À partir de ces extraits de scénario, produis un résumé structuré.
+À partir de ces extraits de scénario, produis une présentation structurée.
 Ne complète pas et n'invente pas — utilise uniquement ce qui est présent.
 
 EXTRAITS :
@@ -52,26 +50,7 @@ Réponds UNIQUEMENT avec ce JSON :
 {{
   "titre": "Titre de l'aventure (tel qu'il apparaît dans les extraits)",
   "pitch": "Ce que le joueur sait au départ — 2-3 phrases",
-  "intrigue_complete": "Vérité complète pour le MJ — 3-4 phrases",
-  "situation_initiale": "Scène d'ouverture précise — où est le joueur, ce qu'il voit",
-  "lieux_cles": [
-    {{"nom": "...", "description": "...", "importance_narrative": "..."}}
-  ],
-  "actes": [
-    {{
-      "numero": 1,
-      "titre": "...",
-      "objectif_principal": "...",
-      "evenements_cles": ["...", "..."],
-      "resolution_possible": "..."
-    }}
-  ],
-  "pnj_mentionnes": [
-    {{"nom": "Prénom Nom tel qu'il apparaît", "role_apparent": "rôle ou fonction dans le scénario"}}
-  ],
-  "tension_actuelle": 1,
-  "acte_en_cours": 1,
-  "etat": "actif"
+  "situation_initiale": "Scène d'ouverture précise — où est le joueur, ce qu'il voit"
 }}
 """
 
@@ -83,12 +62,11 @@ Réponds UNIQUEMENT avec ce JSON :
             return {}
 
         # Validation minimale des champs obligatoires pour éviter des crashs plus tard
-        required_fields = ["titre", "pitch", "intrigue_complete", "situation_initiale", "actes"]
+        required_fields = ["titre", "pitch", "situation_initiale"]
         for field in required_fields:
             if field not in scenario:
                 print(f"[ScenarioSummaryAgent] ⚠ Champ '{field}' manquant dans le JSON.")
-                if field == "actes": scenario["actes"] = []
-                else: scenario[field] = "Inconnu"
+                scenario[field] = "Inconnu"
 
         os.makedirs("Memory", exist_ok=True)
         with open("Memory/scenario.json", "w", encoding="utf-8") as f:
@@ -109,15 +87,52 @@ class NPCExtractorAgent(BaseAgent):
         self.scenario_store = scenario_store
 
     def extract(self, scenario_summary: dict) -> list:
-        print("[NPCExtractorAgent] Extraction des fiches PNJ...")
+        print("[NPCExtractorAgent] Extraction des fiches PNJ depuis le RAG...")
 
-        pnj_list = scenario_summary.get("pnj_mentionnes", [])
+        # Étape 1 : Identifier les PNJ nommés
+        identification_queries = [
+            "personnages PNJ alliés ennemis antagonistes",
+            "rencontres habitants notables",
+            "liste des personnages du scénario"
+        ]
+
+        all_docs = []
+        for q in identification_queries:
+            docs = self.scenario_store.similarity_search(q, k=6)
+            all_docs.extend(docs)
+
+        unique_contents = {doc.page_content: doc for doc in all_docs}
+        contexte_identification = "\n\n---\n\n".join(unique_contents.keys())
+
+        identification_prompt = f"""Tu es un assistant de préparation de jeu de rôle.
+Identifie TOUS les personnages nommés (PNJ) mentionnés dans les extraits suivants.
+Ignore les créatures génériques sans nom (ex: "un garde", "les loups").
+Extrais uniquement leurs noms et leurs rôles apparents.
+
+EXTRAITS :
+{contexte_identification}
+
+Réponds UNIQUEMENT avec un JSON au format suivant :
+{{
+  "pnjs": [
+    {{"nom": "Nom du personnage", "role": "Rôle ou fonction"}}
+  ]
+}}
+"""
+        id_response = self.llm.invoke(identification_prompt)
+        id_data = extract_json(id_response.content, expected_type=dict)
+
+        pnj_list = id_data.get("pnjs", []) if id_data else []
+
         if not pnj_list:
-            print("[NPCExtractorAgent] Aucun PNJ mentionné dans le scénario.")
+            print("[NPCExtractorAgent] Aucun PNJ nommé trouvé dans le RAG.")
             self._save_npcs([])
             return []
 
-        # Passe 1 — requêtes génériques
+        print(f"[NPCExtractorAgent] {len(pnj_list)} PNJs identifiés : {[p.get('nom') for p in pnj_list]}")
+
+        # Étape 2 : Extraire les détails pour chaque PNJ
+        # Passe 1 — requêtes génériques pour le contexte global
         queries_generiques = [
             ("secret motivation but objectif personnel",       "motivations"),
             ("inventaire objet arme armure trésor unique",     "inventaires"),
@@ -128,7 +143,6 @@ class NPCExtractorAgent(BaseAgent):
             docs = self.scenario_store.similarity_search(q, k=6)
             generic_docs.extend(docs)
 
-        # Déduplication générique
         unique_generic = {doc.page_content: doc for doc in generic_docs}
         contexte_generique = "\n\n".join(unique_generic.keys())
 
@@ -136,8 +150,8 @@ class NPCExtractorAgent(BaseAgent):
 
         for pnj in pnj_list:
             nom = pnj.get("nom")
-            role = pnj.get("role_apparent")
-            print(f"[NPCExtractorAgent] Traitement de : {nom}...")
+            role = pnj.get("role")
+            print(f"[NPCExtractorAgent] Extraction des détails pour : {nom}...")
 
             # Passe 2 — requêtes ciblées
             query = f"{nom} {role}"
@@ -147,11 +161,11 @@ class NPCExtractorAgent(BaseAgent):
             chunks_cibles = "\n\n".join(unique_specific.keys())
 
             prompt = f"""Tu es un assistant de préparation de jeu de rôle.
-Génère la fiche du personnage "{nom}" ({role}) à partir des extraits ci-dessous.
+Génère la fiche détaillée du personnage "{nom}" ({role}) à partir des extraits ci-dessous.
 Ne complète pas et n'invente pas — si une information est absente, écris "Inconnu".
 
 CONTEXTE GÉNÉRAL DU SCÉNARIO :
-{scenario_summary.get('pitch')} — {scenario_summary.get('intrigue_complete')}
+{scenario_summary.get('pitch', 'Inconnu')}
 
 EXTRAITS SPÉCIFIQUES À CE PERSONNAGE :
 {chunks_cibles}

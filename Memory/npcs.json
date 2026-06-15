@@ -1,0 +1,11 @@
+{
+    "npcs": [
+        {
+            "id": "barnabe",
+            "nom": "Barnabé",
+            "classe": "Gnome",
+            "secret": "Il a perdu sa clé"
+        }
+    ],
+    "version": 1
+}

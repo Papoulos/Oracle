@@ -353,11 +353,15 @@ class RPGAgent(BaseAgent):
             core_context = self.get_core_context(user_input)
             scenario_context = self.get_scenario_context(user_input)
             npcs_summary = self.get_npcs_context()
+            chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
             # 1. L'Orchestrateur analyse l'action avec le Codex (règles)
             analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
             Basé sur les RÈGLES du CODEX suivantes :
             {core_context}
+
+            Historique de l'aventure (Chronique) :
+            {chronicle_text}
 
             PNJs présents et leurs secrets (si pertinent) :
             {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
@@ -470,8 +474,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
 
         self.game_state = "ADVENTURE"
 
-        acte1 = self.scenario_data.get("actes", [{}])[0]
-        intrigue = self.scenario_data.get('intrigue_complete', 'Une nouvelle aventure commence.')
+        pitch = self.scenario_data.get('pitch', 'Une nouvelle aventure commence.')
         situation = self.scenario_data.get('situation_initiale', 'Le héros se tient prêt.')
 
         intro_instruction = f"""
@@ -508,7 +511,6 @@ STRUCTURE OBLIGATOIRE de ta réponse :
             "L'aventure commence !", self.history.messages, intro_instruction
         )
 
-        pitch = self.scenario_data.get('pitch', '')
         full_response = f"**{self.scenario_data.get('titre', 'Aventure')}**\n\n*{pitch}*\n\n{intro_response}"
 
         self.update_chronicle("L'aventure commence !", full_response)
