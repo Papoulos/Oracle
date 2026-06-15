@@ -2,6 +2,7 @@ import json
 import re
 import random
 import os
+import time
 from langchain_chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -262,6 +263,18 @@ class RPGAgent(BaseAgent):
         self.character_data = None
         self.scenario_data = None
         self.chronicle_data = None
+        self.setup_logs = []
+
+    def log(self, message):
+        timestamp = time.strftime("%H:%M:%S")
+        full_message = f"[{timestamp}] {message}"
+        print(full_message)
+        self.setup_logs.append(full_message)
+        try:
+            with open("streamlit.log", "a", encoding="utf-8") as f:
+                f.write(full_message + "\n")
+        except Exception:
+            pass
 
     def _check_collections(self):
         checks = [
@@ -312,20 +325,28 @@ class RPGAgent(BaseAgent):
         if not self._check_collections():
             return False
 
-        print("[RPGAgent] ── Setup du monde ──")
+        self.setup_logs = [] # Reset logs
+        self.log("── Setup du monde ──")
+        total_start = time.time()
 
         # Étape 1 : Trame scénario
-        print("[RPGAgent] Extraction du scénario...")
-        scenario = self.scenario_summary_agent.generate()
+        self.log("Étape 1 : Extraction du scénario...")
+        scenario_start = time.time()
+        scenario = self.scenario_summary_agent.generate(log_callback=self.log)
         if not scenario:
+            self.log("✗ Échec de l'extraction du scénario.")
             return False
         self.scenario_data = scenario
+        self.log(f"✓ Scénario extrait en {time.time() - scenario_start:.2f}s.")
 
         # Étape 2 : PNJ
-        print("[RPGAgent] Extraction des PNJ...")
-        npcs = self.npc_extractor_agent.extract(self.scenario_data)
+        self.log("Étape 2 : Extraction des PNJ...")
+        npcs_start = time.time()
+        npcs = self.npc_extractor_agent.extract(self.scenario_data, log_callback=self.log)
         self.npcs_data = npcs  # peut être [] sans bloquer
+        self.log(f"✓ PNJs extraits en {time.time() - npcs_start:.2f}s.")
 
+        self.log(f"✨ Setup terminé en {time.time() - total_start:.2f}s.")
         return True
 
     def _unwrap_character_data(self, data):
@@ -492,6 +513,8 @@ STRUCTURE OBLIGATOIRE de ta réponse :
         if not self.setup_world():
             return "Erreur lors de la génération du monde."
 
+        self.log("Génération de l'introduction narrative...")
+        intro_start = time.time()
         self.game_state = "ADVENTURE"
 
         pitch = self.scenario_data.get('pitch', 'Une nouvelle aventure commence.')
@@ -529,6 +552,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
         intro_response = self.narrator.generate_response(
             "L'aventure commence !", self.history.messages, intro_instruction
         )
+        self.log(f"✓ Introduction générée en {time.time() - intro_start:.2f}s.")
 
         full_response = f"**{self.scenario_data.get('titre', 'Aventure')}**\n\n*{pitch}*\n\n{intro_response}"
 
