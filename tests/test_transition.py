@@ -14,7 +14,9 @@ def test_character_completion_transition():
 
     # Save original method
     original_generate = agent.character_creator.generate_response
-    agent.character_creator.generate_response = lambda input, history: mock_response
+    # Add statut: complet to trigger transition
+    mock_response_with_status = f"Voici votre personnage :\n```json\n" + json.dumps({"nom": "Test", "classe": "Guerrier", "statut": "complet"}) + "\n```\nPrêt pour l'aventure ?"
+    agent.character_creator.generate_response = lambda input, history, char_data: mock_response_with_status
 
     assert agent.game_state == "CREATION"
     agent.chat("Finalise mon perso")
