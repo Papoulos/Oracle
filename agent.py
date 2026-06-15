@@ -43,12 +43,23 @@ class CharacterCreator(BaseAgent):
     def get_context(self, query):
         try:
             docs = self.vector_store.similarity_search(query, k=config.RAG_SEARCH_K)
+            print(f"[CharacterCreator] DEBUG: Recherche contextuelle pour '{query}' -> {len(docs)} docs trouvés.")
+            if docs:
+                print(f"[CharacterCreator] DEBUG: Premier extrait : {docs[0].page_content[:200]}...")
             return "\n\n".join([doc.page_content for doc in docs])
-        except Exception:
+        except Exception as e:
+            print(f"[CharacterCreator] DEBUG: Erreur RAG : {e}")
             return "Aucun contexte trouvé."
 
     def generate_response(self, user_input, history):
-        context = self.get_context(user_input)
+        # On enrichit la requête RAG avec les derniers messages pour avoir du contexte sur l'étape de création
+        rag_query = user_input
+        if len(history) >= 1:
+            last_msg = history[-1].content
+            # On extrait une partie du dernier message du MJ pour aider le RAG
+            rag_query = f"{last_msg[:100]} {user_input}"
+
+        context = self.get_context(rag_query)
         inputs = {
             "context": context,
             "history": history,

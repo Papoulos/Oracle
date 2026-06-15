@@ -19,9 +19,9 @@ class ScenarioSummaryAgent(BaseAgent):
         print("[ScenarioSummaryAgent] Extraction des éléments du scénario...")
 
         queries = [
-            ("titre de l'aventure", "titre"),
-            ("pitch résumé introduction début", "pitch"),
-            ("situation initiale scène d'ouverture", "situation"),
+            ("titre de l'aventure, adventure title, name of the module", "titre"),
+            ("pitch résumé introduction début, synopsis, adventure hook, background", "pitch"),
+            ("situation initiale scène d'ouverture, starting location, introduction, prologue", "situation"),
         ]
 
         all_docs = []
@@ -36,17 +36,25 @@ class ScenarioSummaryAgent(BaseAgent):
 
         contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
 
+        # Log de diagnostic
+        print(f"[ScenarioSummaryAgent] DEBUG: {len(unique_contents)} extraits uniques récupérés.")
+        if len(contexte_deduplique) > 500:
+            print(f"[ScenarioSummaryAgent] DEBUG: Début du contexte : {contexte_deduplique[:500]}...")
+        else:
+            print(f"[ScenarioSummaryAgent] DEBUG: Contexte : {contexte_deduplique}")
+
         if not contexte_deduplique.strip():
             raise ValueError("Erreur : scenario_collection vide ou sans résultat — vérifie ton indexation avec python indexer.py --verify")
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle.
-À partir de ces extraits de scénario, produis une présentation structurée.
-Ne complète pas et n'invente pas — utilise uniquement ce qui est présent.
+        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
+À partir de ces extraits de scénario (qui peuvent être en français ou en anglais), produis une présentation structurée en FRANÇAIS.
+Ne complète pas et n'invente pas — utilise uniquement ce qui est présent dans les extraits.
+Si les extraits sont très courts ou peu clairs, fais au mieux avec les informations disponibles sans halluciner.
 
-EXTRAITS :
+EXTRAITS DU SCÉNARIO :
 {contexte_deduplique}
 
-Réponds UNIQUEMENT avec ce JSON :
+Réponds UNIQUEMENT avec ce bloc JSON :
 {{
   "titre": "Titre de l'aventure (tel qu'il apparaît dans les extraits)",
   "pitch": "Ce que le joueur sait au départ — 2-3 phrases",
@@ -94,10 +102,11 @@ class NPCExtractorAgent(BaseAgent):
         # On utilise des requêtes plus larges et liées au titre de l'aventure
         identification_queries = [
             f"Personnages et PNJ de {titre}",
-            "Liste des personnages nommés",
-            "Protagonistes, alliés et antagonistes",
-            "Habitants, gardes nommés, marchands et chefs",
-            "Qui sont les personnages clés de cette histoire ?"
+            f"Characters and NPCs in {titre}",
+            "Liste des personnages nommés, list of named characters",
+            "Protagonistes, alliés et antagonistes, protagonists, allies and antagonists",
+            "Habitants, gardes nommés, marchands et chefs, inhabitants, named guards, merchants and leaders",
+            "Qui sont les personnages clés de cette histoire? Who are the key characters?"
         ]
 
         all_docs = []
@@ -110,8 +119,11 @@ class NPCExtractorAgent(BaseAgent):
 
         contexte_identification = "\n\n---\n\n".join(unique_contents.keys())
 
+        # Log de diagnostic
+        print(f"[NPCExtractorAgent] DEBUG: {len(unique_contents)} extraits pour identification.")
+
         identification_prompt = f"""Tu es un assistant MJ expert.
-Ta mission est de lister TOUS les personnages nommés (PNJ) présents dans les extraits du scénario "{titre}" ci-dessous.
+Ta mission est de lister TOUS les personnages nommés (PNJ) présents dans les extraits du scénario "{titre}" ci-dessous (qui peuvent être en anglais).
 
 CONSIGNES :
 - Liste chaque individu possédant un NOM PROPRE (ex: "Alaric", "Maître Elrond").
@@ -144,8 +156,8 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
         # Étape 2 : Extraire les détails pour chaque PNJ
         # Passe 1 — requêtes génériques pour le contexte global
         queries_generiques = [
-            ("secret motivation but objectif personnel",       "motivations"),
-            ("inventaire objet arme armure trésor unique",     "inventaires"),
+            ("secret motivation but objectif personnel, secret motivation, goal, background",       "motivations"),
+            ("inventaire objet arme armure trésor unique, inventory, items, weapons, unique treasure", "inventaires"),
         ]
 
         generic_docs = []
@@ -165,14 +177,17 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
 
             # Passe 2 — requêtes ciblées
             # On cherche par nom et par rôle, et aussi des termes généraux liés au personnage
-            query = f"Détails sur le personnage {nom} {role}"
+            query = f"Détails sur le personnage {nom} {role}, Details about character {nom} {role}"
             specific_docs = self.scenario_store.similarity_search(query, k=5)
 
             unique_specific = {doc.page_content: doc for doc in specific_docs}
             chunks_cibles = "\n\n".join(unique_specific.keys())
 
+            # Log de diagnostic
+            print(f"[NPCExtractorAgent] DEBUG: {len(unique_specific)} extraits spécifiques pour {nom}.")
+
             prompt = f"""Tu es un assistant de préparation de jeu de rôle.
-Génère la fiche détaillée du personnage "{nom}" ({role}) à partir des extraits ci-dessous.
+Génère la fiche détaillée du personnage "{nom}" ({role}) en FRANÇAIS à partir des extraits ci-dessous (qui peuvent être en anglais).
 Ne complète pas et n'invente pas — si une information est absente, écris "Inconnu".
 
 CONTEXTE GÉNÉRAL DU SCÉNARIO :
