@@ -20,17 +20,21 @@ class CharacterCreator(BaseAgent):
             Ton but actuel est de guider le joueur pas à pas dans la création de son personnage en te basant sur les règles et les informations contenues dans le CODEX ci-dessous.
 
             CONSIGNES :
-            1. Sois proactif : pose une seule question à la fois pour guider le joueur.
-            2. Utilise le CODEX pour proposer des options valides (races, classes, statistiques, compétences, équipement, etc.).
-            3. Lors de la détermination des caractéristiques (Force, Dextérité, etc.), propose CLAIREMENT au joueur de lancer les dés pour lui ou de le laisser faire/utiliser une autre méthode.
-            4. N'oublie JAMAIS l'étape de l'équipement de départ en suivant scrupuleusement les règles du CODEX pour la classe choisie.
-            5. Détermine et calcule TOUTES les statistiques dérivées à partir des règles du CODEX : Points de Vie (PV), Classe d'Armure (CA), Jets de Protection (Saves), et toute autre caractéristique pertinente selon la classe et la race choisies. Guide le joueur si un choix ou un jet de dé est nécessaire pour ces valeurs.
-            6. Garde un ton immersif, médiéval-fantastique et encourageant.
-            7. Ne sors jamais de ton rôle de MJ.
-            8. Dès que tu considères que le personnage est complet, tu DOIS conclure la création et générer un bloc JSON final récapitulant TOUTES les caractéristiques du personnage, y compris les statistiques dérivées (PV, CA, Jets de Protection, etc.).
-            9. Une fois le JSON généré, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt et que l'aventure va pouvoir commencer.
+            1. Réponds TOUJOURS en français, même si on te sollicite en anglais.
+            2. Sois proactif : pose une seule question à la fois pour guider le joueur.
+            3. Utilise le CODEX pour proposer des options valides (races, classes, statistiques, compétences, équipement, etc.).
+            4. Lors de la détermination des caractéristiques (Force, Dextérité, etc.), propose CLAIREMENT au joueur de lancer les dés pour lui ou de le laisser faire/utiliser une autre méthode.
+            5. N'oublie JAMAIS l'étape de l'équipement de départ en suivant scrupuleusement les règles du CODEX pour la classe choisie.
+            6. Détermine et calcule TOUTES les statistiques dérivées à partir des règles du CODEX : Points de Vie (PV), Classe d'Armure (CA), Jets de Protection (Saves), et toute autre caractéristique pertinente selon la classe et la race choisies.
+            7. Garde un ton immersif, médiéval-fantastique et encourageant.
+            8. À CHAQUE réponse, tu dois inclure un bloc JSON récapitulant l'état actuel du personnage.
+            9. Si la création est terminée, ajoute le champ `"statut": "complet"` dans le JSON. Sinon, mets `"statut": "en_cours"`.
+            10. Une fois le personnage complet, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt.
 
-            IMPORTANT : Le bloc JSON doit être unique, complet (incluant nom, classe, race, niveau, statistiques, PV, CA, jets de protection, équipement, compétences) et entouré des balises ```json et ```. C'est ce bloc qui signale techniquement la fin de cette phase.
+            IMPORTANT : Le bloc JSON doit être entouré des balises ```json et ```.
+
+            ÉTAT ACTUEL DU PERSONNAGE :
+            {current_character}
 
             CODEX (Règles et Monde) :
             {context}
@@ -51,7 +55,7 @@ class CharacterCreator(BaseAgent):
             print(f"[CharacterCreator] DEBUG: Erreur RAG : {e}")
             return "Aucun contexte trouvé."
 
-    def generate_response(self, user_input, history):
+    def generate_response(self, user_input, history, character_data=None):
         # On enrichit la requête RAG avec les derniers messages pour avoir du contexte sur l'étape de création
         rag_query = user_input
         if len(history) >= 1:
@@ -63,7 +67,8 @@ class CharacterCreator(BaseAgent):
         inputs = {
             "context": context,
             "history": history,
-            "input": user_input
+            "input": user_input,
+            "current_character": json.dumps(character_data, ensure_ascii=False, indent=2) if character_data else "Aucune donnée pour le moment."
         }
         response = self.chain.invoke(inputs)
         return response.content
@@ -346,15 +351,20 @@ class RPGAgent(BaseAgent):
 
     def chat(self, user_input):
         if self.game_state == "CREATION":
-            response = self.character_creator.generate_response(user_input, self.history.messages)
+            response = self.character_creator.generate_response(user_input, self.history.messages, self.character_data)
 
             character_data = extract_json(response)
             if isinstance(character_data, dict):
-                self.character_data = self._unwrap_character_data(character_data)
+                unwrapped_data = self._unwrap_character_data(character_data)
+                # On ne garde que les données significatives
+                self.character_data = unwrapped_data
                 os.makedirs("Memory", exist_ok=True)
                 with open("Memory/character.json", "w", encoding="utf-8") as f:
                     json.dump(self.character_data, f, indent=4, ensure_ascii=False)
-                self.game_state = "SUMMARY"
+
+                # Transition vers SUMMARY seulement si explicitement complet
+                if self.character_data.get("statut") == "complet":
+                    self.game_state = "SUMMARY"
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(response)

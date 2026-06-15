@@ -1,4 +1,5 @@
 {
     "nom": "Test",
-    "classe": "Guerrier"
+    "classe": "Guerrier",
+    "statut": "complet"
 }
