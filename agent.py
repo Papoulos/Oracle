@@ -316,11 +316,15 @@ class RPGAgent(BaseAgent):
             core_context = self.get_core_context(user_input)
             scenario_context = self.get_scenario_context(user_input)
             npcs_summary = self.get_npcs_context()
+            chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
             # 1. L'Orchestrateur analyse l'action avec le Codex (règles)
             analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
             Basé sur les RÈGLES du CODEX suivantes :
             {core_context}
+
+            Historique de l'aventure (Chronique) :
+            {chronicle_text}
 
             PNJs présents et leurs secrets (si pertinent) :
             {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
@@ -363,14 +367,14 @@ class RPGAgent(BaseAgent):
             except Exception:
                 analysis_data = {"need_roll": False}
 
-            # 2. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO
+            # 2. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO et la CHRONIQUE
             decision_instruction = f"""Action Joueur: {user_input}
-            Contexte Scénario (Faits): {scenario_context}
-            Résumé Scénario Global: {self.scenario_data['intrigue_complete']}
+            Contexte Scénario (Faits du RAG): {scenario_context}
+            Historique de l'aventure (Chronique - progression réelle): {chronicle_text}
             PNJs disponibles (sans secrets) :
             {npcs_summary}
             Résultat technique : {"Pas de jet nécessaire" if not roll_info else f"{roll_info} -> {roll_result}"}
-            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO, les PNJs si nécessaire, et le résultat technique. Inclus les points clés/indices dans le résumé final.
+            Instructions: Décris les conséquences en utilisant les éléments du SCÉNARIO (RAG) et de la CHRONIQUE (pour la cohérence de la progression). Utilise les PNJs si nécessaire, et le résultat technique. Inclus les points clés/indices dans le résumé final.
             """
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
@@ -404,15 +408,14 @@ class RPGAgent(BaseAgent):
 
         self.game_state = "ADVENTURE"
 
-        acte1 = self.scenario_data.get("actes", [{}])[0]
-        intrigue = self.scenario_data.get('intrigue_complete', 'Une nouvelle aventure commence.')
+        pitch = self.scenario_data.get('pitch', 'Une nouvelle aventure commence.')
         situation = self.scenario_data.get('situation_initiale', 'Le héros se tient prêt.')
 
         intro_instruction = (
-            f"Scénario : {intrigue}\n"
+            f"Pitch de l'aventure : {pitch}\n"
             f"Situation initiale : {situation}\n"
-            f"Premier acte — '{acte1.get('titre', 'Introduction')}' : {acte1.get('objectif_principal', 'Découvrir les lieux')}\n"
-            "Présente la scène d'ouverture de manière immersive. "
+            "En te basant sur ces éléments et sur tes connaissances du monde (RAG), présente la scène d'ouverture de manière immersive. "
+            "Le joueur doit être immédiatement plongé dans l'action ou l'ambiance. "
             "Termine par le bloc 📌 Résumé des informations."
         )
 
@@ -420,7 +423,6 @@ class RPGAgent(BaseAgent):
             "L'aventure commence !", self.history.messages, intro_instruction
         )
 
-        pitch = self.scenario_data.get('pitch', '')
         full_response = f"**{self.scenario_data.get('titre', 'Aventure')}**\n\n*{pitch}*\n\n{intro_response}"
 
         self.update_chronicle("L'aventure commence !", full_response)
