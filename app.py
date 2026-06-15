@@ -241,8 +241,15 @@ if "game_loaded" not in st.session_state:
                         if "Erreur" in intro:
                             st.error(intro)
                         else:
+                            if st.session_state.agent.setup_logs:
+                                with st.expander("📊 Détails du lancement", expanded=False):
+                                    for log_msg in st.session_state.agent.setup_logs:
+                                        st.code(log_msg)
                             st.session_state.game_loaded = True
-                            st.rerun()
+                            # On ne fait pas de rerun immédiat pour laisser l'utilisateur voir les logs s'il le souhaite
+                            # Ou on peut utiliser un bouton pour continuer
+                            if st.button("Commencer l'aventure"):
+                                st.rerun()
                 else:
                     st.error("Échec du chargement du personnage.")
         with col2:
@@ -286,7 +293,13 @@ if st.session_state.agent.game_state == "SUMMARY":
                 if "Erreur" in intro:
                     st.error(intro)
                 else:
-                    st.rerun()
+                    if st.session_state.agent.setup_logs:
+                        with st.expander("📊 Détails du lancement", expanded=True):
+                            for log_msg in st.session_state.agent.setup_logs:
+                                st.code(log_msg)
+
+                    if st.button("Commencer l'aventure"):
+                        st.rerun()
             except Exception as e:
                 st.error(f"Une erreur critique est survenue : {e}")
 

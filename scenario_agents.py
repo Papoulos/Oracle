@@ -1,6 +1,7 @@
 import json
 import re
 import os
+import time
 import config
 from base_utils import BaseAgent, extract_json
 
@@ -15,18 +16,23 @@ class ScenarioSummaryAgent(BaseAgent):
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
         self.scenario_store = scenario_store
 
-    def generate(self) -> dict:
-        print("[ScenarioSummaryAgent] Extraction des éléments du scénario...")
+    def generate(self, log_callback=None) -> dict:
+        def log(msg):
+            if log_callback:
+                log_callback(f"[ScenarioSummary] {msg}")
+            else:
+                print(f"[ScenarioSummaryAgent] {msg}")
+
+        log("Extraction des éléments du scénario...")
+        start_time = time.time()
 
         queries = [
-            ("titre de l'aventure, adventure title, name of the module", "titre"),
-            ("pitch résumé introduction début, synopsis, adventure hook, background", "pitch"),
-            ("situation initiale scène d'ouverture, starting location, introduction, prologue", "situation"),
+            "titre de l'aventure, adventure title, name of the module, pitch résumé introduction début, synopsis, adventure hook, background, situation initiale scène d'ouverture, starting location, prologue"
         ]
 
         all_docs = []
-        for query, label in queries:
-            docs = self.scenario_store.similarity_search(query, k=6)
+        for query in queries:
+            docs = self.scenario_store.similarity_search(query, k=10)
             all_docs.extend(docs)
 
         # Déduplication par page_content
@@ -35,13 +41,8 @@ class ScenarioSummaryAgent(BaseAgent):
             unique_contents[doc.page_content] = doc
 
         contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
-
-        # Log de diagnostic
-        print(f"[ScenarioSummaryAgent] DEBUG: {len(unique_contents)} extraits uniques récupérés.")
-        if len(contexte_deduplique) > 500:
-            print(f"[ScenarioSummaryAgent] DEBUG: Début du contexte : {contexte_deduplique[:500]}...")
-        else:
-            print(f"[ScenarioSummaryAgent] DEBUG: Contexte : {contexte_deduplique}")
+        rag_time = time.time() - start_time
+        log(f"RAG terminé en {rag_time:.2f}s ({len(unique_contents)} extraits).")
 
         if not contexte_deduplique.strip():
             raise ValueError("Erreur : scenario_collection vide ou sans résultat — vérifie ton indexation avec python indexer.py --verify")
@@ -62,8 +63,11 @@ Réponds UNIQUEMENT avec ce bloc JSON :
 }}
 """
 
+        llm_start = time.time()
         response = self.llm.invoke(prompt)
+        llm_time = time.time() - llm_start
         scenario = extract_json(response.content, expected_type=dict)
+        log(f"LLM terminé en {llm_time:.2f}s.")
 
         if not scenario:
             print(f"[ScenarioSummaryAgent] ✗ Échec de l'extraction JSON. Réponse brute :\n{response.content}")
@@ -94,33 +98,31 @@ class NPCExtractorAgent(BaseAgent):
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
         self.scenario_store = scenario_store
 
-    def extract(self, scenario_summary: dict) -> list:
+    def extract(self, scenario_summary: dict, log_callback=None) -> list:
+        def log(msg):
+            if log_callback:
+                log_callback(f"[NPCExtractor] {msg}")
+            else:
+                print(f"[NPCExtractorAgent] {msg}")
+
         titre = scenario_summary.get("titre", "l'aventure")
-        print(f"[NPCExtractorAgent] Recherche de PNJ pour '{titre}'...")
+        log(f"Recherche de PNJ pour '{titre}'...")
+        start_time = time.time()
 
         # Étape 1 : Identifier les PNJ nommés
-        # On utilise des requêtes plus larges et liées au titre de l'aventure
         identification_queries = [
-            f"Personnages et PNJ de {titre}",
-            f"Characters and NPCs in {titre}",
-            "Liste des personnages nommés, list of named characters",
-            "Protagonistes, alliés et antagonistes, protagonists, allies and antagonists",
-            "Habitants, gardes nommés, marchands et chefs, inhabitants, named guards, merchants and leaders",
-            "Qui sont les personnages clés de cette histoire? Who are the key characters?"
+            f"Personnages et PNJ de {titre}, characters and NPCs, key characters, inhabitants, named characters"
         ]
 
         all_docs = []
         for q in identification_queries:
-            docs = self.scenario_store.similarity_search(q, k=8)
+            docs = self.scenario_store.similarity_search(q, k=10)
             all_docs.extend(docs)
 
         unique_contents = {doc.page_content: doc for doc in all_docs}
-        print(f"[NPCExtractorAgent] {len(unique_contents)} extraits uniques trouvés pour l'identification.")
-
         contexte_identification = "\n\n---\n\n".join(unique_contents.keys())
-
-        # Log de diagnostic
-        print(f"[NPCExtractorAgent] DEBUG: {len(unique_contents)} extraits pour identification.")
+        rag_id_time = time.time() - start_time
+        log(f"RAG Identification terminé en {rag_id_time:.2f}s ({len(unique_contents)} extraits).")
 
         identification_prompt = f"""Tu es un assistant MJ expert.
 Ta mission est de lister TOUS les personnages nommés (PNJ) présents dans les extraits du scénario "{titre}" ci-dessous (qui peuvent être en anglais).
@@ -141,92 +143,88 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
   ]
 }}
 """
+        llm_id_start = time.time()
         id_response = self.llm.invoke(identification_prompt)
+        llm_id_time = time.time() - llm_id_start
         id_data = extract_json(id_response.content, expected_type=dict)
 
         pnj_list = id_data.get("pnjs", []) if id_data else []
 
         if not pnj_list:
-            print("[NPCExtractorAgent] Aucun PNJ nommé trouvé dans le RAG.")
+            log("Aucun PNJ nommé trouvé.")
             self._save_npcs([])
             return []
 
-        print(f"[NPCExtractorAgent] {len(pnj_list)} PNJs identifiés : {[p.get('nom') for p in pnj_list]}")
+        log(f"{len(pnj_list)} PNJs identifiés en {llm_id_time:.2f}s.")
 
-        # Étape 2 : Extraire les détails pour chaque PNJ
-        # Passe 1 — requêtes génériques pour le contexte global
-        queries_generiques = [
-            ("secret motivation but objectif personnel, secret motivation, goal, background",       "motivations"),
-            ("inventaire objet arme armure trésor unique, inventory, items, weapons, unique treasure", "inventaires"),
-        ]
+        # Étape 2 : Extraire les détails pour TOUS les PNJ en un seul appel
+        log("Extraction des détails pour tous les PNJs...")
+        details_start = time.time()
 
-        generic_docs = []
-        for q, _ in queries_generiques:
-            docs = self.scenario_store.similarity_search(q, k=6)
-            generic_docs.extend(docs)
+        # RAG pour les détails
+        detail_queries = ["détails, secrets, motivations, inventaires, background des PNJ nommés"]
+        # Ajouter les noms des PNJ à la requête pour aider le RAG
+        detail_queries.append(", ".join([p.get('nom') for p in pnj_list]))
 
-        unique_generic = {doc.page_content: doc for doc in generic_docs}
-        contexte_generique = "\n\n".join(unique_generic.keys())
+        all_detail_docs = []
+        for q in detail_queries:
+            docs = self.scenario_store.similarity_search(q, k=15)
+            all_detail_docs.extend(docs)
 
-        extracted_npcs = []
+        unique_details = {doc.page_content: doc for doc in all_detail_docs}
+        contexte_details = "\n\n---\n\n".join(unique_details.keys())
+        rag_details_time = time.time() - details_start
+        log(f"RAG Détails terminé en {rag_details_time:.2f}s ({len(unique_details)} extraits).")
 
-        for pnj in pnj_list:
-            nom = pnj.get("nom")
-            role = pnj.get("role", "Personnage")
-            print(f"[NPCExtractorAgent] Extraction des détails pour : {nom} ({role})...")
+        prompt_details = f"""Tu es un assistant de préparation de jeu de rôle expert.
+Ta mission est de générer les fiches détaillées en FRANÇAIS pour les PNJs suivants, en utilisant uniquement les extraits fournis.
 
-            # Passe 2 — requêtes ciblées
-            # On cherche par nom et par rôle, et aussi des termes généraux liés au personnage
-            query = f"Détails sur le personnage {nom} {role}, Details about character {nom} {role}"
-            specific_docs = self.scenario_store.similarity_search(query, k=5)
-
-            unique_specific = {doc.page_content: doc for doc in specific_docs}
-            chunks_cibles = "\n\n".join(unique_specific.keys())
-
-            # Log de diagnostic
-            print(f"[NPCExtractorAgent] DEBUG: {len(unique_specific)} extraits spécifiques pour {nom}.")
-
-            prompt = f"""Tu es un assistant de préparation de jeu de rôle.
-Génère la fiche détaillée du personnage "{nom}" ({role}) en FRANÇAIS à partir des extraits ci-dessous (qui peuvent être en anglais).
-Ne complète pas et n'invente pas — si une information est absente, écris "Inconnu".
+LISTE DES PNJS À TRAITER :
+{json.dumps(pnj_list, ensure_ascii=False, indent=2)}
 
 CONTEXTE GÉNÉRAL DU SCÉNARIO :
 {scenario_summary.get('pitch', 'Inconnu')}
 
-EXTRAITS SPÉCIFIQUES À CE PERSONNAGE :
-{chunks_cibles}
+EXTRAITS DU SCÉNARIO (contenant les détails) :
+{contexte_details}
 
-EXTRAITS GÉNÉRAUX (motivations, inventaires) :
-{contexte_generique}
-
-Réponds UNIQUEMENT avec un objet JSON :
+CONSIGNES :
+- Produis une fiche complète pour CHAQUE PNJ de la liste.
+- Ne complète pas et n'invente pas — si une information est absente, écris "Inconnu".
+- "relation_pj" doit être "Inconnu".
+- "id" doit être une version simplifiée du nom (ex: "maitre_elrond").
+- Réponds UNIQUEMENT avec un JSON au format :
 {{
-  "id": "{re.sub(r'[^a-z0-9]+', '_', nom.lower()).strip('_')}",
-  "nom": "{nom}",
-  "classe": "Profession ou classe",
-  "niveau": 1,
-  "but": "Objectif personnel (Inconnu si absent)",
-  "personnalite": "Traits de caractère (Inconnu si absent)",
-  "secret": "Ce qu'il cache — NE JAMAIS révéler sans raison narrative",
-  "relation_pj": "Inconnu",
-  "statut": "Vivant",
-  "localisation_actuelle": "Lieu de départ (Inconnu si absent)",
-  "inventaire": [
-    {{"nom": "...", "description": "...", "valeur_or": 0, "unique": true}}
-  ],
-  "capacites_notables": ["..."],
-  "notes_mj": "Informations contextuelles pour le MJ"
+  "npcs": [
+    {{
+      "id": "...",
+      "nom": "...",
+      "classe": "...",
+      "niveau": 1,
+      "but": "...",
+      "personnalite": "...",
+      "secret": "...",
+      "relation_pj": "Inconnu",
+      "statut": "Vivant",
+      "localisation_actuelle": "...",
+      "inventaire": [
+        {{"nom": "...", "description": "...", "valeur_or": 0, "unique": true}}
+      ],
+      "capacites_notables": ["..."],
+      "notes_mj": "..."
+    }}
+  ]
 }}
 """
-            response = self.llm.invoke(prompt)
-            npc_data = extract_json(response.content, expected_type=dict)
+        llm_details_start = time.time()
+        response = self.llm.invoke(prompt_details)
+        llm_details_time = time.time() - llm_details_start
+        log(f"LLM Détails terminé en {llm_details_time:.2f}s.")
 
-            if npc_data:
-                print(f"[NPCExtractorAgent] ✓ {nom} extrait.")
-                extracted_npcs.append(npc_data)
-            else:
-                print(f"[NPCExtractorAgent] ✗ Échec de l'extraction JSON pour {nom}.")
+        details_data = extract_json(response.content, expected_type=dict)
+        extracted_npcs = details_data.get("npcs", []) if details_data else []
 
+        log(f"{len(extracted_npcs)} fiches PNJ générées.")
         self._save_npcs(extracted_npcs)
         return extracted_npcs
 
