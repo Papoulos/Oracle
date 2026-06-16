@@ -26,13 +26,16 @@ class ScenarioSummaryAgent(BaseAgent):
         log("Extraction des éléments du scénario...")
         start_time = time.time()
 
+        # Multiples requêtes pour couvrir différents aspects sans diluer la pertinence
         queries = [
-            "titre de l'aventure, adventure title, name of the module, pitch résumé introduction début, synopsis, adventure hook, background, situation initiale scène d'ouverture, starting location, prologue"
+            "titre de l'aventure, adventure title, name of the module",
+            "pitch résumé introduction début, synopsis, adventure hook, background",
+            "situation initiale scène d'ouverture, starting location, prologue"
         ]
 
         all_docs = []
         for query in queries:
-            docs = self.scenario_store.similarity_search(query, k=10)
+            docs = self.scenario_store.similarity_search(query, k=8)
             all_docs.extend(docs)
 
         # Déduplication par page_content
@@ -105,18 +108,19 @@ class NPCExtractorAgent(BaseAgent):
             else:
                 print(f"[NPCExtractorAgent] {msg}")
 
-        titre = scenario_summary.get("titre", "l'aventure")
-        log(f"Recherche de PNJ pour '{titre}'...")
+        log("Identification des 5 PNJs les plus importants...")
         start_time = time.time()
 
-        # Étape 1 : Identifier les PNJ nommés
+        # Étape 1 : Identifier les 5 PNJ les plus importants
+        # On utilise des requêtes génériques pour trouver les noms les plus cités
         identification_queries = [
-            f"Personnages et PNJ de {titre}, characters and NPCs, key characters, inhabitants, named characters"
+            "Personnages nommés et PNJ importants, major characters and named NPCs, key figures",
+            "Protagonistes et antagonistes principaux, main characters"
         ]
 
         all_docs = []
         for q in identification_queries:
-            docs = self.scenario_store.similarity_search(q, k=10)
+            docs = self.scenario_store.similarity_search(q, k=15)
             all_docs.extend(docs)
 
         unique_contents = {doc.page_content: doc for doc in all_docs}
@@ -125,13 +129,13 @@ class NPCExtractorAgent(BaseAgent):
         log(f"RAG Identification terminé en {rag_id_time:.2f}s ({len(unique_contents)} extraits).")
 
         identification_prompt = f"""Tu es un assistant MJ expert.
-Ta mission est de lister TOUS les personnages nommés (PNJ) présents dans les extraits du scénario "{titre}" ci-dessous (qui peuvent être en anglais).
+Ta mission est d'identifier les 5 personnages nommés (PNJ) les plus importants dans les extraits du scénario ci-dessous.
+L'importance est définie par la fréquence de mention et l'impact sur l'intrigue.
 
 CONSIGNES :
-- Liste chaque individu possédant un NOM PROPRE (ex: "Alaric", "Maître Elrond").
-- Inclus les personnages secondaires s'ils ont un nom.
-- Ignore les ennemis génériques non nommés (ex: "les gobelins", "les brigands").
-- Pour chaque personnage, indique brièvement son rôle (ex: "Aubergiste", "Chef de la garde", "Antagoniste principal").
+- Liste au maximum 5 individus possédant un NOM PROPRE.
+- S'il y a moins de 5 PNJ nommés, liste uniquement ceux présents.
+- Pour chaque personnage, indique brièvement son rôle (ex: "Antagoniste principal", "Allié clé").
 
 EXTRAITS DU SCÉNARIO :
 {contexte_identification}
@@ -189,7 +193,7 @@ EXTRAITS DU SCÉNARIO (contenant les détails) :
 {contexte_details}
 
 CONSIGNES :
-- Produis une fiche complète pour CHAQUE PNJ de la liste.
+- Produis une fiche détaillée pour CHAQUE PNJ de la liste.
 - Ne complète pas et n'invente pas — si une information est absente, écris "Inconnu".
 - "relation_pj" doit être "Inconnu".
 - "id" doit être une version simplifiée du nom (ex: "maitre_elrond").
@@ -200,18 +204,13 @@ CONSIGNES :
       "id": "...",
       "nom": "...",
       "classe": "...",
-      "niveau": 1,
       "but": "...",
       "personnalite": "...",
       "secret": "...",
       "relation_pj": "Inconnu",
       "statut": "Vivant",
       "localisation_actuelle": "...",
-      "inventaire": [
-        {{"nom": "...", "description": "...", "valeur_or": 0, "unique": true}}
-      ],
-      "capacites_notables": ["..."],
-      "notes_mj": "..."
+      "capacites_notables": ["..."]
     }}
   ]
 }}
