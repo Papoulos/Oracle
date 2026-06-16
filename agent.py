@@ -47,7 +47,7 @@ class CharacterCreator(BaseAgent):
 
     def get_context(self, query):
         try:
-            docs = self.vector_store.similarity_search(query, k=config.RAG_SEARCH_K)
+            docs = self.vector_store.similarity_search(query, k=config.RAG_K_CREATION)
             print(f"[CharacterCreator] DEBUG: Recherche contextuelle pour '{query}' -> {len(docs)} docs trouvés.")
             if docs:
                 print(f"[CharacterCreator] DEBUG: Premier extrait : {docs[0].page_content[:200]}...")
@@ -140,7 +140,7 @@ class SheetManagerAgent(BaseAgent):
 
     def get_context(self, query):
         try:
-            docs = self.vector_store.similarity_search(query, k=config.RAG_SEARCH_K)
+            docs = self.vector_store.similarity_search(query, k=config.RAG_K_ADVENTURE)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucune règle trouvée pour la mise à jour."
@@ -296,16 +296,20 @@ class RPGAgent(BaseAgent):
                 all_ok = False
         return all_ok
 
-    def get_core_context(self, query):
+    def get_core_context(self, query, k=None):
+        if k is None:
+            k = config.RAG_SEARCH_K
         try:
-            docs = self.core_store.similarity_search(query, k=config.RAG_SEARCH_K)
+            docs = self.core_store.similarity_search(query, k=k)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucune règle trouvée."
 
-    def get_scenario_context(self, query):
+    def get_scenario_context(self, query, k=None):
+        if k is None:
+            k = config.RAG_SEARCH_K
         try:
-            docs = self.scenario_store.similarity_search(query, k=config.RAG_SEARCH_K)
+            docs = self.scenario_store.similarity_search(query, k=k)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucun élément de scénario trouvé."
@@ -392,8 +396,8 @@ class RPGAgent(BaseAgent):
             return response
 
         elif self.game_state == "ADVENTURE":
-            core_context = self.get_core_context(user_input)
-            scenario_context = self.get_scenario_context(user_input)
+            core_context = self.get_core_context(user_input, k=config.RAG_K_ADVENTURE)
+            scenario_context = self.get_scenario_context(user_input, k=config.RAG_K_ADVENTURE)
             npcs_summary = self.get_npcs_context()
             chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
@@ -519,6 +523,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
 
         pitch = self.scenario_data.get('pitch', 'Une nouvelle aventure commence.')
         situation = self.scenario_data.get('situation_initiale', 'Le héros se tient prêt.')
+        setup_context = self.get_scenario_context("intrigue lieux personnages", k=config.RAG_K_SETUP)
 
         intro_instruction = f"""
 ACTION DU JOUEUR : L'aventure commence !
@@ -528,6 +533,7 @@ RÉSULTAT TECHNIQUE : Aucun jet requis
 CONTEXTE SCÉNARIO :
 - Pitch : {pitch}
 - Situation initiale : {situation}
+- Détails supplémentaires : {setup_context}
 
 TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur pour lancer l'aventure.
 

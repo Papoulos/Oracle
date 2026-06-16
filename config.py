@@ -45,6 +45,9 @@ SCENARIO_COLLECTION_NAME = os.getenv("SCENARIO_COLLECTION_NAME")
 
 # --- RAG ---
 RAG_SEARCH_K = int(os.getenv("RAG_SEARCH_K")) if os.getenv("RAG_SEARCH_K") else None
+RAG_K_ADVENTURE = int(os.getenv("RAG_K_ADVENTURE", 5))
+RAG_K_SETUP = int(os.getenv("RAG_K_SETUP", 8))
+RAG_K_CREATION = int(os.getenv("RAG_K_CREATION", 8))
 
 # --- Compatibilité Ollama (Anciennes variables) ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
@@ -66,7 +69,7 @@ def check_config():
         "SERVER_ADDRESS", "SERVER_PORT",
         "CHROMA_PATH", "CORE_DATA_PATH", "SCENARIO_DATA_PATH",
         "CORE_COLLECTION_NAME", "SCENARIO_COLLECTION_NAME",
-        "RAG_SEARCH_K"
+        "RAG_SEARCH_K", "RAG_K_ADVENTURE", "RAG_K_SETUP", "RAG_K_CREATION"
     ]
 
     missing_vars = []
