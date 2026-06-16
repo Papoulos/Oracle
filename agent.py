@@ -654,7 +654,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
         lines = []
         for n in self.npcs_data:
             lines.append(
-                f"- {n['nom']} ({n['classe']}, niv.{n['niveau']}) "
+                f"- {n['nom']} ({n['classe']}) "
                 f"| Relation PJ: {n['relation_pj']} "
                 f"| Lieu: {n.get('localisation_actuelle', '?')}"
             )
