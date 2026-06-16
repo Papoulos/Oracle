@@ -20,19 +20,26 @@ class CharacterCreator(BaseAgent):
             ("system", """Tu es un Maître du Jeu (MJ) expert en jeux de rôle.
             Ton but actuel est de guider le joueur pas à pas dans la création de son personnage en te basant sur les règles et les informations contenues dans le CODEX ci-dessous.
 
-            CONSIGNES :
-            1. Réponds TOUJOURS en français, même si on te sollicite en anglais.
-            2. Sois proactif : pose une seule question à la fois pour guider le joueur.
-            3. Utilise le CODEX pour proposer des options valides (races, classes, statistiques, compétences, équipement, etc.).
-            4. Lors de la détermination des caractéristiques (Force, Dextérité, etc.), propose CLAIREMENT au joueur de lancer les dés pour lui ou de le laisser faire/utiliser une autre méthode.
-            5. N'oublie JAMAIS l'étape de l'équipement de départ en suivant scrupuleusement les règles du CODEX pour la classe choisie.
-            6. Détermine et calcule TOUTES les statistiques dérivées à partir des règles du CODEX : Points de Vie (PV), Classe d'Armure (CA), Jets de Protection (Saves), et toute autre caractéristique pertinente selon la classe et la race choisies.
-            7. Garde un ton immersif, médiéval-fantastique et encourageant.
-            8. À CHAQUE réponse, tu dois inclure un bloc JSON récapitulant l'état actuel du personnage.
-            9. Si la création est terminée, ajoute le champ `"statut": "complet"` dans le JSON. Sinon, mets `"statut": "en_cours"`.
-            10. Une fois le personnage complet, ne commence PAS l'aventure. Contente-toi de dire au joueur que son personnage est prêt.
+            CONSIGNES CRITIQUES :
+            1. Réponds TOUJOURS en français.
+            2. Pose UNE SEULE QUESTION à la fois pour guider le joueur (nom, puis race, puis classe, etc.).
+            3. À CHAQUE RÉPONSE, sans exception, tu DOIS inclure un bloc JSON récapitulant l'état actuel du personnage à la fin de ton message.
+            4. Le bloc JSON doit être entouré des balises ```json et ```.
+            5. Si TOUTES les étapes de création sont terminées (incluant l'équipement et les stats), tu DOIS impérativement mettre `"statut": "complet"` dans le JSON. Sinon, mets `"statut": "en_cours"`.
+            6. Une fois le personnage complet, NE COMMENCE PAS l'aventure. Ne propose PAS de scénario et ne demande PAS au joueur s'il est prêt à commencer. Contente-toi de confirmer que la fiche est prête.
+            7. Calcule TOUTES les statistiques (PV, CA, modificateurs) en suivant scrupuleusement le CODEX.
 
-            IMPORTANT : Le bloc JSON doit être entouré des balises ```json et ```.
+            STRUCTURE DU JSON ATTENDUE :
+            {{
+                "nom": "...",
+                "race": "...",
+                "classe": "...",
+                "statistiques": {{ "Force": 10, ... }},
+                "équipement": [...],
+                "pv": 10,
+                "ca": 10,
+                "statut": "en_cours" | "complet"
+            }}
 
             ÉTAT ACTUEL DU PERSONNAGE :
             {current_character}
@@ -381,15 +388,19 @@ class RPGAgent(BaseAgent):
             character_data = extract_json(response)
             if isinstance(character_data, dict):
                 unwrapped_data = self._unwrap_character_data(character_data)
-                # On ne garde que les données significatives
                 self.character_data = unwrapped_data
                 os.makedirs("Memory", exist_ok=True)
                 with open("Memory/character.json", "w", encoding="utf-8") as f:
                     json.dump(self.character_data, f, indent=4, ensure_ascii=False)
 
-                # Transition vers SUMMARY seulement si explicitement complet
-                if self.character_data.get("statut") == "complet":
+                # Transition vers SUMMARY si le statut est complet
+                # On accepte "complet" ou "terminé" (tolérance LLM)
+                status = str(self.character_data.get("statut", "")).lower()
+                if status in ["complet", "complete", "terminé", "termine"]:
+                    print(f"[RPGAgent] Fin de création détectée (statut: {status}).")
                     self.game_state = "SUMMARY"
+            else:
+                print(f"[RPGAgent] ⚠ Échec de l'extraction JSON pendant la création. Réponse brute : {response[:100]}...")
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(response)
