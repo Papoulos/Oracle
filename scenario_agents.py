@@ -233,3 +233,94 @@ CONSIGNES :
         with open("Memory/npcs.json", "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
         print(f"[NPCExtractorAgent] ✓ {len(npcs)} PNJ sauvegardés dans Memory/npcs.json")
+
+
+class ManualGeneratorAgent(BaseAgent):
+    """
+    Agent one-shot : extrait les étapes de création de personnage du Core RAG.
+    Produit : Memory/creation_manual.json
+    """
+
+    def __init__(self, core_store):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+        self.core_store = core_store
+
+    def generate(self, log_callback=None) -> dict:
+        def log(msg):
+            if log_callback:
+                log_callback(f"[ManualGenerator] {msg}")
+            else:
+                print(f"[ManualGeneratorAgent] {msg}")
+
+        log("Extraction des étapes de création de personnage...")
+        start_time = time.time()
+
+        # Requêtes pour extraire la structure de création
+        queries = [
+            "étapes de création de personnage, character creation steps, character generation process",
+            "liste des races disponibles, available races list",
+            "liste des classes disponibles, available classes list",
+            "calcul des caractéristiques et statistiques, ability scores calculation, stats generation"
+        ]
+
+        all_docs = []
+        for query in queries:
+            docs = self.core_store.similarity_search(query, k=10)
+            all_docs.extend(docs)
+
+        # Déduplication
+        unique_contents = {doc.page_content: doc for doc in all_docs}
+        contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
+        rag_time = time.time() - start_time
+        log(f"RAG terminé en {rag_time:.2f}s ({len(unique_contents)} extraits).")
+
+        if not contexte_deduplique.strip():
+            log("⚠ Aucun extrait trouvé dans le Core RAG. Le manuel sera vide.")
+            return {}
+
+        prompt = f"""Tu es un expert en conception de systèmes de jeu de rôle.
+Ta mission est de rédiger un MANUEL DE CRÉATION DE PERSONNAGE structuré en FRANÇAIS, basé UNIQUEMENT sur les extraits de règles fournis.
+
+Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le joueur dans sa création.
+Il doit être concis mais complet sur la PROCÉDURE à suivre.
+
+EXTRAITS DU CODEX (Règles) :
+{contexte_deduplique}
+
+CONSIGNES :
+1. Liste les étapes de création dans l'ordre logique (ex: 1. Nom, 2. Race, 3. Classe, etc.).
+2. Pour chaque étape, explique brièvement ce que le joueur doit choisir ou ce qui doit être calculé.
+3. Liste les options disponibles si elles sont mentionnées (races, classes).
+4. Précise la méthode de génération des statistiques (dés, répartition de points, etc.).
+5. Ne détaille pas chaque règle en profondeur, l'agent final interrogera le RAG pour les détails. Concentre-toi sur la STRUCTURE du processus.
+
+Réponds UNIQUEMENT avec un bloc JSON au format :
+{{
+  "etapes": [
+    {{
+      "etape": 1,
+      "nom": "Nom de l'étape",
+      "description": "Courte explication",
+      "options": ["Option A", "Option B"]
+    }}
+  ],
+  "regles_generales": "Notes sur les calculs globaux ou points d'attention"
+}}
+"""
+
+        llm_start = time.time()
+        response = self.llm.invoke(prompt)
+        llm_time = time.time() - llm_start
+        manual = extract_json(response.content, expected_type=dict)
+        log(f"LLM terminé en {llm_time:.2f}s.")
+
+        if not manual:
+            log("✗ Échec de l'extraction JSON du manuel.")
+            return {}
+
+        os.makedirs("Memory", exist_ok=True)
+        with open("Memory/creation_manual.json", "w", encoding="utf-8") as f:
+            json.dump(manual, f, indent=4, ensure_ascii=False)
+
+        log("✓ Manuel de création généré dans Memory/creation_manual.json.")
+        return manual

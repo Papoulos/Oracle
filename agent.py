@@ -18,16 +18,19 @@ class CharacterCreator(BaseAgent):
         self.vector_store = vector_store
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """Tu es un Maître du Jeu (MJ) expert en jeux de rôle.
-            Ton but actuel est de guider le joueur pas à pas dans la création de son personnage en te basant sur les règles et les informations contenues dans le CODEX ci-dessous.
+            Ton but actuel est de guider le joueur pas à pas dans la création de son personnage en suivant le MANUEL DE CRÉATION ci-dessous.
+
+            MANUEL DE CRÉATION (Étapes à suivre) :
+            {manual}
 
             CONSIGNES CRITIQUES :
             1. Réponds TOUJOURS en français.
-            2. Pose UNE SEULE QUESTION à la fois pour guider le joueur (nom, puis race, puis classe, etc.).
+            2. Pose UNE SEULE QUESTION à la fois pour guider le joueur en suivant l'ordre du manuel.
             3. À CHAQUE RÉPONSE, sans exception, tu DOIS inclure un bloc JSON récapitulant l'état actuel du personnage à la fin de ton message.
             4. Le bloc JSON doit être entouré des balises ```json et ```.
             5. Si TOUTES les étapes de création sont terminées (incluant l'équipement et les stats), tu DOIS impérativement mettre `"statut": "complet"` dans le JSON. Sinon, mets `"statut": "en_cours"`.
             6. Une fois le personnage complet, NE COMMENCE PAS l'aventure. Ne propose PAS de scénario et ne demande PAS au joueur s'il est prêt à commencer. Contente-toi de confirmer que la fiche est prête.
-            7. Calcule TOUTES les statistiques (PV, CA, modificateurs) en suivant scrupuleusement le CODEX.
+            7. Calcule TOUTES les statistiques (PV, CA, modificateurs) en consultant le CODEX pour les détails techniques si nécessaire.
 
             STRUCTURE DU JSON ATTENDUE :
             {{
@@ -44,7 +47,7 @@ class CharacterCreator(BaseAgent):
             ÉTAT ACTUEL DU PERSONNAGE :
             {current_character}
 
-            CODEX (Règles et Monde) :
+            CODEX (Détails des règles) :
             {context}
             """),
             MessagesPlaceholder(variable_name="history"),
@@ -63,6 +66,16 @@ class CharacterCreator(BaseAgent):
             print(f"[CharacterCreator] DEBUG: Erreur RAG : {e}")
             return "Aucun contexte trouvé."
 
+    def _load_manual(self):
+        path = "Memory/creation_manual.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.dumps(json.load(f), ensure_ascii=False, indent=2)
+            except Exception:
+                return "Manuel non disponible (utiliser le Codex)."
+        return "Manuel non disponible (utiliser le Codex)."
+
     def generate_response(self, user_input, history, character_data=None):
         # On enrichit la requête RAG avec les derniers messages pour avoir du contexte sur l'étape de création
         rag_query = user_input
@@ -72,7 +85,10 @@ class CharacterCreator(BaseAgent):
             rag_query = f"{last_msg[:100]} {user_input}"
 
         context = self.get_context(rag_query)
+        manual = self._load_manual()
+
         inputs = {
+            "manual": manual,
             "context": context,
             "history": history,
             "input": user_input,
