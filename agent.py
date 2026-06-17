@@ -46,6 +46,8 @@ class CharacterCreator(BaseAgent):
                 "classe": "...",
                 "statistiques": {{ "Force": 10, ... }},
                 "équipement": [...],
+                "sorts": ["..."],
+                "ressources": {{ "emplacements_sorts_niv1": {{ "total": 2, "restants": 2 }}, "points_de_rage": 2 }},
                 "pv": 10,
                 "ca": 10,
                 "statut": "en_cours" | "complet"
@@ -148,6 +150,7 @@ class SheetManagerAgent(BaseAgent):
 
             CONSIGNES :
             - Mets à jour les Points de Vie (PV) si le personnage a été blessé ou soigné.
+            - RESSOUCES ET SORTS : Mets à jour les 'restants' dans la section 'ressources' si une capacité a été utilisée ou si le personnage a pris un REPOS (rétablissement des ressources).
             - Ajoute ou retire des objets de l'inventaire si nécessaire.
             - Mets à jour l'expérience (XP) ou le niveau si mentionné, en suivant les tables de progression du CODEX.
             - Ne modifie pas les statistiques de base (Force, etc.) sauf si un événement permanent l'exige.
@@ -347,6 +350,60 @@ class RPGAgent(BaseAgent):
     def roll_dice(self, sides=20):
         return random.randint(1, sides)
 
+    def _extract_and_add_resources(self):
+        """Extrait les ressources de classe (sorts, rage, etc.) et les ajoute à la fiche."""
+        self.log("Extraction des ressources et capacités de classe...")
+        classe = self.character_data.get("classe", "Inconnu")
+        niveau = self.character_data.get("niveau", 1)
+        race = self.character_data.get("race", "Inconnu")
+
+        query = f"Ressources de classe pour {classe} niveau {niveau}, race {race}. Emplacements de sorts, points de rage, capacités limitées par jour, points de vie."
+        context = self.get_core_context(query, k=10)
+
+        prompt = f"""Tu es un expert en règles de JDR.
+Basé sur les extraits du CODEX suivants, identifie TOUTES les ressources consommables (sorts par jour, capacités à usages limités, points de vie, etc.) pour un personnage de niveau {niveau}, de classe {classe} et de race {race}.
+
+EXTRAITS DU CODEX :
+{context}
+
+FICHE ACTUELLE :
+{json.dumps(self.character_data, ensure_ascii=False, indent=2)}
+
+Produis un objet JSON 'ressources' qui pourra être intégré à la fiche.
+Chaque ressource doit avoir un 'total' et un 'restants' égal au total.
+Utilise des noms de clés clairs en français (ex: 'emplacements_sorts_niv1', 'points_de_rage').
+Si le personnage a des sorts, liste également les sorts connus s'ils sont mentionnés ou suggérés pour ce niveau.
+
+Réponds UNIQUEMENT avec le bloc JSON :
+{{
+  "ressources": {{
+    "nom_ressource": {{ "total": X, "restants": X }},
+    ...
+  }},
+  "sorts": ["nom_sort1", "nom_sort2"]
+}}
+"""
+        try:
+            response = self.llm.invoke(prompt).content
+            data = extract_json(response)
+            if data:
+                if "ressources" in data and data["ressources"]:
+                    if "ressources" not in self.character_data:
+                        self.character_data["ressources"] = {}
+                    self.character_data["ressources"].update(data["ressources"])
+
+                if "sorts" in data and data["sorts"]:
+                    existing_spells = self.character_data.get("sorts", [])
+                    if not existing_spells or len(existing_spells) < len(data["sorts"]):
+                        self.character_data["sorts"] = data["sorts"]
+
+                os.makedirs("Memory", exist_ok=True)
+                with open("Memory/character.json", "w", encoding="utf-8") as f:
+                    json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+                self.log("✓ Ressources et sorts mis à jour dans la fiche.")
+        except Exception as e:
+            self.log(f"⚠ Erreur lors de l'extraction des ressources : {e}")
+
     def setup_world(self) -> bool:
         """
         Pipeline de setup complet (one-shot, exécuté après la création du PJ).
@@ -404,6 +461,53 @@ class RPGAgent(BaseAgent):
 
         return data
 
+    def _check_resources(self, action):
+        """Vérifie si l'action consomme une ressource et si elle est disponible."""
+        if not self.character_data or "ressources" not in self.character_data:
+            return {"ok": True}
+
+        prompt = f"""Tu es un arbitre de JDR. Analyse l'action du joueur et détermine si elle consomme une ressource limitée de sa fiche.
+ACTION : "{action}"
+RESSOURCES DISPONIBLES : {json.dumps(self.character_data['ressources'], ensure_ascii=False)}
+
+Réponds UNIQUEMENT avec ce JSON :
+{{
+  "consomme": boolean,
+  "nom_ressource": "nom_de_la_cle_dans_le_json_ou_null",
+  "quantite": integer_ou_null,
+  "raison": "explication courte"
+}}
+"""
+        try:
+            response = self.llm.invoke(prompt).content
+            analysis = extract_json(response)
+            if analysis and analysis.get("consomme"):
+                res_name = analysis.get("nom_ressource")
+                qty = analysis.get("quantite") or 1
+
+                # Recherche floue de la ressource si le nom exact n'est pas trouvé
+                actual_res_name = None
+                if res_name in self.character_data["ressources"]:
+                    actual_res_name = res_name
+                else:
+                    # Recherche insensible à la casse ou partielle
+                    for k in self.character_data["ressources"].keys():
+                        if res_name.lower() in k.lower() or k.lower() in res_name.lower():
+                            actual_res_name = k
+                            break
+
+                if actual_res_name:
+                    res = self.character_data["ressources"][actual_res_name]
+                    if res.get("restants", 0) >= qty:
+                        return {"ok": True, "ressource": actual_res_name, "cout": qty}
+                    else:
+                        return {"ok": False, "raison": f"Ressource insuffisante : {actual_res_name} ({res.get('restants')}/{res.get('total')})"}
+
+            return {"ok": True}
+        except Exception as e:
+            print(f"[RPGAgent] Erreur check_resources : {e}")
+            return {"ok": True}
+
     def chat(self, user_input):
         if self.game_state == "CREATION":
             response = self.character_creator.generate_response(user_input, self.history.messages, self.character_data)
@@ -421,6 +525,7 @@ class RPGAgent(BaseAgent):
                 status = str(self.character_data.get("statut", "")).lower()
                 if status in ["complet", "complete", "terminé", "termine"]:
                     print(f"[RPGAgent] Fin de création détectée (statut: {status}).")
+                    self._extract_and_add_resources()
                     self.game_state = "SUMMARY"
             else:
                 print(f"[RPGAgent] ⚠ Échec de l'extraction JSON pendant la création. Réponse brute : {response[:100]}...")
@@ -430,6 +535,14 @@ class RPGAgent(BaseAgent):
             return response
 
         elif self.game_state == "ADVENTURE":
+            # 0. Vérification des ressources
+            res_check = self._check_resources(user_input)
+            if not res_check["ok"]:
+                msg = f"Action impossible : {res_check['raison']}"
+                self.history.add_user_message(user_input)
+                self.history.add_ai_message(msg)
+                return msg
+
             core_context = self.get_core_context(user_input, k=config.RAG_K_ADVENTURE)
             scenario_context = self.get_scenario_context(user_input, k=config.RAG_K_ADVENTURE)
             npcs_summary = self.get_npcs_context()

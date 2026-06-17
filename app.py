@@ -135,6 +135,29 @@ def display_character_info(character_data):
         else:
             st.markdown(f"**Équipement :** {equip}")
 
+    # Sorts
+    spells = get_val(["sorts", "spells"], None)
+    if spells:
+        if isinstance(spells, list):
+            st.markdown(f"**Sorts :** {', '.join(spells)}")
+        else:
+            st.markdown(f"**Sorts :** {spells}")
+
+    # Ressources (compteurs)
+    ressources = get_val(["ressources", "resources"], None)
+    if ressources and isinstance(ressources, dict):
+        st.markdown("**Ressources :**")
+        for res_name, res_data in ressources.items():
+            if isinstance(res_data, dict) and "total" in res_data and "restants" in res_data:
+                total = res_data["total"]
+                rest = res_data["restants"]
+                # Couleur selon le ratio
+                ratio = rest / total if total > 0 else 0
+                color = "green" if ratio > 0.5 else "orange" if ratio > 0.2 else "red"
+                st.markdown(f"- {res_name} : :{color}[{rest} / {total}]")
+            else:
+                st.markdown(f"- {res_name} : {res_data}")
+
     # Section Catch-all pour les informations non affichées
     other_info = {k: v for k, v in character_data.items() if k not in displayed_keys and k.lower() not in ["nom", "name", "image", "portrait"]}
     if other_info:
