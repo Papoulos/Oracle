@@ -301,7 +301,8 @@ FORMAT JSON ATTENDUE :
 
         all_docs = []
         for query in queries:
-            docs = self.core_store.similarity_search(query, k=5)
+            # Réduction de k pour éviter de saturer le contexte du LLM
+            docs = self.core_store.similarity_search(query, k=3)
             all_docs.extend(docs)
 
         # Déduplication
@@ -315,14 +316,19 @@ FORMAT JSON ATTENDUE :
             return {}
 
         llm_start = time.time()
-        response = self.chain.invoke({"context": contexte_deduplique})
+        try:
+            response = self.chain.invoke({"context": contexte_deduplique})
+            content = response.content
+        except Exception as e:
+            log(f"✗ Erreur lors de l'appel LLM : {e}")
+            return {}
         llm_time = time.time() - llm_start
-        manual = extract_json(response.content, expected_type=dict)
+        manual = extract_json(content, expected_type=dict)
         log(f"LLM terminé en {llm_time:.2f}s.")
 
         if not manual:
             log("✗ Échec de l'extraction JSON du manuel.")
-            print(f"[ManualGeneratorAgent] DEBUG: Réponse brute du LLM (len={len(response.content)}) :\n{repr(response.content)}")
+            print(f"[ManualGeneratorAgent] DEBUG: Réponse brute du LLM (len={len(content)}) :\n{repr(content)}")
             return {}
 
         os.makedirs("Memory", exist_ok=True)
