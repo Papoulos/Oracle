@@ -8,6 +8,7 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 import chromadb
 import config
+from scenario_agents import ManualGeneratorAgent
 
 def get_embeddings():
     if config.EMBEDDING_PROVIDER == "ollama":
@@ -59,9 +60,27 @@ def index_directory(source_dir, collection_name, client, embeddings):
 def main():
     parser = argparse.ArgumentParser(description="Indexer les documents pour le RPG Oracle.")
     parser.add_argument("--clear", action="store_true", help="Vider la base de données avant l'indexation.")
+    parser.add_argument("--core", action="store_true", help="Indexer uniquement les fichiers de règles.")
+    parser.add_argument("--scenario", action="store_true", help="Indexer uniquement les fichiers de scénario.")
+    parser.add_argument("--pj", action="store_true", help="Générer le manuel de création de personnage.")
+    parser.add_argument("--reset", action="store_true", help="Supprimer toutes les données (ChromaDB + Memory) et recommencer.")
     args = parser.parse_args()
 
-    if args.clear:
+    # Si aucun argument n'est fourni (à part --clear qui est géré séparément pour compatibilité),
+    # on indexe tout et on génère le manuel.
+    index_all = not (args.core or args.scenario or args.pj or args.reset)
+
+    if args.reset:
+        print("Réinitialisation complète demandée...")
+        if os.path.exists(config.CHROMA_PATH):
+            print(f"Suppression de la base de données à {config.CHROMA_PATH}...")
+            shutil.rmtree(config.CHROMA_PATH)
+        if os.path.exists("Memory"):
+            print("Suppression du dossier Memory...")
+            shutil.rmtree("Memory")
+        os.makedirs("Memory", exist_ok=True)
+
+    if args.clear and not args.reset:
         if os.path.exists(config.CHROMA_PATH):
             print(f"Suppression de la base de données existante à {config.CHROMA_PATH}...")
             shutil.rmtree(config.CHROMA_PATH)
@@ -69,7 +88,6 @@ def main():
             print("Aucune base de données à supprimer.")
 
     embeddings = get_embeddings()
-
     client = chromadb.PersistentClient(path=config.CHROMA_PATH)
 
     # Création des répertoires si nécessaire
@@ -77,10 +95,23 @@ def main():
     os.makedirs(config.SCENARIO_DATA_PATH, exist_ok=True)
 
     # Indexation du Core
-    index_directory(config.CORE_DATA_PATH, config.CORE_COLLECTION_NAME, client, embeddings)
+    if index_all or args.core or args.reset:
+        index_directory(config.CORE_DATA_PATH, config.CORE_COLLECTION_NAME, client, embeddings)
 
     # Indexation du Scénario
-    index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings)
+    if index_all or args.scenario or args.reset:
+        index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings)
+
+    # Génération du manuel PJ
+    if index_all or args.pj or args.reset:
+        print("Génération du manuel de création de personnage...")
+        core_store = Chroma(
+            client=client,
+            collection_name=config.CORE_COLLECTION_NAME,
+            embedding_function=embeddings
+        )
+        generator = ManualGeneratorAgent(core_store)
+        generator.generate()
 
 if __name__ == "__main__":
     main()
