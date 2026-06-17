@@ -297,17 +297,26 @@ CONSIGNES CRITIQUES :
 4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
 5. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
 
-Réponds UNIQUEMENT avec un bloc JSON au format :
+Réponds UNIQUEMENT avec un bloc JSON entouré de balises ```json.
+
+FORMAT JSON ATTENDU :
+```json
 {{
   "etapes": [
     {{
       "etape": 1,
-      "nom": "Nom de l'étape",
-      "description": "Procédure détaillée de ce qu'il faut faire à cette étape"
+      "nom": "Étape 1",
+      "description": "Description de la procédure"
+    }},
+    {{
+      "etape": 2,
+      "nom": "Étape 2",
+      "description": "Description de la procédure"
     }}
   ],
-  "regles_generales": "Notes sur les calculs globaux, l'ordre des étapes ou points d'attention critiques"
+  "regles_generales": "Notes globales"
 }}
+```
 """
 
         llm_start = time.time()
@@ -318,6 +327,7 @@ Réponds UNIQUEMENT avec un bloc JSON au format :
 
         if not manual:
             log("✗ Échec de l'extraction JSON du manuel.")
+            print(f"[ManualGeneratorAgent] DEBUG: Réponse brute du LLM :\n{response.content}")
             return {}
 
         os.makedirs("Memory", exist_ok=True)

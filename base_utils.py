@@ -26,6 +26,8 @@ def extract_json(text: str, expected_type: type = dict):
         try:
             # Nettoyage minimal des espaces/caractères invisibles
             block_clean = block.strip()
+            # Nettoyage des virgules traînantes avant les fermetures
+            block_clean = re.sub(r",\s*([\]}])", r"\1", block_clean)
             return json.loads(block_clean)
         except json.JSONDecodeError as e:
             print(f"[extract_json] DEBUG: Échec décodage bloc markdown : {e}")
@@ -39,10 +41,12 @@ def extract_json(text: str, expected_type: type = dict):
     for match in reversed(raw_matches):
         # On tente de trouver le JSON valide à l'intérieur (au cas où il y aurait du texte autour)
         # On essaie de réduire le match de la fin vers le début pour trouver le bon crochet fermant
-        temp_match = match
+        temp_match = match.strip()
         while temp_match:
             try:
-                return json.loads(temp_match)
+                # Nettoyage des virgules traînantes avant de tenter le chargement
+                clean_json = re.sub(r",\s*([\]}])", r"\1", temp_match)
+                return json.loads(clean_json)
             except json.JSONDecodeError:
                 # Retirer le dernier caractère et chercher le précédent close_char
                 last_close = temp_match.rfind(close_char, 0, -1)
