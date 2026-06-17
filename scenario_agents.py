@@ -255,17 +255,20 @@ class ManualGeneratorAgent(BaseAgent):
         log("Extraction des étapes de création de personnage...")
         start_time = time.time()
 
-        # Requêtes pour extraire la structure de création
+        # Requêtes pour extraire la structure de création de manière exhaustive
         queries = [
             "étapes de création de personnage, character creation steps, character generation process",
-            "liste des races disponibles, available races list",
-            "liste des classes disponibles, available classes list",
-            "calcul des caractéristiques et statistiques, ability scores calculation, stats generation"
+            "caractéristiques, statistiques, scores, ability scores, attribute generation",
+            "races, peuples, espèces, character races, species",
+            "classes, professions, métiers, character classes",
+            "équipement de départ, starting equipment, gold, wealth",
+            "sorts, capacités, compétences, skills, spells, feats",
+            "calcul des PV et CA, health points and armor class calculation"
         ]
 
         all_docs = []
         for query in queries:
-            docs = self.core_store.similarity_search(query, k=10)
+            docs = self.core_store.similarity_search(query, k=5)
             all_docs.extend(docs)
 
         # Déduplication
@@ -282,17 +285,17 @@ class ManualGeneratorAgent(BaseAgent):
 Ta mission est de rédiger un MANUEL DE CRÉATION DE PERSONNAGE structuré en FRANÇAIS, basé UNIQUEMENT sur les extraits de règles fournis.
 
 Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le joueur dans sa création.
-Il doit être concis mais complet sur la PROCÉDURE à suivre.
+Il doit être COMPLET sur toutes les étapes requises par le système de jeu, mais rester PUREMENT STRUCTUREL.
 
 EXTRAITS DU CODEX (Règles) :
 {contexte_deduplique}
 
-CONSIGNES :
-1. Liste les étapes de création dans l'ordre logique (ex: 1. Nom, 2. Race, 3. Classe, etc.).
-2. Pour chaque étape, explique brièvement ce que le joueur doit choisir ou ce qui doit être calculé.
-3. Liste les options disponibles si elles sont mentionnées (races, classes).
-4. Précise la méthode de génération des statistiques (dés, répartition de points, etc.).
-5. Ne détaille pas chaque règle en profondeur, l'agent final interrogera le RAG pour les détails. Concentre-toi sur la STRUCTURE du processus.
+CONSIGNES CRITIQUES :
+1. Liste TOUTES les étapes de création dans l'ordre logique requis par le jeu (Caractères, Race, Classe, Équipement, Sorts/Capacités, PV/CA, etc.).
+2. Pour chaque étape, donne une description de la procédure à suivre.
+3. NE LISTE PAS les options spécifiques (ex: ne liste pas "Elfe", "Nain", "Guerrier"). Indique simplement qu'il faut choisir une race ou une classe.
+4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
+5. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
 
 Réponds UNIQUEMENT avec un bloc JSON au format :
 {{
@@ -300,11 +303,10 @@ Réponds UNIQUEMENT avec un bloc JSON au format :
     {{
       "etape": 1,
       "nom": "Nom de l'étape",
-      "description": "Courte explication",
-      "options": ["Option A", "Option B"]
+      "description": "Procédure détaillée de ce qu'il faut faire à cette étape"
     }}
   ],
-  "regles_generales": "Notes sur les calculs globaux ou points d'attention"
+  "regles_generales": "Notes sur les calculs globaux, l'ordre des étapes ou points d'attention critiques"
 }}
 """
 
