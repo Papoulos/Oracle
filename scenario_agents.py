@@ -3,6 +3,7 @@ import re
 import os
 import time
 import config
+from langchain_core.prompts import ChatPromptTemplate
 from base_utils import BaseAgent, extract_json
 
 class ScenarioSummaryAgent(BaseAgent):
@@ -244,6 +245,38 @@ class ManualGeneratorAgent(BaseAgent):
     def __init__(self, core_store):
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
         self.core_store = core_store
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", """Tu es un expert en conception de systèmes de jeu de rôle.
+Ta mission est de rédiger un MANUEL DE CRÉATION DE PERSONNAGE structuré en FRANÇAIS, basé UNIQUEMENT sur les extraits de règles fournis.
+
+Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le joueur dans sa création.
+Il doit être COMPLET sur toutes les étapes requises par le système de jeu, mais rester PUREMENT STRUCTUREL.
+
+CONSIGNES CRITIQUES :
+1. Liste TOUTES les étapes de création dans l'ordre logique requis par le jeu (Caractères, Race, Classe, Équipement, Sorts/Capacités, PV/CA, etc.).
+2. Pour chaque étape, donne une description de la procédure à suivre.
+3. NE LISTE PAS les options spécifiques (ex: ne liste pas "Elfe", "Nain", "Guerrier"). Indique simplement qu'il faut choisir une race ou une classe.
+4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
+5. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
+
+Réponds UNIQUEMENT avec un bloc JSON entouré de balises ```json.
+
+FORMAT JSON ATTENDUE :
+```json
+{{
+  "etapes": [
+    {{
+      "etape": 1,
+      "nom": "Étape 1",
+      "description": "Description de la procédure"
+    }}
+  ],
+  "regles_generales": "Notes globales"
+}}
+```"""),
+            ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
+        ])
+        self.chain = self.prompt | self.llm
 
     def generate(self, log_callback=None) -> dict:
         def log(msg):
@@ -281,53 +314,15 @@ class ManualGeneratorAgent(BaseAgent):
             log("⚠ Aucun extrait trouvé dans le Core RAG. Le manuel sera vide.")
             return {}
 
-        prompt = f"""Tu es un expert en conception de systèmes de jeu de rôle.
-Ta mission est de rédiger un MANUEL DE CRÉATION DE PERSONNAGE structuré en FRANÇAIS, basé UNIQUEMENT sur les extraits de règles fournis.
-
-Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le joueur dans sa création.
-Il doit être COMPLET sur toutes les étapes requises par le système de jeu, mais rester PUREMENT STRUCTUREL.
-
-EXTRAITS DU CODEX (Règles) :
-{contexte_deduplique}
-
-CONSIGNES CRITIQUES :
-1. Liste TOUTES les étapes de création dans l'ordre logique requis par le jeu (Caractères, Race, Classe, Équipement, Sorts/Capacités, PV/CA, etc.).
-2. Pour chaque étape, donne une description de la procédure à suivre.
-3. NE LISTE PAS les options spécifiques (ex: ne liste pas "Elfe", "Nain", "Guerrier"). Indique simplement qu'il faut choisir une race ou une classe.
-4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
-5. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
-
-Réponds UNIQUEMENT avec un bloc JSON entouré de balises ```json.
-
-FORMAT JSON ATTENDU :
-```json
-{{
-  "etapes": [
-    {{
-      "etape": 1,
-      "nom": "Étape 1",
-      "description": "Description de la procédure"
-    }},
-    {{
-      "etape": 2,
-      "nom": "Étape 2",
-      "description": "Description de la procédure"
-    }}
-  ],
-  "regles_generales": "Notes globales"
-}}
-```
-"""
-
         llm_start = time.time()
-        response = self.llm.invoke(prompt)
+        response = self.chain.invoke({"context": contexte_deduplique})
         llm_time = time.time() - llm_start
         manual = extract_json(response.content, expected_type=dict)
         log(f"LLM terminé en {llm_time:.2f}s.")
 
         if not manual:
             log("✗ Échec de l'extraction JSON du manuel.")
-            print(f"[ManualGeneratorAgent] DEBUG: Réponse brute du LLM :\n{response.content}")
+            print(f"[ManualGeneratorAgent] DEBUG: Réponse brute du LLM (len={len(response.content)}) :\n{repr(response.content)}")
             return {}
 
         os.makedirs("Memory", exist_ok=True)
