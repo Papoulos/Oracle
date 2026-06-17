@@ -19,6 +19,9 @@ def extract_json(text: str, expected_type: type = dict):
     # On utilise une recherche non-gourmande pour les blocs eux-mêmes,
     # mais on veut quand même supporter l'imbrication à l'intérieur d'un bloc.
     # Note : Le regex [\s\S]*? s'arrête au premier ``` suivant.
+    # Prétraitement : supprimer certains préfixes courants que les LLM ajoutent parfois
+    text = re.sub(r"^(?:JSON|Résultat|Voici le JSON|Output)\s*:\s*", "", text, flags=re.IGNORECASE | re.MULTILINE)
+
     markdown_blocks = re.findall(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*?{re.escape(close_char)})\s*```", text)
 
     # Inverser pour tester du plus récent (bas du message) au plus ancien
