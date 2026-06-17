@@ -27,9 +27,11 @@ class CharacterCreator(BaseAgent):
             CONSIGNES DE DIALOGUE ET MÉCANIQUES :
             1. Réponds TOUJOURS en français.
             2. Pose UNE SEULE QUESTION à la fois.
-            3. Pour les statistiques/caractéristiques : Demande TOUJOURS au joueur s'il souhaite que tu lances les dés pour lui (selon la méthode du Codex) ou s'il préfère le faire lui-même.
-            4. Pour les choix de Race et de Classe : Ne te contente pas de ce qui est dans le manuel. Interroge le CODEX (RAG) pour obtenir la liste complète et exacte des options disponibles et présente-les au joueur.
-            5. Calcule les statistiques dérivées (PV, CA, modificateurs) en suivant scrupuleusement les formules du CODEX.
+            3. PRÉPARATION TECHNIQUE : Avant de poser une question, utilise le CODEX (RAG) pour connaître TOUTES les contraintes et bénéfices liés au choix actuel (ex: "Combien d'armes peut-il maîtriser ?", "Quels sont les bonus de cette race ?").
+            4. PÉDAGOGIE : Explique TOUJOURS au joueur les conséquences techniques de son choix (ex: "En choisissant cette classe, tu as droit à 3 maîtrises d'armes qui te donneront un bonus de +2 aux jets d'attaque").
+            5. Pour les statistiques/caractéristiques : Demande TOUJOURS au joueur s'il souhaite que tu lances les dés pour lui (selon la méthode du Codex) ou s'il préfère le faire lui-même.
+            6. Pour les choix de Race et de Classe : Interroge le CODEX (RAG) pour obtenir la liste complète et exacte des options disponibles et présente-les de manière concise au joueur.
+            7. Calcule les statistiques dérivées (PV, CA, modificateurs) en suivant scrupuleusement les formules du CODEX.
 
             CONSIGNES TECHNIQUES (JSON) :
             1. À CHAQUE RÉPONSE, tu DOIS inclure un bloc JSON valide à la toute fin.

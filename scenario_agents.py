@@ -257,7 +257,8 @@ CONSIGNES CRITIQUES :
 2. Pour chaque étape, donne une description de la procédure à suivre.
 3. NE LISTE PAS les options spécifiques (ex: ne liste pas "Elfe", "Nain", "Guerrier"). Indique simplement qu'il faut choisir une race ou une classe.
 4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
-5. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
+5. EXPLICATION DES RÈGLES : Précise pour chaque étape si des limites numériques s'appliquent (ex: "Choisir 2 compétences", "Choisir 1 arme de mêlée et 1 de distance") afin que l'agent puisse les expliquer au joueur.
+6. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
 
 Réponds UNIQUEMENT avec un bloc JSON entouré de balises ```json.
 
@@ -271,7 +272,7 @@ FORMAT JSON ATTENDUE :
       "description": "Description de la procédure"
     }}
   ],
-  "regles_generales": "Notes globales"
+  "regles_generales": "Notes globales (ex: importance de vérifier les bonus de classe avant de choisir l'équipement)"
 }}
 ```"""),
             ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
