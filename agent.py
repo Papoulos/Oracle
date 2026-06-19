@@ -44,10 +44,19 @@ class CharacterCreator(BaseAgent):
                 "nom": "...",
                 "race": "...",
                 "classe": "...",
+                "niveau": 1,
+                "xp": 0,
+                "xp_prochain_niveau": 1000,
                 "statistiques": {{ "Force": 10, ... }},
                 "équipement": [...],
                 "pv": 10,
                 "ca": 10,
+                "ressources": {{
+                    "points_de_vie": {{"actuels": 10, "max": 10}},
+                    "sorts_par_jour": {{
+                        "niveau_1": {{"restants": 2, "max": 2}}
+                    }}
+                }},
                 "statut": "en_cours" | "complet"
             }}
 
@@ -142,15 +151,15 @@ class SheetManagerAgent(BaseAgent):
         self.vector_store = vector_store
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """Tu es le Gestionnaire de Fiche de Personnage.
-            Ton rôle est de mettre à jour la fiche JSON du personnage en fonction des événements qui viennent de se produire, en respectant les règles du CODEX.
+            Ton rôle est de mettre à jour la fiche JSON du personnage pour les aspects NARRATIFS uniquement (inventaire, relations, notes, descriptions).
             Tu reçois la fiche actuelle, l'action du joueur, la réponse du narrateur et les règles pertinentes.
-            Tu dois retourner la NOUVELLE fiche JSON complète et à jour.
+
+            ⚠️ RÈGLE CRITIQUE : Tu ne dois JAMAIS modifier les Points de Vie (PV), l'XP, le niveau, les sorts ou les ressources (rage, etc.). Ces éléments sont gérés de façon déterministe par le GameStateEngine.
 
             CONSIGNES :
-            - Mets à jour les Points de Vie (PV) si le personnage a été blessé ou soigné.
-            - Ajoute ou retire des objets de l'inventaire si nécessaire.
-            - Mets à jour l'expérience (XP) ou le niveau si mentionné, en suivant les tables de progression du CODEX.
-            - Ne modifie pas les statistiques de base (Force, etc.) sauf si un événement permanent l'exige.
+            - Ajoute ou retire des objets de l'inventaire si mentionné.
+            - Mets à jour les relations avec les PNJ ou les descriptions.
+            - Ne modifie pas les statistiques de base (Force, etc.) sauf événement exceptionnel.
             - Assure-toi que le JSON est valide et complet.
             - Réponds UNIQUEMENT avec le bloc JSON entouré de ```json et ```.
 
@@ -284,6 +293,9 @@ class RPGAgent(BaseAgent):
         # Agents de setup (one-shot, début de partie)
         self.npc_extractor_agent = NPCExtractorAgent(self.scenario_store)
         self.scenario_summary_agent = ScenarioSummaryAgent(self.scenario_store)
+
+        from game_state_engine import GameStateEngine
+        self.gse = GameStateEngine()
 
         # Données PNJ en mémoire vive
         self.npcs_data = None
@@ -421,6 +433,7 @@ class RPGAgent(BaseAgent):
                 status = str(self.character_data.get("statut", "")).lower()
                 if status in ["complet", "complete", "terminé", "termine"]:
                     print(f"[RPGAgent] Fin de création détectée (statut: {status}).")
+                    self.gse.reload()
                     self.game_state = "SUMMARY"
             else:
                 print(f"[RPGAgent] ⚠ Échec de l'extraction JSON pendant la création. Réponse brute : {response[:100]}...")
@@ -435,6 +448,30 @@ class RPGAgent(BaseAgent):
             npcs_summary = self.get_npcs_context()
             chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
+            # Détection mécanique et validation (Actions proactives du joueur)
+            action_type = self.gse.detect_action_type(user_input)
+            mechanical_result = None
+
+            if action_type == "spell":
+                spell_level = 1  # Par défaut, pourra être affiné plus tard
+                mechanical_result = self.gse.consume_spell_slot(spell_level)
+            elif action_type == "rage":
+                mechanical_result = self.gse.consume_resource("points_de_rage")
+            elif action_type == "rest":
+                rest_type = "long" if any(w in user_input.lower() for w in ["long", "nuit", "camp"]) else "short"
+                mechanical_result = self.gse.rest(rest_type)
+
+            # Ajouter au contexte Orchestrateur
+            mechanical_context = ""
+            if mechanical_result:
+                if not mechanical_result.success:
+                    mechanical_context = f"\n⚠ ACTION BLOQUÉE : {mechanical_result.blocked_reason} — {mechanical_result.message}"
+                else:
+                    mechanical_context = f"\nMECANIQUE : {mechanical_result.message}"
+
+            state_summary = self.gse.get_state_summary()
+            self.character_data = self.gse.state # Sync avant l'analyse
+
             # 1. L'Orchestrateur analyse l'action avec le Codex (règles)
             analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
             Basé sur les RÈGLES du CODEX suivantes :
@@ -446,8 +483,12 @@ class RPGAgent(BaseAgent):
             PNJs présents et leurs secrets (si pertinent) :
             {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
+            ÉTAT MÉCANIQUE : {state_summary}
+            {mechanical_context}
+
             Selon le personnage ({json.dumps(self.character_data, ensure_ascii=False)}), un jet de dé est-il nécessaire ?
             Si oui, identifie le bonus approprié en appliquant RIGOUREUSEMENT les règles du CODEX ci-dessus à la fiche de personnage du joueur.
+            Détermine aussi si cette action ou ses conséquences immédiates entraînent des dégâts, des soins ou un gain d'XP.
 
             Réponds au format JSON :
             {{
@@ -456,7 +497,11 @@ class RPGAgent(BaseAgent):
                 "bonus": integer_ou_null,
                 "calculation_breakdown": "explication du bonus (ex: +3 Force, +2 Athlétisme)",
                 "dc": integer_ou_null,
-                "reason": "explication courte"
+                "reason": "explication courte",
+                "mechanical_decision": {{
+                    "action": "damage" | "heal" | "xp" | null,
+                    "amount": integer_ou_null
+                }}
             }}
             """
             analysis_response = self.llm.invoke(analysis_prompt).content
@@ -468,6 +513,13 @@ class RPGAgent(BaseAgent):
                 if not analysis_data:
                     print(f"[RPGAgent] ✗ Échec de l'extraction JSON de l'analyse : {analysis_response[:200]}...")
                     analysis_data = {"need_roll": False}
+
+                # Application de la décision mécanique de l'Orchestrateur (Actions réactives)
+                m_decision = analysis_data.get("mechanical_decision")
+                if m_decision and m_decision.get("action"):
+                    m_res = self.gse.apply_orchestrator_decision(m_decision)
+                    mechanical_context += f"\nDECISION MJ : {m_res.message}"
+                    self.character_data = self.gse.state # Sync après décision
 
                 if analysis_data.get("need_roll"):
                     die_roll = self.roll_dice(20)
@@ -489,6 +541,8 @@ class RPGAgent(BaseAgent):
 ACTION DU JOUEUR : {user_input}
 
 RÉSULTAT TECHNIQUE : {"Aucun jet requis" if not roll_info else f"{roll_info} → {roll_result}"}
+ÉTAT MÉCANIQUE : {self.gse.get_state_summary()}
+{mechanical_context}
 
 CONTEXTE SCÉNARIO (extraits RAG) : {scenario_context}
 PNJ DISPONIBLES : {npcs_summary}
@@ -535,6 +589,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
                     os.makedirs("Memory", exist_ok=True)
                     with open("Memory/character.json", "w", encoding="utf-8") as f:
                         json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+                    self.gse.reload()
                     print("[RPGAgent] Fiche de personnage mise à jour.")
             except Exception as e:
                 print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la fiche : {e}")
@@ -619,6 +674,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.character_data = self._unwrap_character_data(data)
+                self.gse.reload()
                 self.game_state = "SUMMARY"
                 nom = self.character_data.get('nom') if self.character_data else "Inconnu"
                 print(f"[RPGAgent] Personnage chargé : {nom}")
@@ -634,6 +690,7 @@ STRUCTURE OBLIGATOIRE de ta réponse :
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
                     data = json.load(f)
                     self.character_data = self._unwrap_character_data(data)
+                self.gse.reload()
 
             if os.path.exists("Memory/npcs.json"):
                 with open("Memory/npcs.json", "r", encoding="utf-8") as f:
@@ -671,6 +728,9 @@ STRUCTURE OBLIGATOIRE de ta réponse :
         self.scenario_data = None
         self.chronicle_data = None
         self.npcs_data = None
+
+        from game_state_engine import GameStateEngine
+        self.gse = GameStateEngine()  # réinitialise l'état en mémoire
 
         for file in ["character.json", "npcs.json", "scenario.json", "Chronicle.json"]:
             path = os.path.join("Memory", file)
