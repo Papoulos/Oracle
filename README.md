@@ -13,7 +13,7 @@ The system is powered by several specialized agents, each with its own prompt, m
 *   **Key Functions**:
     *   Determines when a dice roll is needed based on the rules.
     *   Calculates bonuses using character data and RAG context.
-    *   Coordinates other agents by providing precise MJ instructions.
+    *   Coordinates other agents by providing precise MJ instructions and deterministic state updates via the GameStateEngine.
 *   **Context**: Accesses both `core_collection` (rules) and `scenario_collection` (plot).
 
 ### 2. Character Creator (`CharacterCreator`)
@@ -32,11 +32,11 @@ The system is powered by several specialized agents, each with its own prompt, m
     *   Strictly prohibited from deciding rules or interpreting player intent.
 
 ### 4. Sheet Manager (`SheetManagerAgent`)
-*   **Role**: Maintains the character's state in real-time.
+*   **Role**: Handles narrative-driven character updates.
 *   **Key Functions**:
-    *   Updates HP, inventory, and experience based on narrative events.
-    *   Ensures character sheet updates follow the game's mechanics.
-*   **Context**: Uses `core_collection` to validate mechanical changes.
+    *   Updates inventory, NPC relationships, and personal notes based on the story.
+    *   Explicitly prohibited from modifying mechanical values (HP, XP, Spells).
+*   **Context**: Uses `core_collection` to validate narrative consistency.
 
 ### 5. Chronicle Agent (`ChronicleAgent`)
 *   **Role**: The historian. It maintains a factual, concise summary of the adventure.
@@ -47,6 +47,13 @@ The system is powered by several specialized agents, each with its own prompt, m
 ### 6. Setup Agents (One-shot)
 *   **Scenario Summary Agent**: Extracts the title, pitch, and initial situation from the scenario RAG.
 *   **NPC Extractor Agent**: Identifies named NPCs, extracts their profiles, goals, and "secrets" (visible only to the Orchestrator).
+
+### 7. Game State Engine (`GameStateEngine`)
+*   **Role**: The deterministic mechanical core (Pure Python, Zero LLM).
+*   **Key Functions**:
+    *   Validates and applies mechanical changes (HP, XP, Spell Slots, Rage).
+    *   Provides a "State Summary" to the Orchestrator and Narrator.
+    *   Ensures immediate and deterministic persistence of character data.
 
 ---
 
@@ -83,19 +90,23 @@ graph TD
 sequenceDiagram
     participant Player
     participant Orch as Orchestrator
+    participant GSE as Game State Engine
     participant RAG as RAG (Rules & Plot)
     participant Narr as Narrator
     participant SM as Sheet Manager
     participant Chron as Chronicle
 
     Player->>Orch: Action
+    Orch->>GSE: Detect Mechanical Action
+    GSE-->>Orch: Mechanical Context (Success/Fail)
     Orch->>RAG: Technical Analysis (Rules)
     RAG-->>Orch: Bonus/DC Logic
     Orch->>Orch: Internal Dice Roll
+    Orch->>GSE: Apply Mechanical Decision (Damage, XP)
     Orch->>RAG: Narrative Analysis (Plot)
-    Orch->>Narr: MJ Instructions + Roll Results
+    Orch->>Narr: MJ Instructions + Roll Result + State Summary
     Narr->>Player: Immersive Response
-    Orch->>SM: (Async) Update State
+    Orch->>SM: (Async) Update Narrative State (Inventory, NPCs)
     Orch->>Chron: (Async) Update History
 ```
 
