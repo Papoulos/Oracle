@@ -50,7 +50,10 @@ class CharacterCreator(BaseAgent):
 
     def get_context(self, query):
         try:
-            docs = self.vector_store.similarity_search(query, k=config.RAG_K_CREATION)
+            # Réduction légère du nombre de documents pour la création (de 8 à 5)
+            # pour éviter de saturer la fenêtre de contexte avec des extraits trop longs.
+            k = max(1, config.RAG_K_CREATION - 3)
+            docs = self.vector_store.similarity_search(query, k=k)
             print(f"[CharacterCreator] DEBUG: Recherche contextuelle pour '{query}' -> {len(docs)} docs trouvés.")
             if docs:
                 print(f"[CharacterCreator] DEBUG: Premier extrait : {docs[0].page_content[:200]}...")
@@ -166,6 +169,9 @@ class SheetManagerAgent(BaseAgent):
     def update_sheet(self, character_sheet, user_input, narrator_response, mode="ADVENTURE"):
         context = self.get_context(f"Règles pour : {user_input} {narrator_response}")
 
+        # On s'assure d'avoir un LLM valide même si le modèle spécifié a échoué (fallback manuel)
+        llm = self.llm
+
         if mode == "CREATION":
             creation_prompt = ChatPromptTemplate.from_messages([
                 ("system", """Tu es le Gestionnaire de Fiche de Personnage en phase de CRÉATION.
@@ -189,14 +195,23 @@ class SheetManagerAgent(BaseAgent):
 
                 Nouvelle fiche JSON mise à jour :"""),
             ])
-            chain = creation_prompt | self.llm
+            chain = creation_prompt | llm
             inputs = {
                 "context": context,
                 "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2) if character_sheet else "{}",
                 "user_input": user_input,
                 "narrator_response": narrator_response
             }
-            response = chain.invoke(inputs)
+            try:
+                response = chain.invoke(inputs)
+            except Exception as e:
+                if "404" in str(e) or "not found" in str(e).lower():
+                    print(f"[SheetManagerAgent] ⚠ Modèle '{config.SHEET_MANAGER_MODEL}' non trouvé, fallback sur '{config.LLM_MODEL}'.")
+                    fallback_llm = get_llm(config.LLM_MODEL, config.SHEET_MANAGER_TEMP)
+                    chain = creation_prompt | fallback_llm
+                    response = chain.invoke(inputs)
+                else:
+                    raise e
         else:
             inputs = {
                 "context": context,
@@ -204,7 +219,16 @@ class SheetManagerAgent(BaseAgent):
                 "user_input": user_input,
                 "narrator_response": narrator_response
             }
-            response = self.chain.invoke(inputs)
+            try:
+                response = self.chain.invoke(inputs)
+            except Exception as e:
+                if "404" in str(e) or "not found" in str(e).lower():
+                    print(f"[SheetManagerAgent] ⚠ Modèle '{config.SHEET_MANAGER_MODEL}' non trouvé, fallback sur '{config.LLM_MODEL}'.")
+                    fallback_llm = get_llm(config.LLM_MODEL, config.SHEET_MANAGER_TEMP)
+                    fallback_chain = self.prompt | fallback_llm
+                    response = fallback_chain.invoke(inputs)
+                else:
+                    raise e
 
         new_sheet = extract_json(response.content)
         return new_sheet

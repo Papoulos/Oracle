@@ -65,7 +65,7 @@ def get_llm(model_name, temperature):
             model=model_name,
             base_url=config.LLM_BASE_URL,
             temperature=temperature,
-            num_ctx=8192,  # Fenêtre de contexte
+            num_ctx=16384, # Fenêtre de contexte doublée pour supporter RAG + historique + réponses longues
             num_predict=2048  # Limite de tokens en sortie pour éviter les troncatures
         )
     else: # openai / llama-cpp
