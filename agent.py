@@ -33,36 +33,11 @@ class CharacterCreator(BaseAgent):
             6. Pour les choix de Race et de Classe : Interroge le CODEX (RAG) pour obtenir la liste complète et exacte des options disponibles et présente-les de manière concise au joueur.
             7. Calcule les statistiques dérivées (PV, CA, modificateurs) en suivant scrupuleusement les formules du CODEX.
 
-            CONSIGNES TECHNIQUES (JSON) :
-            1. À CHAQUE RÉPONSE, tu DOIS inclure un bloc JSON valide à la toute fin.
-            2. Le bloc JSON doit être entouré des balises ```json et ```.
-            3. NE METS RIEN APRÈS LE BLOC JSON.
-            4. Si TOUTES les étapes du manuel sont terminées, mets `"statut": "complet"`. Sinon, `"statut": "en_cours"`.
+            CONSIGNES DE FIN DE CRÉATION :
+            Si toutes les étapes du manuel sont terminées, félicite le joueur et indique-lui que son personnage est prêt pour l'aventure.
+            Utilise le mot-clé "CRÉATION_TERMINÉE" dans ton texte uniquement lorsque TOUTES les étapes sont validées.
 
-            STRUCTURE DU JSON ATTENDUE :
-            {{
-                "nom": "...",
-                "race": "...",
-                "classe": "...",
-                "niveau": 1,
-                "xp": 0,
-                "xp_prochain_niveau": 1000,
-                "statistiques": {{ "Force": 10, ... }},
-                "équipement": [...],
-                "sorts": ["..."],
-                "ressources": {{ "emplacements_sorts_niv1": {{ "total": 2, "restants": 2 }}, "points_de_rage": 2 }},
-                "pv": 10,
-                "ca": 10,
-                "ressources": {{
-                    "points_de_vie": {{"actuels": 10, "max": 10}},
-                    "sorts_par_jour": {{
-                        "niveau_1": {{"restants": 2, "max": 2}}
-                    }}
-                }},
-                "statut": "en_cours" | "complet"
-            }}
-
-            ÉTAT ACTUEL DU PERSONNAGE :
+            ÉTAT ACTUEL DU PERSONNAGE (pour ton information) :
             {current_character}
 
             CODEX (Détails des règles à interroger pour chaque choix) :
@@ -188,15 +163,49 @@ class SheetManagerAgent(BaseAgent):
         except Exception:
             return "Aucune règle trouvée pour la mise à jour."
 
-    def update_sheet(self, character_sheet, user_input, narrator_response):
+    def update_sheet(self, character_sheet, user_input, narrator_response, mode="ADVENTURE"):
         context = self.get_context(f"Règles pour : {user_input} {narrator_response}")
-        inputs = {
-            "context": context,
-            "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2),
-            "user_input": user_input,
-            "narrator_response": narrator_response
-        }
-        response = self.chain.invoke(inputs)
+
+        if mode == "CREATION":
+            creation_prompt = ChatPromptTemplate.from_messages([
+                ("system", """Tu es le Gestionnaire de Fiche de Personnage en phase de CRÉATION.
+                Ton rôle est d'extraire les informations de la conversation pour mettre à jour la fiche JSON.
+
+                CONSIGNES :
+                - Analyse l'action du joueur et la réponse du MJ pour identifier les nouveaux choix (nom, race, classe, statistiques, équipement, etc.).
+                - Mets à jour TOUS les champs nécessaires.
+                - Si le MJ mentionne que la création est terminée (mot-clé "CRÉATION_TERMINÉE"), mets le champ "statut" à "complet".
+                - Réponds UNIQUEMENT avec le bloc JSON complet.
+
+                RÈGLES DU CODEX (Contexte) :
+                {context}
+                """),
+                ("human", """FICHE ACTUELLE :
+                {character_sheet}
+
+                DERNIERS ÉVÉNEMENTS :
+                Action joueur : {user_input}
+                Réponse MJ : {narrator_response}
+
+                Nouvelle fiche JSON mise à jour :"""),
+            ])
+            chain = creation_prompt | self.llm
+            inputs = {
+                "context": context,
+                "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2) if character_sheet else "{}",
+                "user_input": user_input,
+                "narrator_response": narrator_response
+            }
+            response = chain.invoke(inputs)
+        else:
+            inputs = {
+                "context": context,
+                "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2),
+                "user_input": user_input,
+                "narrator_response": narrator_response
+            }
+            response = self.chain.invoke(inputs)
+
         new_sheet = extract_json(response.content)
         return new_sheet
 
@@ -523,25 +532,39 @@ Réponds UNIQUEMENT avec ce JSON :
 
     def chat(self, user_input):
         if self.game_state == "CREATION":
+            # 1. Étape Narrative : Dialogue avec le joueur
             response = self.character_creator.generate_response(user_input, self.history.messages, self.character_data)
 
-            character_data = extract_json(response)
-            if isinstance(character_data, dict):
-                unwrapped_data = self._unwrap_character_data(character_data)
-                self.character_data = unwrapped_data
-                os.makedirs("Memory", exist_ok=True)
-                with open("Memory/character.json", "w", encoding="utf-8") as f:
-                    json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+            # 2. Étape Technique (Masquée) : Mise à jour de la fiche via SheetManager
+            try:
+                new_sheet = self.sheet_manager.update_sheet(
+                    self.character_data,
+                    user_input,
+                    response,
+                    mode="CREATION"
+                )
+                if new_sheet and isinstance(new_sheet, dict):
+                    self.character_data = self._unwrap_character_data(new_sheet)
 
-                # Transition vers SUMMARY si le statut est complet
-                # On accepte "complet" ou "terminé" (tolérance LLM)
-                status = str(self.character_data.get("statut", "")).lower()
-                if status in ["complet", "complete", "terminé", "termine"]:
-                    print(f"[RPGAgent] Fin de création détectée (statut: {status}).")
-                    self._extract_and_add_resources()
-                    self.game_state = "SUMMARY"
-            else:
-                print(f"[RPGAgent] ⚠ Échec de l'extraction JSON pendant la création. Réponse brute : {response[:100]}...")
+                    # 3. Synchronisation déterministe via GameStateEngine
+                    self.gse.state = self.character_data
+                    self.gse.synchronize_and_recalculate()
+                    self.character_data = self.gse.state
+
+                    os.makedirs("Memory", exist_ok=True)
+                    with open("Memory/character.json", "w", encoding="utf-8") as f:
+                        json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+
+                    print(f"[RPGAgent] Fiche mise à jour en arrière-plan.")
+
+                    # Transition vers SUMMARY si le statut est complet ou mot-clé détecté
+                    status = str(self.character_data.get("statut", "")).lower()
+                    if status in ["complet", "complete", "terminé", "termine"] or "CRÉATION_TERMINÉE" in response:
+                        print(f"[RPGAgent] Fin de création détectée.")
+                        self._extract_and_add_resources()
+                        self.game_state = "SUMMARY"
+            except Exception as e:
+                print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour technique de la fiche : {e}")
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(response)

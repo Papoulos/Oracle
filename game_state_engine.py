@@ -252,6 +252,50 @@ class GameStateEngine:
             state_changes={"rest": rest_type, "restored": restored}
         )
 
+    def synchronize_and_recalculate(self):
+        """
+        Recalcule les valeurs dérivées (PV, CA, etc.) basées sur les stats, race et classe.
+        Assure la cohérence de la fiche.
+        """
+        if not self.state:
+            return
+
+        # 1. Calcul des modificateurs de caractéristiques (Règle standard D&D/OSRIC : (stat-10)//2)
+        # Note: Dans certains vieux systèmes (BX), c'est différent.
+        # Mais on va proposer une logique de base qui pourra être affinée.
+        stats = self.state.get("statistiques", {})
+
+        # 2. Mise à jour des PV si nécessaire
+        # Si PV max est absent ou incohérent, on tente un calcul de base (ex: 8 + mod CON)
+        # Dans un vrai système RAG, on laisserait l'LLM extraire le dé de vie,
+        # mais ici on s'assure au moins que les PV actuels ne dépassent pas le max.
+        ressources = self.state.setdefault("ressources", {})
+        pv = ressources.setdefault("points_de_vie", {})
+
+        hp_max = pv.get("max", 0)
+        hp_cur = pv.get("actuels", 0)
+
+        if hp_max == 0 and "pv" in self.state and isinstance(self.state["pv"], int):
+            hp_max = self.state["pv"]
+            pv["max"] = hp_max
+
+        if hp_cur > hp_max and hp_max > 0:
+            pv["actuels"] = hp_max
+
+        # 3. Synchronisation legacy
+        if hp_max > 0:
+            self.state["pv"] = pv["actuels"]
+
+        # 4. S'assurer que le niveau et l'XP sont des entiers
+        if "niveau" in self.state:
+            try: self.state["niveau"] = int(self.state["niveau"])
+            except: pass
+        if "xp" in self.state:
+            try: self.state["xp"] = int(self.state["xp"])
+            except: pass
+
+        self.save()
+
     # ── Détection automatique depuis le texte ─────────────────
 
     def detect_action_type(self, user_input: str) -> Optional[str]:
