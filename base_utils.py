@@ -65,7 +65,8 @@ def get_llm(model_name, temperature):
             model=model_name,
             base_url=config.LLM_BASE_URL,
             temperature=temperature,
-            num_ctx=8192  # Augmentation de la fenêtre de contexte pour éviter les réponses tronquées/vides
+            num_ctx=8192,  # Fenêtre de contexte
+            num_predict=2048  # Limite de tokens en sortie pour éviter les troncatures
         )
     else: # openai / llama-cpp
         return ChatOpenAI(
