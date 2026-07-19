@@ -338,3 +338,111 @@ FORMAT JSON ATTENDUE :
 
         log("✓ Manuel de création généré dans Memory/creation_manual.json.")
         return manual
+
+
+class SceneGraphAgent(BaseAgent):
+    """
+    Agent un par un / one-shot : extrait les scènes, la structure de l'intrigue et génère un graphe de scènes.
+    Produit : Memory/scenes.json
+    """
+
+    def __init__(self, scenario_store):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+        self.scenario_store = scenario_store
+
+    def generate(self, scenario_summary: dict, log_callback=None) -> dict:
+        def log(msg):
+            if log_callback:
+                log_callback(f"[SceneGraph] {msg}")
+            else:
+                print(f"[SceneGraphAgent] {msg}")
+
+        log("Extraction des scènes et de la structure du scénario...")
+        start_time = time.time()
+
+        queries = [
+            "déroulement de l'aventure, scènes, chapitres, actes, structure narrative",
+            "lieux, salles, zones, rencontres",
+            "conditions, ce qui se passe si, déclencheurs, réactions des PNJ"
+        ]
+
+        all_docs = []
+        for query in queries:
+            docs = self.scenario_store.similarity_search(query, k=15)
+            all_docs.extend(docs)
+
+        unique_contents = {doc.page_content: doc for doc in all_docs}
+        contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
+        rag_time = time.time() - start_time
+        log(f"RAG terminé en {rag_time:.2f}s ({len(unique_contents)} extraits).")
+
+        if not contexte_deduplique.strip():
+            log("⚠ Aucun extrait trouvé dans le scénario pour extraire les scènes.")
+            return {}
+
+        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
+À partir de ces extraits de scénario (qui peuvent être en français ou en anglais), produis une structure de scènes logique en FRANÇAIS.
+Ne complète pas et n'invente pas d'éléments absents de ces extraits.
+
+CONSIGNES POUR LE CONTENU :
+1. Identifie la scène initiale et les scènes majeures de l'aventure.
+2. Initialise TOUS les statuts à "a_venir", SAUF pour la scène pointée par "scene_initiale" qui commence avec le statut "en_cours".
+3. L'esprit de la scène doit être résumé en une phrase.
+4. "elements_a_preserver" contient les faits ou informations qui doivent rester vrais même si la scène se déroule autrement que prévu.
+5. "reactions_anticipees" contient des réactions probables des PNJs/de l'environnement, sous forme d'aide-mémoire indicatif.
+6. "objectif_atteint_si" doit être formulé en termes de résultat (ex: "le joueur obtient X"), jamais en termes de méthode/action littérale.
+
+EXTRAITS DU SCÉNARIO :
+{contexte_deduplique}
+
+Réponds UNIQUEMENT avec un JSON valide suivant EXACTEMENT ce schéma :
+{{
+  "scene_initiale": "1.1",
+  "scenes": [
+    {{
+      "id": "1.1",
+      "titre": "string",
+      "lieu": "string",
+      "pnjs": ["id_pnj"],
+      "esprit_de_la_scene": "ce que cette scène doit apporter à l'intrigue, en une phrase",
+      "elements_a_preserver": ["fait ou info qui doit rester vrai même si la scène se déroule autrement que prévu"],
+      "reactions_anticipees": [
+        {{"action_probable": "string", "consequence": "string"}}
+      ],
+      "objectif_atteint_si": "condition formulée comme un BUT, pas une action littérale",
+      "statut": "a_venir"
+    }}
+  ]
+}}
+"""
+
+        llm_start = time.time()
+        response = self.llm.invoke(prompt)
+        llm_time = time.time() - llm_start
+        scenes_data = extract_json(response.content, expected_type=dict)
+        log(f"LLM terminé en {llm_time:.2f}s.")
+
+        if not scenes_data:
+            log("✗ Échec de l'extraction JSON du graphe de scènes.")
+            return {}
+
+        # Validation minimale
+        if "scene_initiale" not in scenes_data:
+            scenes_data["scene_initiale"] = "1.1"
+        if "scenes" not in scenes_data or not isinstance(scenes_data["scenes"], list):
+            scenes_data["scenes"] = []
+
+        # S'assurer que le statut de la scène initiale est en_cours et les autres a_venir
+        initial_id = scenes_data["scene_initiale"]
+        for scene in scenes_data["scenes"]:
+            if scene.get("id") == initial_id:
+                scene["statut"] = "en_cours"
+            else:
+                scene["statut"] = "a_venir"
+
+        os.makedirs("Memory", exist_ok=True)
+        with open("Memory/scenes.json", "w", encoding="utf-8") as f:
+            json.dump(scenes_data, f, indent=4, ensure_ascii=False)
+
+        log(f"✓ Graphe de scènes généré ({len(scenes_data['scenes'])} scènes) dans Memory/scenes.json.")
+        return scenes_data

@@ -1,32 +1,8 @@
 {
-    "nom": "Gandalf",
-    "race": "Istari",
-    "classe": "Magicien",
-    "niveau": 5,
-    "statistiques": {
-        "Intelligence": 18,
-        "Sagesse": 18
-    },
-    "sorts": [
-        "Projectile Magique",
-        "Sommeil",
-        "Boule de Feu"
-    ],
+    "nom": "Test",
+    "classe": "Guerrier",
+    "statut": "complet",
     "ressources": {
-        "emplacements_sorts_niv1": {
-            "total": 4,
-            "restants": 2
-        },
-        "emplacements_sorts_niv2": {
-            "total": 3,
-            "restants": 3
-        },
-        "emplacements_sorts_niv3": {
-            "total": 2,
-            "restants": 0
-        }
-    },
-    "pv": 30,
-    "ca": 12,
-    "statut": "complet"
+        "points_de_vie": {}
+    }
 }

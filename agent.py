@@ -10,7 +10,7 @@ from langchain_community.chat_message_histories import ChatMessageHistory
 import chromadb
 import config
 from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
-from scenario_agents import NPCExtractorAgent, ScenarioSummaryAgent
+from scenario_agents import NPCExtractorAgent, ScenarioSummaryAgent, SceneGraphAgent
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
@@ -99,7 +99,7 @@ class ChronicleAgent(BaseAgent):
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """Tu es le Chroniqueur d'une aventure de jeu de rôle.
             Ton rôle est de tenir à jour un résumé factuel et concis de l'histoire jusqu'à présent.
-            Tu reçois l'ancien résumé, l'action du joueur et la réponse du narrateur.
+            Tu reçois l'ancien résumé, l'action du joueur, la réponse du narrateur et éventuellement un fait additionnel.
             Tu dois produire un NOUVEAU résumé mis à jour qui intègre ces nouveaux événements.
 
             CONSIGNES :
@@ -111,16 +111,18 @@ class ChronicleAgent(BaseAgent):
             ("human", """ANCIEN RÉSUMÉ : {old_chronicle}
             ACTION JOUEUR : {user_input}
             RÉPONSE NARRATEUR : {narrator_response}
+            FAIT ADDITIONNEL À CONSERVER (peut diverger du scénario source) : {note_chronique}
 
             Nouveau résumé mis à jour :"""),
         ])
         self.chain = self.prompt | self.llm
 
-    def update(self, old_chronicle, user_input, narrator_response):
+    def update(self, old_chronicle, user_input, narrator_response, note_chronique=None):
         inputs = {
             "old_chronicle": old_chronicle if old_chronicle else "L'aventure commence à peine.",
             "user_input": user_input,
-            "narrator_response": narrator_response
+            "narrator_response": narrator_response,
+            "note_chronique": note_chronique if note_chronique else "Aucun fait additionnel."
         }
         response = self.chain.invoke(inputs)
         return response.content
@@ -180,7 +182,7 @@ class SheetManagerAgent(BaseAgent):
                 CONSIGNES :
                 - Analyse l'action du joueur et la réponse du MJ pour identifier les nouveaux choix (nom, race, classe, statistiques, équipement, etc.).
                 - Mets à jour TOUS les champs nécessaires.
-                - Si le MJ mentionne que la création est terminée (mot-clé "CRÉATION_TERMINÉE"), mets le champ "statut" à "complet".
+                - Si le MJ  mentionne que la création est terminée (mot-clé "CRÉATION_TERMINÉE"), mets le champ "statut" à "complet".
                 - Réponds UNIQUEMENT avec le bloc JSON complet.
 
                 RÈGLES DU CODEX (Contexte) :
@@ -330,12 +332,15 @@ class RPGAgent(BaseAgent):
         # Agents de setup (one-shot, début de partie)
         self.npc_extractor_agent = NPCExtractorAgent(self.scenario_store)
         self.scenario_summary_agent = ScenarioSummaryAgent(self.scenario_store)
+        self.scene_graph_agent = SceneGraphAgent(self.scenario_store)
 
         from game_state_engine import GameStateEngine
         self.gse = GameStateEngine()
 
-        # Données PNJ en mémoire vive
+        # Données PNJ et scènes en mémoire vive
         self.npcs_data = None
+        self.scenes_data = None
+        self.current_scene_id = None
 
         self.history = ChatMessageHistory()
         self.game_state = "CREATION" # CREATION, SUMMARY, ADVENTURE
@@ -392,6 +397,22 @@ class RPGAgent(BaseAgent):
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
             return "Aucun élément de scénario trouvé."
+
+    def get_current_scene(self) -> str:
+        """
+        Récupère la scène courante par filtre de métadonnée (pas par similarité).
+        """
+        if not self.current_scene_id:
+            return ""
+        try:
+            docs = self.scenario_store.similarity_search(
+                self.current_scene_id, k=1, filter={"scene_id": self.current_scene_id}
+            )
+            if docs:
+                return docs[0].page_content
+        except Exception as e:
+            print(f"[RPGAgent] Erreur get_current_scene : {e}")
+        return ""
 
     def roll_dice(self, sides=20):
         return random.randint(1, sides)
@@ -456,6 +477,7 @@ Réponds UNIQUEMENT avec le bloc JSON :
 
         Étape 1 → ScenarioSummaryAgent : génère Memory/scenario.json
         Étape 2 → NPCExtractorAgent  : génère Memory/npcs.json
+        Étape 3 → SceneGraphAgent : génère Memory/scenes.json et indexe les scènes dans self.scenario_store
 
         Retourne True si le scénario a été généré avec succès.
         """
@@ -482,6 +504,33 @@ Réponds UNIQUEMENT avec le bloc JSON :
         npcs = self.npc_extractor_agent.extract(self.scenario_data, log_callback=self.log)
         self.npcs_data = npcs  # peut être [] sans bloquer
         self.log(f"✓ PNJs extraits en {time.time() - npcs_start:.2f}s.")
+
+        # Étape 3 : Graphe de scènes
+        self.log("Étape 3 : Extraction du graphe de scènes...")
+        scenes_start = time.time()
+        scenes = self.scene_graph_agent.generate(self.scenario_data, log_callback=self.log)
+        self.scenes_data = scenes
+        if scenes:
+            self.current_scene_id = scenes.get("scene_initiale")
+            self.log(f"✓ Graphe de scènes extrait en {time.time() - scenes_start:.2f}s.")
+
+            # Nettoyage des anciennes scènes de la DB avant de réindexer
+            self.log("Nettoyage des anciennes scènes de l'index du scénario...")
+            try:
+                self.scenario_store.delete(filter={"type": "scene"})
+                self.log("✓ Anciennes scènes supprimées de l'index.")
+            except Exception as e:
+                self.log(f"⚠ Aucun nettoyage effectué ou erreur de nettoyage : {e}")
+
+            # Indexation des scènes générées
+            self.log("Indexation des nouvelles scènes dans l'index...")
+            try:
+                from indexer import index_scenes
+                index_scenes("Memory/scenes.json", config.SCENARIO_COLLECTION_NAME, self.client, self.embeddings)
+            except Exception as e:
+                self.log(f"⚠ Erreur lors de l'indexation des nouvelles scènes : {e}")
+        else:
+            self.log("⚠ Aucune scène n'a pu être générée.")
 
         self.log(f"✨ Setup terminé en {time.time() - total_start:.2f}s.")
         return True
@@ -696,7 +745,99 @@ Réponds UNIQUEMENT avec ce JSON :
             except Exception:
                 analysis_data = {"need_roll": False}
 
-            # 2. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO
+            # 2. Analyse de Scène de l'Orchestrateur (Transition / Improvisation / Contournement)
+            current_scene_content = self.get_current_scene()
+            scene_analysis_result = {
+                "categorie": "improvisation",
+                "scene_suivante": None,
+                "note_chronique": ""
+            }
+
+            if self.scenes_data and self.current_scene_id:
+                # Retrouver la structure de la scène courante dans memory
+                current_scene_dict = next((sc for sc in self.scenes_data.get("scenes", []) if sc.get("id") == self.current_scene_id), {})
+
+                scene_classification_prompt = f"""Analyse l'action du joueur par rapport à la scène courante.
+
+SCÈNE COURANTE (id {self.current_scene_id}) :
+Titre : {current_scene_dict.get('titre', 'Inconnu')}
+Esprit de la scène : {current_scene_dict.get('esprit_de_la_scene', '')}
+Objectif : {current_scene_dict.get('objectif_atteint_si', '')}
+Éléments à préserver : {current_scene_dict.get('elements_a_preserver', [])}
+Réactions anticipées (indicatif) : {current_scene_dict.get('reactions_anticipees', [])}
+
+ACTION DU JOUEUR : {user_input}
+
+Classe la situation en UNE des trois catégories. Ne bloque JAMAIS une action du joueur,
+quelle que soit la catégorie — cette classification sert uniquement au suivi interne.
+- "transition" : le joueur résout l'objectif narratif de cette scène d'une manière ou d'une autre (qui concrétise l'objectif formulé, ou s'y oppose mais résout l'esprit), permettant de passer à une scène suivante.
+- "improvisation" : le joueur agit dans la scène actuelle sans encore atteindre l'objectif ou faire bifurquer radicalement le scénario. On reste dans la scène courante.
+- "contournement" : le joueur sort complètement du cadre prévu, ignore le but, détruit l'opportunité de l'atteindre (ex: tue un donneur de quête clé, fuit l'endroit), ou improvise une solution non anticipée qui court-circuite la scène actuelle sans en faire une transition normale.
+
+Réponds UNIQUEMENT en JSON :
+{{
+  "categorie": "transition" | "improvisation" | "contournement",
+  "scene_suivante": "id ou null",
+  "note_chronique": "fait à retenir pour la suite, en une phrase, même si non prévu par le scénario source"
+}}
+"""
+                try:
+                    classification_response = self.llm.invoke(scene_classification_prompt).content
+                    extracted_classification = extract_json(classification_response)
+                    if extracted_classification:
+                        scene_analysis_result = extracted_classification
+                except Exception as e:
+                    print(f"[RPGAgent] Erreur lors de la classification de scène : {e}")
+
+            # Traitement déterministe de la classification
+            cat = scene_analysis_result.get("categorie", "improvisation")
+            next_scene_id = scene_analysis_result.get("scene_suivante")
+            note_chronique = scene_analysis_result.get("note_chronique", "")
+
+            # Validation du dictionnaire de scènes
+            scene_ids = [sc.get("id") for sc in self.scenes_data.get("scenes", [])] if self.scenes_data else []
+
+            if cat == "transition":
+                if next_scene_id and next_scene_id in scene_ids:
+                    # Changement de statut de la scène courante à "resolue"
+                    for sc in self.scenes_data["scenes"]:
+                        if sc.get("id") == self.current_scene_id:
+                            sc["statut"] = "resolue"
+                        elif sc.get("id") == next_scene_id:
+                            sc["statut"] = "en_cours"
+                    self.current_scene_id = next_scene_id
+                    print(f"[RPGAgent] Transition déterministe vers la scène {next_scene_id}.")
+                else:
+                    # Fallback sur comportement "improvisation" si l'ID est invalide
+                    print(f"[RPGAgent] Transition avortée : ID scène suivante '{next_scene_id}' invalide ou null.")
+                    cat = "improvisation"
+            elif cat == "contournement":
+                # Marquer la scène courante à "contournee"
+                for sc in self.scenes_data["scenes"]:
+                    if sc.get("id") == self.current_scene_id:
+                        sc["statut"] = "contournee"
+                # Si scene_suivante est fournie et valide, on peut faire une transition
+                if next_scene_id and next_scene_id in scene_ids:
+                    for sc in self.scenes_data["scenes"]:
+                        if sc.get("id") == next_scene_id:
+                            sc["statut"] = "en_cours"
+                    self.current_scene_id = next_scene_id
+                    print(f"[RPGAgent] Contournement menant vers la scène {next_scene_id}.")
+                else:
+                    print(f"[RPGAgent] Contournement de la scène {self.current_scene_id} sans scène suivante.")
+
+            # Sauvegarde de self.scenes_data après chaque tour
+            if self.scenes_data:
+                try:
+                    os.makedirs("Memory", exist_ok=True)
+                    with open("Memory/scenes.json", "w", encoding="utf-8") as f:
+                        json.dump(self.scenes_data, f, indent=4, ensure_ascii=False)
+                except Exception as e:
+                    print(f"[RPGAgent] Erreur de sauvegarde de scenes.json : {e}")
+
+            # 3. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO et la classification
+            current_scene_dict = next((sc for sc in self.scenes_data.get("scenes", []) if sc.get("id") == self.current_scene_id), {}) if self.scenes_data else {}
+
             decision_instruction = f"""
 ACTION DU JOUEUR : {user_input}
 
@@ -705,35 +846,41 @@ RÉSULTAT TECHNIQUE : {"Aucun jet requis" if not roll_info else f"{roll_info} �
 {mechanical_context}
 
 CONTEXTE SCÉNARIO (extraits RAG) : {scenario_context}
+
+SCÈNE COURANTE :
+Id : {self.current_scene_id}
+Titre : {current_scene_dict.get('titre', 'Inconnu')}
+Esprit : {current_scene_dict.get('esprit_de_la_scene', '')}
+Objectif : {current_scene_dict.get('objectif_atteint_si', '')}
+Éléments à préserver : {current_scene_dict.get('elements_a_preserver', [])}
+
+CLASSIFICATION DE L'ACTION DU JOUEUR :
+Catégorie : {cat}
+Fait additionnel (Chronique) : {note_chronique}
+
 PNJ DISPONIBLES : {npcs_summary}
 
-TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur.
+TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur en tenant compte de la Scène Courante et de la classification de l'action du joueur. Si l'action est classée en contournement ou improvisation, adapte la narration de manière fluide sans bloquer le joueur.
 
 STRUCTURE OBLIGATOIRE de ta réponse :
 
 1. CONSÉQUENCE IMMÉDIATE
    Ce qui se passe concrètement suite à l'action. Si jet réussi : avantage clair.
-   Si jet échoué : information manquante, mauvaise interprétation, ou complication.
+   Si jet échoué : complication, ou fausse piste.
    Ne révèle que ce que le personnage peut percevoir à cet instant.
 
 2. PERCEPTIONS SENSORIELLES
    Ce que le personnage voit, entend, sent, touche ou ressent physiquement.
    Sois précis et concret — pas d'atmosphère vague.
-   Exemples : "il voit trois torches éteintes et une porte entrouverte à gauche",
-   "il entend un souffle rythmique venant du couloir nord".
 
 3. ÉLÉMENTS INCONNUS OU AMBIGUS
-   Ce que le personnage ne peut pas encore déterminer (en lien avec le jet raté si applicable).
-   Formule-le du point de vue du personnage, pas du MJ.
-   Exemple : "l'origine du bruit reste indéterminée" plutôt que "c'est un rat".
+   Ce que le personnage ne peut pas encore déterminer.
 
 4. IMPULSION NARRATIVE
-   Donne une direction active au joueur : un détail qui appelle une réaction,
-   un PNJ qui agit, un bruit qui se rapproche, un choix qui se présente.
-   Ne laisse JAMAIS la scène en suspension sans amorce concrète.
+   Donne une direction active au joueur : un détail qui appelle une réaction.
 
 5. POINTS CLÉS POUR LE RÉSUMÉ
-   Liste 2-3 faits importants découverts lors de cette action (indices, informations, changements d'état).
+   Liste 2-3 faits importants découverts lors de cette action.
 """
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
@@ -754,8 +901,8 @@ STRUCTURE OBLIGATOIRE de ta réponse :
             except Exception as e:
                 print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la fiche : {e}")
 
-            # Mise à jour de la chronique
-            self.update_chronicle(user_input, final_response)
+            # Mise à jour de la chronique avec l'intégration de note_chronique
+            self.update_chronicle(user_input, final_response, note_chronique if note_chronique else None)
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(final_response)
@@ -815,12 +962,12 @@ STRUCTURE OBLIGATOIRE de ta réponse :
         self.history.add_ai_message(full_response)
         return full_response
 
-    def update_chronicle(self, user_input, response):
+    def update_chronicle(self, user_input, response, note_chronique=None):
         old_summary = ""
         if self.chronicle_data and isinstance(self.chronicle_data, dict):
             old_summary = self.chronicle_data.get("summary", "")
 
-        new_summary = self.chronicle_agent.update(old_summary, user_input, response)
+        new_summary = self.chronicle_agent.update(old_summary, user_input, response, note_chronique)
         self.chronicle_data = {"summary": new_summary}
 
         os.makedirs("Memory", exist_ok=True)
@@ -838,6 +985,17 @@ STRUCTURE OBLIGATOIRE de ta réponse :
                 self.game_state = "SUMMARY"
                 nom = self.character_data.get('nom') if self.character_data else "Inconnu"
                 print(f"[RPGAgent] Personnage chargé : {nom}")
+
+            if os.path.exists("Memory/scenes.json"):
+                with open("Memory/scenes.json", "r", encoding="utf-8") as f:
+                    self.scenes_data = json.load(f)
+                # Trouver la scène en cours
+                self.current_scene_id = self.scenes_data.get("scene_initiale")
+                for scene in self.scenes_data.get("scenes", []):
+                    if scene.get("statut") == "en_cours":
+                        self.current_scene_id = scene.get("id")
+                        break
+
                 return True
         except Exception as e:
             print(f"[RPGAgent] Erreur chargement personnage : {e}")
@@ -860,6 +1018,16 @@ STRUCTURE OBLIGATOIRE de ta réponse :
             if os.path.exists("Memory/scenario.json"):
                 with open("Memory/scenario.json", "r", encoding="utf-8") as f:
                     self.scenario_data = json.load(f)
+
+            if os.path.exists("Memory/scenes.json"):
+                with open("Memory/scenes.json", "r", encoding="utf-8") as f:
+                    self.scenes_data = json.load(f)
+                # Trouver la scène en cours, ou utiliser scene_initiale par défaut
+                self.current_scene_id = self.scenes_data.get("scene_initiale")
+                for scene in self.scenes_data.get("scenes", []):
+                    if scene.get("statut") == "en_cours":
+                        self.current_scene_id = scene.get("id")
+                        break
 
             if os.path.exists("Memory/Chronicle.json"):
                 with open("Memory/Chronicle.json", "r", encoding="utf-8") as f:
@@ -888,11 +1056,13 @@ STRUCTURE OBLIGATOIRE de ta réponse :
         self.scenario_data = None
         self.chronicle_data = None
         self.npcs_data = None
+        self.scenes_data = None
+        self.current_scene_id = None
 
         from game_state_engine import GameStateEngine
         self.gse = GameStateEngine()  # réinitialise l'état en mémoire
 
-        for file in ["character.json", "npcs.json", "scenario.json", "Chronicle.json"]:
+        for file in ["character.json", "npcs.json", "scenario.json", "scenes.json", "Chronicle.json"]:
             path = os.path.join("Memory", file)
             if os.path.exists(path):
                 os.remove(path)

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 from agent import RPGAgent
+from unittest import mock
 
 def setup_module():
     if os.path.exists("Memory"):
@@ -10,6 +11,19 @@ def setup_module():
 
 def test_incremental_creation():
     agent = RPGAgent()
+
+    # Mock sheet manager update_sheet behavior to avoid calling actual LLM/connection
+    def mock_update_sheet(char_sheet, user_input, response, mode="ADVENTURE"):
+        if "Aragorn" in user_input:
+            return {"nom": "Aragorn", "statut": "en_cours"}
+        elif "Humain" in user_input:
+            return {"nom": "Aragorn", "race": "Humain", "statut": "en_cours"}
+        elif "Rôdeur" in user_input:
+            return {"nom": "Aragorn", "race": "Humain", "classe": "Rôdeur", "statut": "complet"}
+        return char_sheet
+
+    agent.sheet_manager.update_sheet = mock_update_sheet
+    agent._extract_and_add_resources = mock.Mock()
 
     # Step 1: Initial creation (Name)
     mock_json_1 = '{"nom": "Aragorn", "statut": "en_cours"}'
