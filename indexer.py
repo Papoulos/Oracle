@@ -1,11 +1,13 @@
 import os
 import argparse
 import shutil
+import json
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
+from langchain_core.documents import Document
 import chromadb
 import config
 from scenario_agents import ManualGeneratorAgent
@@ -56,6 +58,66 @@ def index_directory(source_dir, collection_name, client, embeddings):
         collection_name=collection_name
     )
     print(f"Indexation réussie dans '{collection_name}'.")
+
+def index_scenes(scenes_path, collection_name, client, embeddings):
+    """
+    Charge Memory/scenes.json, construit des Documents LangChain par scène
+    et les indexe dans la collection scenario_collection.
+    """
+    if not os.path.exists(scenes_path):
+        print(f"Avertissement : Le fichier de scènes {scenes_path} n'existe pas.")
+        return
+
+    try:
+        with open(scenes_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"Erreur lors du chargement des scènes : {e}")
+        return
+
+    scenes = data.get("scenes", [])
+    if not scenes:
+        print("Aucune scène à indexer dans le fichier de scènes.")
+        return
+
+    documents = []
+    for scene in scenes:
+        # Construction d'un page_content concaténé et lisible
+        pnjs_str = ", ".join(scene.get("pnjs", []))
+        elements_str = ", ".join(scene.get("elements_a_preserver", []))
+
+        reactions_str = ""
+        for reaction in scene.get("reactions_anticipees", []):
+            act = reaction.get("action_probable", "")
+            cons = reaction.get("consequence", "")
+            reactions_str += f"- Action : {act} -> Conséquence : {cons}\n"
+
+        content_parts = [
+            f"Titre : {scene.get('titre', '')}",
+            f"Lieu : {scene.get('lieu', '')}",
+            f"PNJs présents : {pnjs_str}",
+            f"Esprit de la scène : {scene.get('esprit_de_la_scene', '')}",
+            f"Éléments à préserver : {elements_str}",
+            f"Objectif de la scène : {scene.get('objectif_atteint_si', '')}",
+            f"Réactions anticipées :\n{reactions_str}"
+        ]
+        page_content = "\n".join(content_parts)
+
+        metadata = {
+            "type": "scene",
+            "scene_id": scene.get("id")
+        }
+
+        documents.append(Document(page_content=page_content, metadata=metadata))
+
+    print(f"Indexation de {len(documents)} scènes dans la collection '{collection_name}'...")
+    db = Chroma(
+        client=client,
+        collection_name=collection_name,
+        embedding_function=embeddings
+    )
+    db.add_documents(documents)
+    print("✓ Indexation des scènes réussie.")
 
 def main():
     parser = argparse.ArgumentParser(description="Indexer les documents pour le RPG Oracle.")
