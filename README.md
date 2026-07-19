@@ -48,6 +48,14 @@ The system is powered by several specialized agents, each with its own prompt, m
 *   **Scenario Summary Agent**: Extracts the title, pitch, and initial situation from the scenario RAG.
 *   **NPC Extractor Agent**: Identifies named NPCs, extracts their profiles, goals, and "secrets" (visible only to the Orchestrator).
 
+### 7. Scene Progression Agent (`SceneGraphAgent`)
+*   **Role**: Tracks active scenario progression while accommodating absolute player agency.
+*   **Key Functions**:
+    *   Identifies narrative scenes and structures them in `Memory/scenes.json`.
+    *   Indexes scenes in the scenario vector store with special `type: "scene"` metadata.
+    *   In ADVENTURE mode, classifies player inputs as either a `transition` (advancing scenes), `improvisation` (remaining in the active scene), or `contournement` (bypassing/circumventing the expected scene trajectory).
+    *   Never blocks or restricts the player; rather, it adapts progression dynamically based on the classification.
+
 ---
 
 ## 🔄 Data Flows
@@ -74,7 +82,9 @@ graph TD
     B -->|Search Scenario RAG| C[Generate scenario.json]
     C --> D[NPCExtractorAgent]
     D -->|Search Scenario RAG| E[Generate npcs.json]
-    E --> F[Generate Introduction]
+    E --> H[SceneGraphAgent]
+    H -->|Structure & Index Scenes| I[Generate scenes.json]
+    I --> F[Generate Introduction]
     F --> G[Start Adventure Mode]
 ```
 
@@ -92,11 +102,12 @@ sequenceDiagram
     Orch->>RAG: Technical Analysis (Rules)
     RAG-->>Orch: Bonus/DC Logic
     Orch->>Orch: Internal Dice Roll
+    Orch->>Orch: Scene Progress Classification (Transition/Improvisation/Contournement)
     Orch->>RAG: Narrative Analysis (Plot)
-    Orch->>Narr: MJ Instructions + Roll Results
+    Orch->>Narr: MJ Instructions + Roll & Scene Results
     Narr->>Player: Immersive Response
     Orch->>SM: (Async) Update State
-    Orch->>Chron: (Async) Update History
+    Orch->>Chron: (Async) Update History + Scene Note
 ```
 
 ---
@@ -170,6 +181,7 @@ The system automatically saves game state in the `Memory/` directory:
 *   `character.json`: Current character sheet.
 *   `scenario.json`: Adventure metadata.
 *   `npcs.json`: Profiles of all encountered/relevant NPCs.
+*   `scenes.json`: Current active scene state and structural narrative graph.
 *   `Chronicle.json`: Running story summary.
 
 At startup, the UI will detect these files and offer to **Resume** your adventure or **Start New**.
