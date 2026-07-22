@@ -62,17 +62,36 @@ class ScenarioExtractorAgent(BaseAgent):
         log(f"Extraction consolidée terminée avec succès en {total_time:.2f}s.")
         return structure
 
+    def _get_context(self, queries, log, k=15) -> str:
+        try:
+            result = self.scenario_store.get(include=["documents", "metadatas"])
+            paired = sorted(
+                zip(result.get("documents", []), result.get("metadatas", []) or [{}] * len(result.get("documents", []))),
+                key=lambda x: x[1].get("page", 0) if x[1] else 0
+            )
+            full_text = "\n\n".join(doc for doc, _ in paired)
+        except Exception as e:
+            log(f"⚠ Erreur lors de la récupération du texte complet : {e}")
+            full_text = ""
+
+        if full_text and len(full_text) <= config.SCENARIO_FULLTEXT_THRESHOLD_CHARS:
+            log(f"Utilisation du texte source complet (taille: {len(full_text)} <= {config.SCENARIO_FULLTEXT_THRESHOLD_CHARS} car.)")
+            return full_text
+        else:
+            log(f"Utilisation de requêtes RAG par similarité (taille de full_text: {len(full_text)})")
+            all_docs = []
+            for q in queries:
+                all_docs.extend(self.scenario_store.similarity_search(q, k=k))
+            unique_contents = {d.page_content: d for d in all_docs}
+            return "\n\n---\n\n".join(unique_contents.keys())
+
     def _extract_entites(self, log) -> dict:
         log("Passe 1 : Extraction des entités (PNJs et Lieux)...")
         queries = [
             "personnages importants, personnages nommés, PNJ, main characters, named NPCs, important figures",
             "lieux de l'aventure, villes, pièces, donjons, locations, regions, places of interest, environments"
         ]
-        all_docs = []
-        for q in queries:
-            all_docs.extend(self.scenario_store.similarity_search(q, k=15))
-        unique_contents = {d.page_content: d for d in all_docs}
-        contexte = "\n\n---\n\n".join(unique_contents.keys())
+        contexte = self._get_context(queries, log, k=15)
 
         prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
 À partir des extraits de scénario suivants (en français ou en anglais), extrais les personnages non-joueurs (PNJs) et les lieux principaux en FRANÇAIS.
@@ -116,11 +135,7 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
             "déroulement de l'aventure, scènes, chapitres, actes, structure narrative",
             "rencontres, défis, combats, énigmes, pièges, obstacles"
         ]
-        all_docs = []
-        for q in queries:
-            all_docs.extend(self.scenario_store.similarity_search(q, k=15))
-        unique_contents = {d.page_content: d for d in all_docs}
-        contexte = "\n\n---\n\n".join(unique_contents.keys())
+        contexte = self._get_context(queries, log, k=15)
 
         pnj_ids = [p["id"] for p in entites.get("pnj", [])]
         lieu_ids = [l["id"] for l in entites.get("lieux", [])]
@@ -209,11 +224,7 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
         queries = [
             "structure globale, actes, chapitres majeurs, grandes étapes, main plot points, story structure"
         ]
-        all_docs = []
-        for q in queries:
-            all_docs.extend(self.scenario_store.similarity_search(q, k=15))
-        unique_contents = {d.page_content: d for d in all_docs}
-        contexte = "\n\n---\n\n".join(unique_contents.keys())
+        contexte = self._get_context(queries, log, k=15)
 
         scene_ids = [s["id_scene"] for s in noeuds.get("noeuds_sceniques", [])]
 
@@ -289,11 +300,7 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
         queries = [
             "menaces temporelles, dangers qui progressent, horloges, comptes à rebours, clocks, timers, consequences"
         ]
-        all_docs = []
-        for q in queries:
-            all_docs.extend(self.scenario_store.similarity_search(q, k=10))
-        unique_contents = {d.page_content: d for d in all_docs}
-        contexte = "\n\n---\n\n".join(unique_contents.keys())
+        contexte = self._get_context(queries, log, k=10)
 
         prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
 À partir des extraits de scénario suivants, extrais les menaces progressives (horloges ou comptes à rebours globaux) en FRANÇAIS.
@@ -338,11 +345,7 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
             "titre de l'aventure, adventure title, name of the module",
             "pitch résumé introduction début, synopsis, adventure hook, background, plot summary"
         ]
-        all_docs = []
-        for q in queries:
-            all_docs.extend(self.scenario_store.similarity_search(q, k=10))
-        unique_contents = {d.page_content: d for d in all_docs}
-        contexte = "\n\n---\n\n".join(unique_contents.keys())
+        contexte = self._get_context(queries, log, k=10)
 
         # Trouver le premier ID de scène inclus dans le premier acte
         default_scene_initiale = None
