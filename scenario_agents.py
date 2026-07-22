@@ -6,234 +6,389 @@ import config
 from langchain_core.prompts import ChatPromptTemplate
 from base_utils import BaseAgent, extract_json
 
-class ScenarioSummaryAgent(BaseAgent):
+class ScenarioExtractorAgent(BaseAgent):
     """
-    Agent one-shot : extrait les éléments narratifs de la collection scénario.
-    Produit : Memory/scenario.json
+    Agent unifié pour extraire le scénario complet en 5 passes.
+    Produit : Memory/scenario_structure.json
     """
 
     def __init__(self, scenario_store):
-        # Utilisation de la température basse pour la fidélité aux extraits
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
         self.scenario_store = scenario_store
 
     def generate(self, log_callback=None) -> dict:
         def log(msg):
             if log_callback:
-                log_callback(f"[ScenarioSummary] {msg}")
+                log_callback(f"[ScenarioExtractor] {msg}")
             else:
-                print(f"[ScenarioSummaryAgent] {msg}")
+                print(f"[ScenarioExtractorAgent] {msg}")
 
-        log("Extraction des éléments du scénario...")
+        log("Début du pipeline d'extraction du scénario en 5 passes...")
         start_time = time.time()
 
-        # Multiples requêtes pour couvrir différents aspects sans diluer la pertinence
+        # Passe 1 : Entités (pnj, lieux)
+        entites = self._extract_entites(log)
+
+        # Passe 2 : Nœuds scéniques (noeuds_sceniques)
+        noeuds = self._extract_noeuds_sceniques(entites, log)
+
+        # Passe 3 : Macro-structure (macro_structure)
+        macro = self._extract_macro_structure(noeuds, log)
+
+        # Passe 4 : Horloges globales (horloges_globales)
+        horloges = self._extract_horloges(log)
+
+        # Passe 5 : Métadonnées (metadata)
+        metadata = self._extract_metadata(macro, log)
+
+        # Consolidation du résultat final
+        structure = {
+            "metadata": metadata.get("metadata", {}),
+            "macro_structure": macro.get("macro_structure", []),
+            "horloges_globales": horloges.get("horloges_globales", []),
+            "entites": {
+                "pnj": entites.get("pnj", []),
+                "lieux": entites.get("lieux", [])
+            },
+            "noeuds_sceniques": noeuds.get("noeuds_sceniques", [])
+        }
+
+        # S'assurer que le répertoire Memory existe
+        os.makedirs("Memory", exist_ok=True)
+        with open("Memory/scenario_structure.json", "w", encoding="utf-8") as f:
+            json.dump(structure, f, indent=4, ensure_ascii=False)
+
+        total_time = time.time() - start_time
+        log(f"Extraction consolidée terminée avec succès en {total_time:.2f}s.")
+        return structure
+
+    def _extract_entites(self, log) -> dict:
+        log("Passe 1 : Extraction des entités (PNJs et Lieux)...")
         queries = [
-            "titre de l'aventure, adventure title, name of the module",
-            "pitch résumé introduction début, synopsis, adventure hook, background",
-            "situation initiale scène d'ouverture, starting location, prologue"
+            "personnages importants, personnages nommés, PNJ, main characters, named NPCs, important figures",
+            "lieux de l'aventure, villes, pièces, donjons, locations, regions, places of interest, environments"
         ]
-
         all_docs = []
-        for query in queries:
-            docs = self.scenario_store.similarity_search(query, k=8)
-            all_docs.extend(docs)
-
-        # Déduplication par page_content
-        unique_contents = {}
-        for doc in all_docs:
-            unique_contents[doc.page_content] = doc
-
-        contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
-        rag_time = time.time() - start_time
-        log(f"RAG terminé en {rag_time:.2f}s ({len(unique_contents)} extraits).")
-
-        if not contexte_deduplique.strip():
-            raise ValueError("Erreur : scenario_collection vide ou sans résultat — vérifie ton indexation avec python indexer.py --verify")
+        for q in queries:
+            all_docs.extend(self.scenario_store.similarity_search(q, k=15))
+        unique_contents = {d.page_content: d for d in all_docs}
+        contexte = "\n\n---\n\n".join(unique_contents.keys())
 
         prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir de ces extraits de scénario (qui peuvent être en français ou en anglais), produis une présentation structurée en FRANÇAIS.
-Ne complète pas et n'invente pas — utilise uniquement ce qui est présent dans les extraits.
-Si les extraits sont très courts ou peu clairs, fais au mieux avec les informations disponibles sans halluciner.
+À partir des extraits de scénario suivants (en français ou en anglais), extrais les personnages non-joueurs (PNJs) et les lieux principaux en FRANÇAIS.
+Ne complète pas et n'invente pas d'éléments absents.
 
 EXTRAITS DU SCÉNARIO :
-{contexte_deduplique}
-
-Réponds UNIQUEMENT avec ce bloc JSON :
-{{
-  "titre": "Titre de l'aventure (tel qu'il apparaît dans les extraits)",
-  "pitch": "Ce que le joueur sait au départ — 2-3 phrases",
-  "situation_initiale": "Scène d'ouverture précise — où est le joueur, ce qu'il voit"
-}}
-"""
-
-        llm_start = time.time()
-        response = self.llm.invoke(prompt)
-        llm_time = time.time() - llm_start
-        scenario = extract_json(response.content, expected_type=dict)
-        log(f"LLM terminé en {llm_time:.2f}s.")
-
-        if not scenario:
-            print(f"[ScenarioSummaryAgent] ✗ Échec de l'extraction JSON. Réponse brute :\n{response.content}")
-            return {}
-
-        # Validation minimale des champs obligatoires pour éviter des crashs plus tard
-        required_fields = ["titre", "pitch", "situation_initiale"]
-        for field in required_fields:
-            if field not in scenario:
-                print(f"[ScenarioSummaryAgent] ⚠ Champ '{field}' manquant dans le JSON.")
-                scenario[field] = "Inconnu"
-
-        os.makedirs("Memory", exist_ok=True)
-        with open("Memory/scenario.json", "w", encoding="utf-8") as f:
-            json.dump(scenario, f, indent=4, ensure_ascii=False)
-
-        print(f"[ScenarioSummaryAgent] ✓ Scénario '{scenario.get('titre')}' généré.")
-        return scenario
-
-
-class NPCExtractorAgent(BaseAgent):
-    """
-    Agent un par un : génère les fiches PNJ basées sur les noms trouvés dans le scénario.
-    Produit : Memory/npcs.json
-    """
-
-    def __init__(self, scenario_store):
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
-        self.scenario_store = scenario_store
-
-    def extract(self, scenario_summary: dict, log_callback=None) -> list:
-        def log(msg):
-            if log_callback:
-                log_callback(f"[NPCExtractor] {msg}")
-            else:
-                print(f"[NPCExtractorAgent] {msg}")
-
-        log("Identification des 5 PNJs les plus importants...")
-        start_time = time.time()
-
-        # Étape 1 : Identifier les 5 PNJ les plus importants
-        # On utilise des requêtes génériques pour trouver les noms les plus cités
-        identification_queries = [
-            "Personnages nommés et PNJ importants, major characters and named NPCs, key figures",
-            "Protagonistes et antagonistes principaux, main characters"
-        ]
-
-        all_docs = []
-        for q in identification_queries:
-            docs = self.scenario_store.similarity_search(q, k=15)
-            all_docs.extend(docs)
-
-        unique_contents = {doc.page_content: doc for doc in all_docs}
-        contexte_identification = "\n\n---\n\n".join(unique_contents.keys())
-        rag_id_time = time.time() - start_time
-        log(f"RAG Identification terminé en {rag_id_time:.2f}s ({len(unique_contents)} extraits).")
-
-        identification_prompt = f"""Tu es un assistant MJ expert.
-Ta mission est d'identifier les 5 personnages nommés (PNJ) les plus importants dans les extraits du scénario ci-dessous.
-L'importance est définie par la fréquence de mention et l'impact sur l'intrigue.
-
-CONSIGNES :
-- Liste au maximum 5 individus possédant un NOM PROPRE.
-- S'il y a moins de 5 PNJ nommés, liste uniquement ceux présents.
-- Pour chaque personnage, indique brièvement son rôle (ex: "Antagoniste principal", "Allié clé").
-
-EXTRAITS DU SCÉNARIO :
-{contexte_identification}
+{contexte}
 
 Réponds UNIQUEMENT avec un JSON au format suivant :
 {{
-  "pnjs": [
-    {{"nom": "Nom complet", "role": "Fonction ou rôle dans l'intrigue"}}
-  ]
-}}
-"""
-        llm_id_start = time.time()
-        id_response = self.llm.invoke(identification_prompt)
-        llm_id_time = time.time() - llm_id_start
-        id_data = extract_json(id_response.content, expected_type=dict)
-
-        pnj_list = id_data.get("pnjs", []) if id_data else []
-
-        if not pnj_list:
-            log("Aucun PNJ nommé trouvé.")
-            self._save_npcs([])
-            return []
-
-        log(f"{len(pnj_list)} PNJs identifiés en {llm_id_time:.2f}s.")
-
-        # Étape 2 : Extraire les détails pour TOUS les PNJ en un seul appel
-        log("Extraction des détails pour tous les PNJs...")
-        details_start = time.time()
-
-        # RAG pour les détails
-        detail_queries = ["détails, secrets, motivations, inventaires, background des PNJ nommés"]
-        # Ajouter les noms des PNJ à la requête pour aider le RAG
-        detail_queries.append(", ".join([p.get('nom') for p in pnj_list]))
-
-        all_detail_docs = []
-        for q in detail_queries:
-            docs = self.scenario_store.similarity_search(q, k=15)
-            all_detail_docs.extend(docs)
-
-        unique_details = {doc.page_content: doc for doc in all_detail_docs}
-        contexte_details = "\n\n---\n\n".join(unique_details.keys())
-        rag_details_time = time.time() - details_start
-        log(f"RAG Détails terminé en {rag_details_time:.2f}s ({len(unique_details)} extraits).")
-
-        prompt_details = f"""Tu es un assistant de préparation de jeu de rôle expert.
-Ta mission est de générer les fiches détaillées en FRANÇAIS pour les PNJs suivants, en utilisant uniquement les extraits fournis.
-
-LISTE DES PNJS À TRAITER :
-{json.dumps(pnj_list, ensure_ascii=False, indent=2)}
-
-CONTEXTE GÉNÉRAL DU SCÉNARIO :
-{scenario_summary.get('pitch', 'Inconnu')}
-
-EXTRAITS DU SCÉNARIO (contenant les détails) :
-{contexte_details}
-
-CONSIGNES :
-- Produis une fiche détaillée pour CHAQUE PNJ de la liste.
-- Ne complète pas et n'invente pas — si une information est absente, écris "Inconnu".
-- "relation_pj" doit être "Inconnu".
-- "id" doit être une version simplifiée du nom (ex: "maitre_elrond").
-- Réponds UNIQUEMENT avec un JSON au format :
-{{
-  "npcs": [
+  "pnj": [
     {{
-      "id": "...",
-      "nom": "...",
-      "classe": "...",
-      "but": "...",
-      "personnalite": "...",
-      "secret": "...",
-      "relation_pj": "Inconnu",
-      "statut": "Vivant",
-      "localisation_actuelle": "...",
-      "capacites_notables": ["..."]
+      "id": "PNJ_ID_SANS_ACCENT_EN_MAJUSCULES (ex: MAITRE_ELROND)",
+      "nom_complet": "Nom complet et titre",
+      "localisation_habituelle": "LIEU_ID_SANS_ACCENT_EN_MAJUSCULES (ex: FONDCOMBE)",
+      "agenda_et_motivation": "Ce que le PNJ cherche à obtenir",
+      "peurs_et_faiblesses": "Ce qui le fait céder ou fuir",
+      "attitude_initiale": "Comportement initial lors de la rencontre",
+      "stats_et_capacites": "Niveau de menace, PV, attaques clés ou inconnu"
+    }}
+  ],
+  "lieux": [
+    {{
+      "id": "LIEU_ID_SANS_ACCENT_EN_MAJUSCULES (ex: FONDCOMBE)",
+      "nom_complet": "Nom complet du lieu",
+      "ambiance_sensorielle": "Vue, ouïe, odeur, atmosphère",
+      "elements_interactifs": "Objets, leviers, conteneurs, éléments du décor"
     }}
   ]
 }}
 """
-        llm_details_start = time.time()
-        response = self.llm.invoke(prompt_details)
-        llm_details_time = time.time() - llm_details_start
-        log(f"LLM Détails terminé en {llm_details_time:.2f}s.")
+        response = self.llm.invoke(prompt)
+        res = extract_json(response.content, expected_type=dict)
+        if not res:
+            res = {"pnj": [], "lieux": []}
+        return res
 
-        details_data = extract_json(response.content, expected_type=dict)
-        extracted_npcs = details_data.get("npcs", []) if details_data else []
+    def _extract_noeuds_sceniques(self, entites, log) -> dict:
+        log("Passe 2 : Extraction des nœuds scéniques...")
+        queries = [
+            "déroulement de l'aventure, scènes, chapitres, actes, structure narrative",
+            "rencontres, défis, combats, énigmes, pièges, obstacles"
+        ]
+        all_docs = []
+        for q in queries:
+            all_docs.extend(self.scenario_store.similarity_search(q, k=15))
+        unique_contents = {d.page_content: d for d in all_docs}
+        contexte = "\n\n---\n\n".join(unique_contents.keys())
 
-        log(f"{len(extracted_npcs)} fiches PNJ générées.")
-        self._save_npcs(extracted_npcs)
-        return extracted_npcs
+        pnj_ids = [p["id"] for p in entites.get("pnj", [])]
+        lieu_ids = [l["id"] for l in entites.get("lieux", [])]
 
-    def _save_npcs(self, npcs: list):
-        os.makedirs("Memory", exist_ok=True)
-        data = {"npcs": npcs, "version": 1}
-        with open("Memory/npcs.json", "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-        print(f"[NPCExtractorAgent] ✓ {len(npcs)} PNJ sauvegardés dans Memory/npcs.json")
+        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
+À partir des extraits de scénario suivants, extrais la liste de tous les nœuds scéniques (scènes) en FRANÇAIS.
+Ne complète pas et n'invente pas d'éléments absents.
+
+ID DE PNJS VALIDES : {json.dumps(pnj_ids)}
+ID DE LIEUX VALIDES : {json.dumps(lieu_ids)}
+
+CONSIGNES POUR LES CHAMPS :
+- "acte_rattache_id" : ID de l'acte parent auquel appartient la scène (ex: ACTE_1, ACTE_2).
+- "lieu_rattache_id" : ID du lieu rattaché. Utilise obligatoirement un ID parmi les ID DE LIEUX VALIDES ci-dessus si possible.
+- "pnj_presents" : liste d'ID de PNJs présents. Utilise obligatoirement des ID parmi les ID DE PNJS VALIDES ci-dessus.
+- "condition_resolution" : Résultat qui clôt ce nœud, formulé comme un BUT atteint par n'importe quel moyen plausible, indépendamment de la méthode listée dans sorties_logiques.
+- "sorties_logiques" : pour chaque sortie, "destination_scene_id" doit correspondre à l'ID d'une autre scène (ex: SCENE_02_ROUTE).
+
+EXTRAITS DU SCÉNARIO :
+{contexte}
+
+Réponds UNIQUEMENT avec un JSON au format suivant :
+{{
+  "noeuds_sceniques": [
+    {{
+      "id_scene": "SCENE_NUMERO_NOM (ex: SCENE_01_AUBERGE)",
+      "acte_rattache_id": "ACTE_1",
+      "lieu_rattache_id": "LIEU_NOM",
+      "titre": "Titre de la scène",
+      "pnj_presents": ["PNJ_ID"],
+      "objectif_mj": "Ce que le MJ doit transmettre ou faire ressentir (ambiance, pas condition de sortie)",
+      "condition_resolution": "Résultat qui clôt ce nœud...",
+      "limites_et_regles_locales": "Règles physiques, magiques ou comportementales strictes de ce nœud",
+      "defis_et_rencontres": [
+        {{
+          "type": "Combat / Enigme / Piège / Obstacle physique",
+          "description": "Description concrète du défi",
+          "resolution_possible": "Moyens logiques ANTICIPÉS de surmonter le défi"
+        }}
+      ],
+      "sorties_logiques": [
+        {{
+          "action_ou_direction": "Ce que fait le joueur",
+          "destination_scene_id": "ID_DE_LA_SCENE_DESTINATION"
+        }}
+      ]
+    }}
+  ]
+}}
+"""
+        response = self.llm.invoke(prompt)
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "noeuds_sceniques" not in res:
+            res = {"noeuds_sceniques": []}
+
+        # Validation de Pass 2
+        validated_scenes = []
+        for scene in res.get("noeuds_sceniques", []):
+            scene_id = scene.get("id_scene")
+            if not scene_id:
+                continue
+
+            # Validation du lieu
+            lieu_id = scene.get("lieu_rattache_id")
+            if lieu_id and lieu_id not in lieu_ids:
+                log(f"[Validation] Scene '{scene_id}' : lieu_rattache_id '{lieu_id}' invalide. Mis à null.")
+                scene["lieu_rattache_id"] = None
+
+            # Validation des PNJs
+            presents = scene.get("pnj_presents", [])
+            valid_presents = []
+            for pid in presents:
+                if pid in pnj_ids:
+                    valid_presents.append(pid)
+                else:
+                    log(f"[Validation] Scene '{scene_id}' : pnj_present '{pid}' invalide. Supprimé.")
+            scene["pnj_presents"] = valid_presents
+
+            validated_scenes.append(scene)
+
+        res["noeuds_sceniques"] = validated_scenes
+        return res
+
+    def _extract_macro_structure(self, noeuds, log) -> dict:
+        log("Passe 3 : Extraction de la macro-structure...")
+        queries = [
+            "structure globale, actes, chapitres majeurs, grandes étapes, main plot points, story structure"
+        ]
+        all_docs = []
+        for q in queries:
+            all_docs.extend(self.scenario_store.similarity_search(q, k=15))
+        unique_contents = {d.page_content: d for d in all_docs}
+        contexte = "\n\n---\n\n".join(unique_contents.keys())
+
+        scene_ids = [s["id_scene"] for s in noeuds.get("noeuds_sceniques", [])]
+
+        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
+À partir des extraits de scénario suivants, structure l'histoire en grands ACTES (macro-structure) en FRANÇAIS.
+Ne complète pas et n'invente pas d'éléments absents.
+
+ID DE SCÈNES VALIDES : {json.dumps(scene_ids)}
+
+CONSIGNES :
+- Chaque acte possède un "id_acte" unique (ex: ACTE_1, ACTE_2).
+- "scenes_incluses" doit contenir uniquement des ID de scènes parmi la liste des ID DE SCÈNES VALIDES ci-dessus.
+
+EXTRAITS DU SCÉNARIO :
+{contexte}
+
+Réponds UNIQUEMENT avec un JSON au format suivant :
+{{
+  "macro_structure": [
+    {{
+      "id_acte": "ACTE_1",
+      "titre": "Titre de la grande étape",
+      "condition_entree": "Événement ou choix qui déclenche cet acte",
+      "condition_validation": "Condition stricte pour valider cet acte et passer au suivant",
+      "scenes_incluses": ["SCENE_01_ID", "SCENE_02_ID"]
+    }}
+  ]
+}}
+"""
+        response = self.llm.invoke(prompt)
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "macro_structure" not in res:
+            res = {"macro_structure": []}
+
+        # Validation de Pass 3
+        validated_actes = []
+        for acte in res.get("macro_structure", []):
+            acte_id = acte.get("id_acte")
+            if not acte_id:
+                continue
+
+            # Validation des scènes incluses
+            incluses = acte.get("scenes_incluses", [])
+            valid_incluses = []
+            for sid in incluses:
+                if sid in scene_ids:
+                    valid_incluses.append(sid)
+                else:
+                    log(f"[Validation] Acte '{acte_id}' : scene_incluse '{sid}' invalide. Supprimée.")
+            acte["scenes_incluses"] = valid_incluses
+            validated_actes.append(acte)
+
+        res["macro_structure"] = validated_actes
+
+        # Vérification bidirectionnelle et corrections
+        actes_dict = {a["id_acte"]: a for a in validated_actes}
+        for scene in noeuds.get("noeuds_sceniques", []):
+            scene_id = scene.get("id_scene")
+            scene_acte_id = scene.get("acte_rattache_id")
+
+            if scene_acte_id in actes_dict:
+                target_acte = actes_dict[scene_acte_id]
+                if scene_id not in target_acte["scenes_incluses"]:
+                    log(f"[Validation] Correction bidirectionnelle : Ajout de la scène '{scene_id}' à 'scenes_incluses' de l'acte '{scene_acte_id}'.")
+                    target_acte["scenes_incluses"].append(scene_id)
+            else:
+                log(f"[Validation] Attention : La scène '{scene_id}' référence un acte_rattache_id '{scene_acte_id}' inexistant.")
+
+        return res
+
+    def _extract_horloges(self, log) -> dict:
+        log("Passe 4 : Extraction des horloges globales...")
+        queries = [
+            "menaces temporelles, dangers qui progressent, horloges, comptes à rebours, clocks, timers, consequences"
+        ]
+        all_docs = []
+        for q in queries:
+            all_docs.extend(self.scenario_store.similarity_search(q, k=10))
+        unique_contents = {d.page_content: d for d in all_docs}
+        contexte = "\n\n---\n\n".join(unique_contents.keys())
+
+        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
+À partir des extraits de scénario suivants, extrais les menaces progressives (horloges ou comptes à rebours globaux) en FRANÇAIS.
+Ne complète pas et n'invente pas d'éléments absents.
+
+CONSIGNES :
+- "seuil" : nombre de segments pour déclencher la conséquence. S'il n'est pas spécifié, mettre 6 par défaut.
+
+EXTRAITS DU SCÉNARIO :
+{contexte}
+
+Réponds UNIQUEMENT avec un JSON au format suivant :
+{{
+  "horloges_globales": [
+    {{
+      "nom": "Nom de la menace globale ou temporelle",
+      "declencheur": "Action du joueur ou temps qui passe",
+      "consequence": "Impact sur le monde ou fermeture d'accès",
+      "seuil": 6
+    }}
+  ]
+}}
+"""
+        response = self.llm.invoke(prompt)
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "horloges_globales" not in res:
+            res = {"horloges_globales": []}
+
+        # Validation du seuil
+        for clock in res.get("horloges_globales", []):
+            seuil = clock.get("seuil")
+            try:
+                clock["seuil"] = int(seuil) if seuil is not None else 6
+            except ValueError:
+                clock["seuil"] = 6
+
+        return res
+
+    def _extract_metadata(self, macro_structure, log) -> dict:
+        log("Passe 5 : Extraction des métadonnées...")
+        queries = [
+            "titre de l'aventure, adventure title, name of the module",
+            "pitch résumé introduction début, synopsis, adventure hook, background, plot summary"
+        ]
+        all_docs = []
+        for q in queries:
+            all_docs.extend(self.scenario_store.similarity_search(q, k=10))
+        unique_contents = {d.page_content: d for d in all_docs}
+        contexte = "\n\n---\n\n".join(unique_contents.keys())
+
+        # Trouver le premier ID de scène inclus dans le premier acte
+        default_scene_initiale = None
+        if macro_structure.get("macro_structure"):
+            first_act = macro_structure["macro_structure"][0]
+            if first_act.get("scenes_incluses"):
+                default_scene_initiale = first_act["scenes_incluses"][0]
+
+        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
+À partir des extraits de scénario suivants, extrais le titre, le pitch de départ et la scène initiale de l'aventure en FRANÇAIS.
+Ne complète pas et n'invente pas d'éléments absents.
+
+DÉFAUT SCÈNE INITIALE : "{default_scene_initiale}"
+
+CONSIGNES :
+- "pitch_global" : Résumé de l'intrigue en 2 phrases avec noms propres complets.
+- "scene_initiale" : ID de la scène d'ouverture. Si non spécifié de manière évidente, utilise la valeur par défaut "{default_scene_initiale}".
+
+EXTRAITS DU SCÉNARIO :
+{contexte}
+
+Réponds UNIQUEMENT avec un JSON au format suivant :
+{{
+  "metadata": {{
+    "titre": "Nom du scénario",
+    "pitch_global": "Résumé de l'intrigue en 2 phrases avec noms propres complets.",
+    "scene_initiale": "SCENE_NUMERO_NOM"
+  }}
+}}
+"""
+        response = self.llm.invoke(prompt)
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "metadata" not in res:
+            res = {"metadata": {}}
+
+        # Validation de metadata
+        meta = res.get("metadata", {})
+        if not meta.get("titre"):
+            meta["titre"] = "Inconnu"
+        if not meta.get("pitch_global"):
+            meta["pitch_global"] = "Inconnu"
+        if not meta.get("scene_initiale"):
+            meta["scene_initiale"] = default_scene_initiale or "Inconnu"
+
+        res["metadata"] = meta
+        return res
 
 
 class ManualGeneratorAgent(BaseAgent):
