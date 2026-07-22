@@ -11,6 +11,7 @@ import chromadb
 import config
 from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
 from scenario_agents import ScenarioExtractorAgent
+from validation import validate_scenario_structure
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
@@ -511,16 +512,45 @@ Réponds UNIQUEMENT avec le bloc JSON :
         self.log("── Setup du monde ──")
         total_start = time.time()
 
-        self.log("Extraction de la structure du scénario en 5 passes...")
+        json_files = [f for f in os.listdir(config.SCENARIO_DATA_PATH) if f.endswith(".json")]
+
         try:
-            structure = self.scenario_extractor_agent.generate(log_callback=self.log)
-            if not structure:
-                self.log("✗ Échec de l'extraction de la structure.")
-                return False
-            self.scenario_structure = structure
+            if len(json_files) > 1:
+                raise ValueError(
+                    f"Plusieurs fichiers JSON de scénario trouvés dans {config.SCENARIO_DATA_PATH} : "
+                    f"{json_files}. Un seul scénario structuré est supporté à la fois."
+                )
+            elif len(json_files) == 1:
+                # Cas 1 : scénario déjà structuré (généré par l'outil externe)
+                self.log(f"Chargement direct du scénario structuré : {json_files[0]}")
+                with open(os.path.join(config.SCENARIO_DATA_PATH, json_files[0]), encoding="utf-8") as f:
+                    raw = json.load(f)
+                self.scenario_structure, warnings, errors = validate_scenario_structure(raw)
+            else:
+                # Cas 2 : uniquement des PDF -> extraction via ScenarioExtractorAgent
+                self.log("Extraction de la structure du scénario via ScenarioExtractorAgent en 5 passes...")
+                raw = self.scenario_extractor_agent.generate(log_callback=self.log)
+                self.scenario_structure, warnings, errors = validate_scenario_structure(raw)
+
+            for w in warnings:
+                self.log(f"[Validation] {w}")
+
+            if errors:
+                for e in errors:
+                    self.log(f"[Validation][ERREUR] {e}")
+                raise ValueError(
+                    "Le scénario contient des erreurs bloquantes non réparables automatiquement "
+                    "(voir logs) - correction manuelle ou relance de l'extraction nécessaire "
+                    "avant de démarrer une partie."
+                )
+
+            os.makedirs("Memory", exist_ok=True)
+            with open("Memory/scenario_structure.json", "w", encoding="utf-8") as f:
+                json.dump(self.scenario_structure, f, indent=2, ensure_ascii=False)
+
         except Exception as e:
-            self.log(f"✗ Erreur lors de l'extraction de la structure : {e}")
-            return False
+            self.log(f"✗ Erreur lors du setup ou de la validation de la structure : {e}")
+            raise e
 
         # Construire les dictionnaires de lookup direct
         self._build_lookups()
