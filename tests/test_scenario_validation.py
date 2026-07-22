@@ -248,3 +248,24 @@ def test_full_text_below_threshold_avoid_similarity_search():
 
     # Restore threshold
     config.SCENARIO_FULLTEXT_THRESHOLD_CHARS = original_threshold
+
+def test_truncated_json_repair():
+    from base_utils import extract_json
+    truncated_input = """```json
+{
+    "etapes": [
+        {
+            "etape": 1,
+            "nom": "Étape 1",
+            "description": "Procédure."
+        },
+        {
+            "etape": 2,
+            "nom": "Étape 2",
+            "description": "Seconde"
+"""
+    result = extract_json(truncated_input)
+    assert result is not None
+    assert "etapes" in result
+    assert len(result["etapes"]) == 1
+    assert result["etapes"][0]["nom"] == "Étape 1"

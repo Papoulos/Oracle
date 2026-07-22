@@ -7,7 +7,7 @@ import json
 def extract_json(text: str, expected_type: type = dict):
     """
     Extrait un bloc JSON (objet ou tableau) d'un texte de manière robuste.
-    Tente de trouver tous les blocs JSON et retourne le dernier valide.
+    Tente de trouver tous les blocs JSON et retourne le dernier valide (avec réparation si tronqué).
     """
     if not text:
         return None
@@ -15,47 +15,54 @@ def extract_json(text: str, expected_type: type = dict):
     open_char  = "{" if expected_type == dict else "["
     close_char = "}" if expected_type == dict else "]"
 
-    # 1. Extraction de tous les blocs markdown ```json ... ```
-    # On utilise une recherche non-gourmande pour les blocs eux-mêmes,
-    # mais on veut quand même supporter l'imbrication à l'intérieur d'un bloc.
-    # Note : Le regex [\s\S]*? s'arrête au premier ``` suivant.
     # Prétraitement : supprimer certains préfixes courants que les LLM ajoutent parfois
     text = re.sub(r"^(?:JSON|Résultat|Voici le JSON|Output)\s*:\s*", "", text, flags=re.IGNORECASE | re.MULTILINE)
 
-    markdown_blocks = re.findall(rf"```(?:json)?\s*({re.escape(open_char)}[\s\S]*?{re.escape(close_char)})\s*```", text)
+    # Nettoyer une chaîne candidate et tenter de la charger directement
+    def clean_and_load(s: str):
+        s_clean = s.strip()
+        s_clean = re.sub(r",\s*([\]}])", r"\1", s_clean)
+        return json.loads(s_clean)
 
-    # Inverser pour tester du plus récent (bas du message) au plus ancien
+    # Tenter de réparer une chaîne tronquée en cherchant les accolades/crochets de droite à gauche
+    def try_repair(s: str):
+        indices = [i for i, char in enumerate(s) if char == close_char]
+        for idx in reversed(indices):
+            candidate = s[:idx+1]
+            for suffix in ["", "}", "]}", "}}]}", "]", "]}", "]]}"]:
+                try:
+                    return clean_and_load(candidate + suffix)
+                except json.JSONDecodeError:
+                    continue
+        return None
+
+    # 1. Extraction via les blocs markdown ```json ... ``` (fermés ou non)
+    markdown_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)(?:```|$)", text)
     for block in reversed(markdown_blocks):
+        block_str = block.strip()
+        if not block_str.startswith(open_char):
+            first_open = block_str.find(open_char)
+            if first_open != -1:
+                block_str = block_str[first_open:]
+            else:
+                continue
         try:
-            # Nettoyage minimal des espaces/caractères invisibles
-            block_clean = block.strip()
-            # Nettoyage des virgules traînantes avant les fermetures
-            block_clean = re.sub(r",\s*([\]}])", r"\1", block_clean)
-            return json.loads(block_clean)
-        except json.JSONDecodeError as e:
-            print(f"[extract_json] DEBUG: Échec décodage bloc markdown : {e}")
-            continue
+            return clean_and_load(block_str)
+        except json.JSONDecodeError:
+            repaired = try_repair(block_str)
+            if repaired is not None:
+                return repaired
 
-    # 2. Si aucun bloc markdown n'est valide, on cherche des structures JSON brutes
-    # On cherche tous les blocs commençant par open_char et finissant par close_char
-    # de manière gourmande pour capturer le maximum.
-    # On utilise une recherche qui s'assure que le premier open_char n'est pas précédé d'un autre open_char sans close_char
-    raw_matches = re.findall(rf"({re.escape(open_char)}[\s\S]*{re.escape(close_char)})", text)
-    for match in reversed(raw_matches):
-        # On tente de trouver le JSON valide à l'intérieur (au cas où il y aurait du texte autour)
-        # On essaie de réduire le match de la fin vers le début pour trouver le bon crochet fermant
-        temp_match = match.strip()
-        while temp_match:
-            try:
-                # Nettoyage des virgules traînantes avant de tenter le chargement
-                clean_json = re.sub(r",\s*([\]}])", r"\1", temp_match)
-                return json.loads(clean_json)
-            except json.JSONDecodeError:
-                # Retirer le dernier caractère et chercher le précédent close_char
-                last_close = temp_match.rfind(close_char, 0, -1)
-                if last_close == -1:
-                    break
-                temp_match = temp_match[:last_close + 1]
+    # 2. Si aucun bloc markdown n'est valide, on cherche dans le texte brut
+    first_open_idx = text.find(open_char)
+    if first_open_idx != -1:
+        raw_text = text[first_open_idx:]
+        try:
+            return clean_and_load(raw_text)
+        except json.JSONDecodeError:
+            repaired = try_repair(raw_text)
+            if repaired is not None:
+                return repaired
 
     return None
 
