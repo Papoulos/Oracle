@@ -166,12 +166,41 @@ sequenceDiagram
 ### Adventure Initialization
 ```mermaid
 graph TD
-    A[Character Completed] --> B[ScenarioExtractorAgent]
-    B -->|5-Pass Extraction & Validation| C[Generate scenario_structure.json]
-    C --> D[Initialize progression.json]
-    D --> E[Generate Introduction]
-    E --> F[Start Adventure Mode]
+    A[Character Completed] --> B{Scan data/scenario/ JSON files}
+    B -->|Exactly 1 JSON file| C[Directly load & validate JSON]
+    B -->|Multiple JSON files| D[Raise ValueError]
+    B -->|0 JSON files / only PDFs| E[ScenarioExtractorAgent 5-Pass Extraction]
+    C --> F[Generate validated scenario_structure.json]
+    E --> F
+    F --> G[Initialize progression.json]
+    G --> H[Generate Introduction]
+    H --> I[Start Adventure Mode]
 ```
+
+### 🛠️ Scenario Loading: Source Detection, Validation & Optimization
+
+#### 1. Source Detection in `data/scenario/`
+During the world setup phase (`setup_world()`), before any extraction agent is called, the system scans `data/scenario/` for JSON files:
+* **Exactly One JSON File**: The system assumes this is a pre-structured scenario (e.g., generated externally). It bypasses `ScenarioExtractorAgent` completely, loads the JSON, and runs it through the validation suite.
+* **Multiple JSON Files**: The system raises a `ValueError` indicating that only one structured scenario can be loaded at a time.
+* **No JSON Files (PDFs only)**: The system starts the extraction pipeline using `ScenarioExtractorAgent` on the indexed PDF. The raw output is then passed to the validation suite.
+
+Regardless of the source (pre-structured JSON or extracted PDF), the final result is written to `Memory/scenario_structure.json` and loaded as the static blueprint.
+
+#### 2. Robust Static Validation & Self-Healing
+Every loaded or extracted scenario must pass the `validate_scenario_structure()` suite located in `validation.py`. This ensures consistency without silent failures:
+* **Orphan References**: Invalid PNJ, scene, or place references (such as unknown `lieu_rattache_id` or `pnj_presents` lists) are automatically cleaned and set to `null`/removed with warnings.
+* **PNJ Localization**: Checks if `pnj.localisation_habituelle` references a valid place ID. If not, it resets it to `null` with a warning.
+* **Duplicate ID Detection**: Detects any duplicate entity IDs (PNJs, Places, Scenes, Acts) across lists to prevent downstream lookups from silently overriding data.
+* **Bidirectional Scene-Act Coherence**: If a scene points to an act, but the act does not list the scene under `scenes_incluses`, it is auto-repaired and synchronized.
+* **Clock Defaulting**: If an global clock has a missing `seuil` value, it defaults to `6` with a warning.
+* **Blocking Errors**: If critical elements (such as `condition_resolution` on a scene, or an unknown `acte_rattache_id`) are missing, the system generates blocking errors and **refuses to start the game**, prompting a manual fix or re-extraction.
+
+#### 3. Short Scenario Optimization (Full-Text Bypassing)
+For shorter scenarios, standard semantic similarity searches (RAG) can fail to retrieve distinct chunks. To optimize:
+* The system measures the total length of concatenated pages reconstructed in page sequence from `scenario_store`.
+* If the total character count is under the threshold `SCENARIO_FULLTEXT_THRESHOLD_CHARS` (default: `40000`), the `ScenarioExtractorAgent` **bypasses similarity RAG search** and passes the complete source text to all 5 extraction passes.
+* This guarantees that the LLM has complete context, resolving RAG discrimination issues for small volumes of text.
 
 ### Core Gameplay Loop (Adventure Mode)
 ```mermaid
@@ -229,6 +258,7 @@ The system is highly configurable via the `.env` file. You can assign different 
 | `NARRATOR_MODEL` | Model specialized in creative writing |
 | `ORCHESTRATOR_MODEL` | High-reasoning model for MJ logic |
 | `RAG_SEARCH_K` | Number of document chunks to retrieve (default: 12) |
+| `SCENARIO_FULLTEXT_THRESHOLD_CHARS` | Character length threshold under which raw full text is passed directly to the scenario extractor instead of using semantic search (default: 40000) |
 | `SERVER_PORT` | Streamlit port (default: 8501) |
 
 ---
