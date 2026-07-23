@@ -44,3 +44,11 @@
 [17:03:58] ✨ Setup terminé en 0.00s.
 [17:03:58] ── Setup du monde ──
 [17:03:58] ✗ Erreur lors du setup ou de la validation de la structure : Plusieurs fichiers JSON de scénario trouvés dans /tmp/pytest-of-jules/pytest-7/test_setup_world_json_scenario0 : ['scenario_structure.json', 'another_scenario.json']. Un seul scénario structuré est supporté à la fois.
+[20:07:26] ── Setup du monde ──
+[20:07:26] Extraction de la structure du scénario via ScenarioExtractorAgent en 5 passes...
+[20:07:26] ✨ Setup terminé en 0.00s.
+[20:07:26] ── Setup du monde ──
+[20:07:26] Chargement direct du scénario structuré : scenario_structure.json
+[20:07:26] ✨ Setup terminé en 0.00s.
+[20:07:26] ── Setup du monde ──
+[20:07:26] ✗ Erreur lors du setup ou de la validation de la structure : Plusieurs fichiers JSON de scénario trouvés dans /tmp/pytest-of-jules/pytest-8/test_setup_world_json_scenario0 : ['scenario_structure.json', 'another_scenario.json']. Un seul scénario structuré est supporté à la fois.

@@ -119,6 +119,86 @@ def index_scenes(scenes_path, collection_name, client, embeddings):
     db.add_documents(documents)
     print("✓ Indexation des scènes réussie.")
 
+def index_json_scenario(json_path, collection_name, client, embeddings):
+    """
+    Charge un scénario JSON structuré, extrait ses éléments (PNJs, Lieux, Scènes)
+    et les indexe sous forme de documents textuels dans scenario_collection.
+    """
+    print(f"Indexation du scénario JSON {json_path} dans la collection '{collection_name}'...")
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"Erreur de chargement du scénario JSON : {e}")
+        return
+
+    documents = []
+
+    # 1. Indexer les métadonnées
+    meta = data.get("metadata", {})
+    if meta:
+        content = (
+            f"Scénario : {meta.get('titre', 'Inconnu')}\n"
+            f"Pitch : {meta.get('pitch_global', 'Inconnu')}\n"
+            f"Scène initiale : {meta.get('scene_initiale', 'Inconnu')}"
+        )
+        documents.append(Document(page_content=content, metadata={"type": "metadata"}))
+
+    # 2. Indexer les PNJs
+    pnjs = data.get("entites", {}).get("pnj", [])
+    for p in pnjs:
+        content = (
+            f"PNJ : {p.get('nom_complet', 'Inconnu')} (ID: {p.get('id')})\n"
+            f"Localisation habituelle : {p.get('localisation_habituelle', 'Inconnue')}\n"
+            f"Agenda et motivation : {p.get('agenda_et_motivation', 'Non renseigné')}\n"
+            f"Peurs et faiblesses : {p.get('peurs_et_faiblesses', 'Non renseigné')}\n"
+            f"Attitude initiale : {p.get('attitude_initiale', 'Non renseigné')}\n"
+            f"Stats et capacités : {p.get('stats_et_capacites', 'Non renseigné')}"
+        )
+        documents.append(Document(page_content=content, metadata={"type": "pnj", "id": p.get("id")}))
+
+    # 3. Indexer les lieux
+    lieux = data.get("entites", {}).get("lieux", [])
+    for l in lieux:
+        content = (
+            f"Lieu : {l.get('nom_complet', 'Inconnu')} (ID: {l.get('id')})\n"
+            f"Ambiance sensorielle : {l.get('ambiance_sensorielle', 'Non renseigné')}\n"
+            f"Éléments interactifs : {l.get('elements_interactifs', 'Non renseigné')}"
+        )
+        documents.append(Document(page_content=content, metadata={"type": "lieu", "id": l.get("id")}))
+
+    # 4. Indexer les nœuds scéniques
+    scenes = data.get("noeuds_sceniques", [])
+    for s in scenes:
+        pnjs_str = ", ".join(s.get("pnj_presents", []))
+        sorties_str = "\n".join([
+            f"- Action: {sortie.get('action_ou_direction')} -> Vers: {sortie.get('destination_scene_id')}"
+            for sortie in s.get("sorties_logiques", [])
+        ])
+        content = (
+            f"Scène : {s.get('titre', 'Inconnu')} (ID: {s.get('id_scene')})\n"
+            f"Acte rattaché : {s.get('acte_rattache_id', 'Inconnu')}\n"
+            f"Lieu rattaché : {s.get('lieu_rattache_id', 'Inconnu')}\n"
+            f"PNJs présents : {pnjs_str}\n"
+            f"Objectif MJ : {s.get('objectif_mj', 'Non renseigné')}\n"
+            f"Condition de résolution : {s.get('condition_resolution', 'Non renseignée')}\n"
+            f"Limites et règles locales : {s.get('limites_et_regles_locales', 'Non renseigné')}\n"
+            f"Sorties logiques :\n{sorties_str}"
+        )
+        documents.append(Document(page_content=content, metadata={"type": "scene", "id": s.get("id_scene")}))
+
+    if not documents:
+        print("Aucun document à indexer à partir du JSON.")
+        return
+
+    db = Chroma(
+        client=client,
+        collection_name=collection_name,
+        embedding_function=embeddings
+    )
+    db.add_documents(documents)
+    print(f"✓ {len(documents)} éléments du scénario JSON indexés dans '{collection_name}'.")
+
 def main():
     parser = argparse.ArgumentParser(description="Indexer les documents pour le RPG Oracle.")
     parser.add_argument("--clear", action="store_true", help="Vider la base de données avant l'indexation.")
@@ -162,7 +242,18 @@ def main():
 
     # Indexation du Scénario
     if index_all or args.scenario or args.reset:
-        index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings)
+        # Chercher s'il y a des fichiers JSON dans le répertoire scenario
+        json_files = [f for f in os.listdir(config.SCENARIO_DATA_PATH) if f.endswith(".json")]
+        if json_files:
+            for jf in json_files:
+                index_json_scenario(os.path.join(config.SCENARIO_DATA_PATH, jf), config.SCENARIO_COLLECTION_NAME, client, embeddings)
+
+        # Indexer également les PDFs s'il y en a
+        pdf_files = [f for f in os.listdir(config.SCENARIO_DATA_PATH) if f.endswith(".pdf")]
+        if pdf_files:
+            index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings)
+        elif not json_files:
+            print(f"Aucun fichier PDF ou JSON trouvé dans {config.SCENARIO_DATA_PATH}.")
 
     # Génération du manuel PJ
     if index_all or args.pj or args.reset:
