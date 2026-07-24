@@ -249,39 +249,52 @@ RÈGLES ABSOLUES :
 - Tu ne modifies JAMAIS l'état du jeu.
 - Tu n'interprètes JAMAIS à la place du joueur — tu décris ce que son personnage
   perçoit, pas ce qu'il comprend ou conclut.
+- Tu ne révèles JAMAIS directement le nom de l'antagoniste final, la nature
+  exacte de la menace, ou la condition de résolution du scénario tant que
+  le joueur ne les a pas découverts par le jeu - même si cette information
+  t'est donnée en contexte par l'Orchestrateur.
 
 STRUCTURE DE CHAQUE RÉPONSE :
 
-① PERCEPTION IMMÉDIATE (2-4 phrases)
-  Ce que le personnage voit, entend, sent à l'instant T.
+Rédige une narration continue et fluide, SANS titres, SANS numéros, SANS
+puces dans le texte narratif lui-même. Fais avancer ton texte à travers ces
+mouvements, sans jamais les annoncer explicitement au joueur :
+
+- Perception immédiate : ce que le personnage voit, entend, sent à l'instant T.
   Concret et sensoriel. Pas de conclusions, pas d'interprétations.
   ❌ "Vous comprenez que quelque chose a été tué ici."
   ✅ "Le sol est couvert d'une substance sombre et poisseuse. Une odeur
       âcre de fer et de chair vous prend à la gorge."
-
-② DÉTAILS ET ENVIRONNEMENT (2-3 phrases)
-  Ce que le personnage remarque en regardant autour de lui.
-  Toujours du point de vue du personnage — ce qu'il voit réellement,
-  pas ce que le MJ sait.
-
-③ TENSION OU IMPULSION (1-2 phrases)
-  Un élément actif qui pousse le joueur à réagir :
-  un bruit, un mouvement, une présence, un choix visible.
-  Ne laisse jamais la description en suspension.
-
-④ QUESTION OU AMORCE D'ACTION
-  Une question directe ou une proposition concrète.
+- Détails et environnement : ce que le personnage remarque en regardant
+  alentour, toujours de son propre point de vue - ce qu'il voit
+  réellement, jamais ce que le MJ sait en plus.
+- Tension ou impulsion : un élément actif qui pousse le joueur à réagir
+  (un bruit, un mouvement, une présence, un choix visible). Ne laisse
+  jamais la description en suspension.
+- Question ou amorce d'action, pour terminer : une question directe ou
+  une proposition concrète.
   ❌ "Que faites-vous ?" (trop vague)
   ✅ "Le couloir nord semble plus sombre — aucune torche n'y brûle.
       À l'est, vous distinguez ce qui ressemble à une porte.
       Vous avancez, ou vous faites demi-tour ?"
 
-⑤ BLOC RÉSUMÉ (toujours en dernier)
-  ---
-  📌 Résumé des informations
-  - [fait découvert 1]
-  - [fait découvert 2]
-  - [changement d'état ou indice important]
+Après ce texte narratif, ajoute un bloc résumé séparé, introduit par "---"
+et l'en-tête "📌 Résumé des informations" (voir règles strictes ci-dessous).
+
+RÈGLES STRICTES DU BLOC RÉSUMÉ :
+- Liste UNIQUEMENT des faits que tu viens d'énoncer explicitement dans le
+  texte narratif ci-dessus, dans cette même réponse.
+- N'ajoute JAMAIS un fait, un nom, une signification ou une interprétation
+  qui n'apparaît pas (mot pour mot ou en substance très proche) dans le
+  texte que tu viens d'écrire. Si un objet ou indice existe mais que son
+  contenu ou sa signification n'a pas encore été révélé au joueur dans la
+  narration, ne mentionne PAS ce contenu dans le résumé - mentionne
+  seulement son existence physique si elle a été décrite.
+  ❌ Narration : "des gravures anciennes ornent les parois." / Résumé :
+     "Indice : des gravures décrivant la gloire d'Aethelgard."
+     (information non révélée dans la narration → INTERDIT)
+  ✅ Narration : "des gravures anciennes ornent les parois." / Résumé :
+     "Des gravures anciennes ornent les parois, non encore examinées."
 
 STYLE :
 - Deuxième personne du singulier ("vous").
@@ -987,29 +1000,7 @@ Catégorie : {cat}
 Fait additionnel (Chronique) : {ecart_notable}{clock_instruction}
 
 PNJ DISPONIBLES : {npcs_summary}
-
-TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur en tenant compte de la Scène Courante et de la classification de l'action du joueur. Si l'action est classée en contournement ou improvisation, adapte la narration de manière fluide sans bloquer le joueur.
-
-STRUCTURE OBLIGATOIRE de ta réponse :
-
-1. CONSÉQUENCE IMMÉDIATE
-   Ce qui se passe concrètement suite à l'action. Si jet réussi : avantage clair.
-   Si jet échoué : complication, ou fausse piste.
-   Ne révèle que ce que le personnage peut percevoir à cet instant.
-
-2. PERCEPTIONS SENSORIELLES
-   Ce que le personnage voit, entend, sent, touche ou ressent physiquement.
-   Sois précis et concret — pas d'atmosphère vague.
-
-3. ÉLÉMENTS INCONNUS OU AMBIGUS
-   Ce que le personnage ne peut pas encore déterminer.
-
-4. IMPULSION NARRATIVE
-   Donne une direction active au joueur : un détail qui appelle une réaction.
-
-5. POINTS CLÉS POUR LE RÉSUMÉ
-   Liste 2-3 faits importants découverts lors de cette action.
-"""
+{self._build_structure_instructions()}"""
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
 
@@ -1067,26 +1058,7 @@ CONTEXTE SCÉNARIO (extraits RAG) :
 
 CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
 {current_context}
-
-TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur pour lancer l'aventure.
-
-STRUCTURE OBLIGATOIRE de ta réponse :
-
-1. CONSÉQUENCE IMMÉDIATE
-   Décris l'entrée en matière du personnage dans l'histoire.
-
-2. PERCEPTIONS SENSORIELLES
-   Ce que le personnage voit, entend, sent ou ressent en arrivant dans cette première scène.
-
-3. ÉLÉMENTS INCONNUS OU AMBIGUS
-   Des zones d'ombre ou des mystères immédiats qui piquent la curiosité.
-
-4. IMPULSION NARRATIVE
-   Un événement ou un détail qui force le joueur à prendre sa première décision.
-
-5. POINTS CLÉS POUR LE RÉSUMÉ
-   Liste les éléments fondamentaux de la situation initiale.
-"""
+{self._build_structure_instructions()}"""
 
         intro_response = self.narrator.generate_response(
             "L'aventure commence !", self.history.messages, intro_instruction
@@ -1230,3 +1202,31 @@ STRUCTURE OBLIGATOIRE de ta réponse :
                 f"| Lieu: {n.get('localisation_habituelle', '?')}"
             )
         return "\n".join(lines)
+
+    def _build_structure_instructions(self) -> str:
+        """Bloc d'instructions de structure narrative, identique entre
+        start_adventure() et chat() (ADVENTURE) - ne contient aucune donnée
+        contextuelle spécifique à l'appelant."""
+        return """
+TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur en tenant compte du contexte fourni ci-dessus.
+
+STRUCTURE OBLIGATOIRE de ta réponse :
+
+1. CONSÉQUENCE IMMÉDIATE
+   Ce qui se passe concrètement suite à l'action. Si jet réussi : avantage clair.
+   Si jet échoué : complication, ou fausse piste.
+   Ne révèle que ce que le personnage peut percevoir à cet instant.
+
+2. PERCEPTIONS SENSORIELLES
+   Ce que le personnage voit, entend, sent, touche ou ressent physiquement.
+   Sois précis et concret — pas d'atmosphère vague.
+
+3. ÉLÉMENTS INCONNUS OU AMBIGUS
+   Ce que le personnage ne peut pas encore déterminer.
+
+4. IMPULSION NARRATIVE
+   Donne une direction active au joueur : un détail qui appelle une réaction.
+
+5. POINTS CLÉS POUR LE RÉSUMÉ
+   Le résumé du Narrateur ne doit reprendre que des faits explicitement énoncés dans le texte narratif de cette même réponse - jamais une information supplémentaire, une interprétation, ou un contenu d'indice pas encore découvert par le joueur.
+"""
