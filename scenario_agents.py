@@ -4,7 +4,7 @@ import os
 import time
 import config
 from langchain_core.prompts import ChatPromptTemplate
-from base_utils import BaseAgent, extract_json
+from base_utils import BaseAgent, extract_json, get_full_store_text, get_relevant_context
 
 class ScenarioExtractorAgent(BaseAgent):
     """
@@ -63,27 +63,10 @@ class ScenarioExtractorAgent(BaseAgent):
         return structure
 
     def _get_context(self, queries, log, k=15) -> str:
-        try:
-            result = self.scenario_store.get(include=["documents", "metadatas"])
-            paired = sorted(
-                zip(result.get("documents", []), result.get("metadatas", []) or [{}] * len(result.get("documents", []))),
-                key=lambda x: x[1].get("page", 0) if x[1] else 0
-            )
-            full_text = "\n\n".join(doc for doc, _ in paired)
-        except Exception as e:
-            log(f"⚠ Erreur lors de la récupération du texte complet : {e}")
-            full_text = ""
-
-        if full_text and len(full_text) <= config.SCENARIO_FULLTEXT_THRESHOLD_CHARS:
-            log(f"Utilisation du texte source complet (taille: {len(full_text)} <= {config.SCENARIO_FULLTEXT_THRESHOLD_CHARS} car.)")
-            return full_text
-        else:
-            log(f"Utilisation de requêtes RAG par similarité (taille de full_text: {len(full_text)})")
-            all_docs = []
-            for q in queries:
-                all_docs.extend(self.scenario_store.similarity_search(q, k=k))
-            unique_contents = {d.page_content: d for d in all_docs}
-            return "\n\n---\n\n".join(unique_contents.keys())
+        from base_utils import get_relevant_context
+        return get_relevant_context(
+            self.scenario_store, queries, log, config.SCENARIO_FULLTEXT_THRESHOLD_CHARS, k=k
+        )
 
     def _extract_entites(self, log) -> dict:
         log("Passe 1 : Extraction des entités (PNJs et Lieux)...")
@@ -402,8 +385,11 @@ dans CE système de jeu précis.
 
 CONSIGNES CRITIQUES :
 1. N'invente aucun champ absent des règles fournies.
-2. Utilise des clés techniques cohérentes en minuscules sans accents (ex: "points_de_vie",
-   pas "PV" ni "Points de Vie"), même si les règles utilisent une abréviation ou un autre terme.
+2. Utilise des clés techniques cohérentes en minuscules sans accents, reflétant le nom donné
+   PAR CE SYSTÈME à chaque ressource (ex: "points_de_vie" si le jeu en a un, mais "vigueur"/
+   "celerite"/"intellect" pour un système à réserves multiples, ou "sante_mentale" si une jauge
+   distincte existe). N'utilise JAMAIS "points_de_vie" par défaut si ce n'est pas le nom réel
+   de la ressource dans ce système.
 3. Un champ de type "object" (bloc de caractéristiques, bloc de ressources...) doit lister
    ses sous_champs attendus, avec les noms exacts utilisés par CE système (peuvent être
    très différents d'un système à l'autre : "Force/Dextérité" ou "FOR/DEX/POU", etc.).
@@ -428,6 +414,24 @@ Réponds UNIQUEMENT avec un JSON de cette forme, entouré de balises ```json :
     ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
 ])
 
+DISCOVERY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Tu es un expert en analyse de systèmes de jeu de rôle.
+À partir des extraits de règles ci-dessous, identifie les GRANDES COMPOSANTES de
+la création de personnage dans CE système précis, en utilisant EXCLUSIVEMENT le
+vocabulaire propre à ce système - jamais de synonymes génériques type "race/classe"
+si le système ne les utilise pas. Certains systèmes utilisent des concepts très
+différents (ex: "Type/Descripteur/Focus", "Occupation", "Aspects", "Playbooks",
+"Origine/Voie/Vocation"...). Utilise les termes EXACTS des règles fournies.
+
+Réponds UNIQUEMENT avec un JSON de cette forme :
+```json
+{{
+  "composantes": ["terme exact 1", "terme exact 2", "..."]
+}}
+```"""),
+    ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
+])
+
 
 class ManualGeneratorAgent(BaseAgent):
     """
@@ -446,9 +450,9 @@ Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le jo
 Il doit être COMPLET sur toutes les étapes requises par le système de jeu, mais rester PUREMENT STRUCTUREL.
 
 CONSIGNES CRITIQUES :
-1. Liste TOUTES les étapes de création dans l'ordre logique requis par le jeu (Caractères, Race, Classe, Équipement, Sorts/Capacités, PV/CA, etc.).
+1. Liste TOUTES les étapes de création dans l'ordre logique requis par CE système, en utilisant EXCLUSIVEMENT la terminologie et les catégories propres à ce système. Ne suppose JAMAIS l'existence de composantes traditionnelles si les règles fournies n'en parlent pas explicitement - certains systèmes utilisent des concepts complètement différents (types, descripteurs, focus, occupations, aspects, réserves multiples, etc.).
 2. Pour chaque étape, donne une description de la procédure à suivre.
-3. NE LISTE PAS les options spécifiques (ex: ne liste pas "Elfe", "Nain", "Guerrier"). Indique simplement qu'il faut choisir une race ou une classe.
+3. NE LISTE PAS les options spécifiques individuelles de CE système (par exemple pour un système à professions, ne liste pas de métiers précis). Indique simplement qu'il faut faire un choix dans chaque catégorie identifiée, quelle qu'elle soit dans ce système précis.
 4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
 5. EXPLICATION DES RÈGLES : Précise pour chaque étape si des limites numériques s'appliquent (ex: "Choisir 2 compétences", "Choisir 1 arme de mêlée et 1 de distance") afin que l'agent puisse les expliquer au joueur.
 6. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
@@ -465,7 +469,7 @@ FORMAT JSON ATTENDUE :
       "description": "Description de la procédure"
     }}
   ],
-  "regles_generales": "Notes globales (ex: importance de vérifier les bonus de classe avant de choisir l'équipement)"
+  "regles_generales": "Notes globales (ex: importance de vérifier les prérequis avant de choisir l'équipement)"
 }}
 ```"""),
             ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
@@ -482,28 +486,48 @@ FORMAT JSON ATTENDUE :
         log("Extraction des étapes de création de personnage...")
         start_time = time.time()
 
-        # Requêtes pour extraire la structure de création de manière exhaustive
-        queries = [
-            "étapes de création de personnage, character creation steps, character generation process",
-            "caractéristiques, statistiques, scores, ability scores, attribute generation",
-            "races, peuples, espèces, character races, species",
-            "classes, professions, métiers, character classes",
-            "équipement de départ, starting equipment, gold, wealth",
-            "sorts, capacités, compétences, skills, spells, feats",
-            "calcul des PV et CA, health points and armor class calculation"
-        ]
+        full_core_text = get_full_store_text(self.core_store, log)
 
-        all_docs = []
-        for query in queries:
-            # Réduction de k pour éviter de saturer le contexte du LLM
-            docs = self.core_store.similarity_search(query, k=3)
-            all_docs.extend(docs)
+        if full_core_text and len(full_core_text) <= config.CORE_FULLTEXT_THRESHOLD_CHARS:
+            log("Texte source du Core complet, utilisation directe (pas de découverte nécessaire).")
+            contexte_deduplique = full_core_text
+        else:
+            log("Core trop volumineux pour tenir en contexte - découverte des composantes du système...")
+            discovery_context = get_relevant_context(
+                self.core_store,
+                [
+                    "création de personnage, character creation, comment créer un personnage",
+                    "construire un personnage, personnage joueur, feuille de personnage",
+                ],
+                log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
+            )
 
-        # Déduplication
-        unique_contents = {doc.page_content: doc for doc in all_docs}
-        contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
+            composantes = []
+            if discovery_context.strip():
+                try:
+                    discovery_chain = DISCOVERY_PROMPT | self.llm
+                    discovery_response = discovery_chain.invoke({"context": discovery_context})
+                    discovery_result = extract_json(discovery_response.content, expected_type=dict)
+                    composantes = discovery_result.get("composantes", []) if discovery_result else []
+                except Exception as e:
+                    log(f"⚠ Erreur lors de la découverte des composantes : {e}")
+
+            if composantes:
+                log(f"Composantes découvertes : {composantes}")
+                queries = [f"{c}, création de personnage" for c in composantes]
+            else:
+                log("⚠ Aucune composante découverte - repli sur des requêtes génériques.")
+                queries = [
+                    "création de personnage, caractéristiques, capacités spéciales",
+                    "équipement, ressources de départ, progression du personnage",
+                ]
+
+            contexte_deduplique = get_relevant_context(
+                self.core_store, queries, log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
+            )
+
         rag_time = time.time() - start_time
-        log(f"RAG terminé en {rag_time:.2f}s ({len(unique_contents)} extraits).")
+        log(f"Récupération du contexte terminée en {rag_time:.2f}s.")
 
         if not contexte_deduplique.strip():
             log("⚠ Aucun extrait trouvé dans le Core RAG. Le manuel sera vide.")

@@ -53,6 +53,7 @@ RAG_K_ADVENTURE = int(os.getenv("RAG_K_ADVENTURE", 5))
 RAG_K_SETUP = int(os.getenv("RAG_K_SETUP", 8))
 RAG_K_CREATION = int(os.getenv("RAG_K_CREATION", 8))
 SCENARIO_FULLTEXT_THRESHOLD_CHARS = int(os.getenv("SCENARIO_FULLTEXT_THRESHOLD_CHARS", 40000))
+CORE_FULLTEXT_THRESHOLD_CHARS = int(os.getenv("CORE_FULLTEXT_THRESHOLD_CHARS", 40000))
 
 # --- Compatibilité Ollama (Anciennes variables) ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
