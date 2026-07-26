@@ -11,7 +11,7 @@ import chromadb
 import config
 from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
 from scenario_agents import ScenarioExtractorAgent
-from validation import validate_scenario_structure
+from validation import validate_scenario_structure, validate_character_sheet
 
 class CharacterCreator(BaseAgent):
     def __init__(self, vector_store):
@@ -33,6 +33,9 @@ class CharacterCreator(BaseAgent):
             5. Pour les statistiques/caractéristiques : Demande TOUJOURS au joueur s'il souhaite que tu lances les dés pour lui (selon la méthode du Codex) ou s'il préfère le faire lui-même.
             6. Pour les choix de Race et de Classe : Interroge le CODEX (RAG) pour obtenir la liste complète et exacte des options disponibles et présente-les de manière concise au joueur.
             7. Calcule les statistiques dérivées (PV, CA, modificateurs) en suivant scrupuleusement les formules du CODEX.
+
+            CHAMPS ENCORE MANQUANTS (Tu dois impérativement guider le joueur pour remplir ces champs) :
+            {champs_manquants}
 
             CONSIGNES DE FIN DE CRÉATION :
             Si toutes les étapes du manuel sont terminées, félicite le joueur et indique-lui que son personnage est prêt pour l'aventure.
@@ -73,7 +76,7 @@ class CharacterCreator(BaseAgent):
                 return "Manuel non disponible (utiliser le Codex)."
         return "Manuel non disponible (utiliser le Codex)."
 
-    def generate_response(self, user_input, history, character_data=None):
+    def generate_response(self, user_input, history, character_data=None, champs_manquants=None):
         # On enrichit la requête RAG avec les derniers messages pour avoir du contexte sur l'étape de création
         rag_query = user_input
         if len(history) >= 1:
@@ -84,12 +87,18 @@ class CharacterCreator(BaseAgent):
         context = self.get_context(rag_query)
         manual = self._load_manual()
 
+        if champs_manquants and isinstance(champs_manquants, list):
+            champs_manquants_str = ", ".join(champs_manquants)
+        else:
+            champs_manquants_str = "Aucun (fiche complète)."
+
         inputs = {
             "manual": manual,
             "context": context,
             "history": history,
             "input": user_input,
-            "current_character": json.dumps(character_data, ensure_ascii=False, indent=2) if character_data else "Aucune donnée pour le moment."
+            "current_character": json.dumps(character_data, ensure_ascii=False, indent=2) if character_data else "Aucune donnée pour le moment.",
+            "champs_manquants": champs_manquants_str
         }
         response = self.chain.invoke(inputs)
         return response.content
@@ -236,6 +245,35 @@ class SheetManagerAgent(BaseAgent):
         new_sheet = extract_json(response.content)
         return new_sheet
 
+    def audit_and_complete(self, character_data: dict, messages: list, schema: dict) -> dict | None:
+        context = self.get_context("statistiques, points de vie, équipement, armes, armures, ressources")
+        audit_prompt = ChatPromptTemplate.from_messages([
+            ("system", """Tu es le Gestionnaire de Fiche de Personnage, en AUDIT FINAL de création.
+Relis l'INTÉGRALITÉ de la conversation de création ci-dessous et produis la fiche JSON la
+plus complète et fidèle possible, en te basant sur le schéma des champs requis fourni.
+Cherche en particulier les valeurs mentionnées dans la conversation mais absentes de la
+fiche actuelle (souvent oubliées par les mises à jour incrémentales tour par tour).
+Ne modifie pas les champs déjà corrects et ne modifie pas leur nom/structure existante.
+Réponds UNIQUEMENT avec le bloc JSON complet de la fiche.
+
+SCHÉMA DES CHAMPS REQUIS : {schema}
+RÈGLES DU CODEX : {context}
+"""),
+            MessagesPlaceholder(variable_name="history"),
+            ("human", "FICHE ACTUELLE :\n{character_sheet}\n\nProduis la fiche JSON finale, complète."),
+        ])
+        chain = audit_prompt | self.llm
+        try:
+            response = chain.invoke({
+                "schema": json.dumps(schema, ensure_ascii=False),
+                "context": context,
+                "history": messages,
+                "character_sheet": json.dumps(character_data, ensure_ascii=False, indent=2),
+            })
+            return extract_json(response.content, expected_type=dict)
+        except Exception:
+            return None
+
 class Narrator(BaseAgent):
     def __init__(self):
         super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP)
@@ -366,6 +404,7 @@ class RPGAgent(BaseAgent):
         self.scenario_data = None
         self.chronicle_data = None
         self.setup_logs = []
+        self._missing_character_fields = None
 
     def log(self, message):
         timestamp = time.strftime("%H:%M:%S")
@@ -646,6 +685,16 @@ Réponds UNIQUEMENT avec le bloc JSON :
 
         return data
 
+    def _load_character_schema(self):
+        path = "Memory/character_schema.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"champs_requis": [{"chemin": "nom", "type": "string"}]}
+
     def _check_resources(self, action):
         """Vérifie si l'action consomme une ressource et si elle est disponible."""
         if not self.character_data or "ressources" not in self.character_data:
@@ -696,7 +745,15 @@ Réponds UNIQUEMENT avec ce JSON :
     def chat(self, user_input):
         if self.game_state == "CREATION":
             # 1. Étape Narrative : Dialogue avec le joueur
-            response = self.character_creator.generate_response(user_input, self.history.messages, self.character_data)
+            try:
+                response = self.character_creator.generate_response(
+                    user_input, self.history.messages, self.character_data,
+                    champs_manquants=getattr(self, "_missing_character_fields", None)
+                )
+            except TypeError:
+                response = self.character_creator.generate_response(
+                    user_input, self.history.messages, self.character_data
+                )
 
             # 2. Étape Technique (Masquée) : Mise à jour de la fiche via SheetManager
             try:
@@ -708,24 +765,40 @@ Réponds UNIQUEMENT avec ce JSON :
                 )
                 if new_sheet and isinstance(new_sheet, dict):
                     self.character_data = self._unwrap_character_data(new_sheet)
-
-                    # 3. Synchronisation déterministe via GameStateEngine
                     self.gse.state = self.character_data
                     self.gse.synchronize_and_recalculate()
                     self.character_data = self.gse.state
 
-                    os.makedirs("Memory", exist_ok=True)
-                    with open("Memory/character.json", "w", encoding="utf-8") as f:
-                        json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+                schema = self._load_character_schema()
+                is_complete, missing_fields = validate_character_sheet(self.character_data, schema)
 
-                    print(f"[RPGAgent] Fiche mise à jour en arrière-plan.")
+                if not is_complete and any(
+                    kw in response.upper() for kw in ["TERMIN", "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE", "CREATION_TERMINEE", "CRÉATION_TERMINÉE"]
+                ):
+                    audited = self.sheet_manager.audit_and_complete(
+                        self.character_data, self.history.messages, schema
+                    )
+                    if audited and isinstance(audited, dict):
+                        self.character_data = self._unwrap_character_data(audited)
+                        self.gse.state = self.character_data
+                        self.gse.synchronize_and_recalculate()
+                        self.character_data = self.gse.state
+                        is_complete, missing_fields = validate_character_sheet(self.character_data, schema)
 
-                    # Transition vers SUMMARY si le statut est complet ou mot-clé détecté
-                    status = str(self.character_data.get("statut", "")).lower()
-                    if status in ["complet", "complete", "terminé", "termine"] or "CRÉATION_TERMINÉE" in response:
-                        print(f"[RPGAgent] Fin de création détectée.")
-                        self._extract_and_add_resources()
-                        self.game_state = "SUMMARY"
+                os.makedirs("Memory", exist_ok=True)
+                with open("Memory/character.json", "w", encoding="utf-8") as f:
+                    json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+
+                if is_complete:
+                    if not self.character_data:
+                        self.character_data = {}
+                    self.character_data["statut"] = "complet"
+                    self._missing_character_fields = None
+                    self._extract_and_add_resources()
+                    self.game_state = "SUMMARY"
+                else:
+                    self._missing_character_fields = missing_fields
+
             except Exception as e:
                 print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour technique de la fiche : {e}")
 
@@ -1166,6 +1239,7 @@ CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
         self.game_state = "CREATION"
         self.character_data = None
         self.scenario_data = None
+        self._missing_character_fields = None
         self.chronicle_data = None
         self.npcs_data = None
         self.current_scene_id = None

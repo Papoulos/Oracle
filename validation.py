@@ -140,3 +140,67 @@ def validate_scenario_structure(data: dict) -> tuple[dict, list[str], list[str]]
             warnings.append(f"Horloge '{h['nom']}' : seuil manquant -> valeur par défaut {DEFAULT_SEUIL}.")
 
     return data, warnings, errors
+
+
+def _get_nested(data: dict, path: str):
+    """Résout un chemin en points ('ressources.points_de_vie') dans un dict imbriqué."""
+    value = data
+    for key in path.split("."):
+        if not isinstance(value, dict) or key not in value:
+            return None
+        value = value[key]
+    return value
+
+
+def validate_character_sheet(character_data: dict, schema: dict) -> tuple[bool, list[str]]:
+    """
+    Retourne (est_complet, champs_manquants).
+
+    `schema` est généré par ruleset (voir ManualGeneratorAgent étendu ci-dessous),
+    avec ce format :
+    {
+      "champs_requis": [
+        {"chemin": "nom", "type": "string"},
+        {"chemin": "caracteristiques", "type": "object", "sous_champs": ["Force", "Dexterite", ...]},
+        {"chemin": "ressources.points_de_vie", "type": "object", "sous_champs": ["actuels", "max"]},
+        {"chemin": "equipement", "type": "list", "non_vide": true}
+      ]
+    }
+    """
+    if not character_data or not schema:
+        return False, [f["chemin"] for f in (schema or {}).get("champs_requis", [])] or ["character_data ou schema absent"]
+
+    missing = []
+
+    for field in schema.get("champs_requis", []):
+        chemin = field["chemin"]
+        ftype = field.get("type", "string")
+        value = _get_nested(character_data, chemin)
+
+        if ftype == "string":
+            if not value or not isinstance(value, str):
+                missing.append(chemin)
+
+        elif ftype == "number":
+            if not isinstance(value, (int, float)):
+                missing.append(chemin)
+
+        elif ftype == "object":
+            sous_champs = field.get("sous_champs", [])
+            if not isinstance(value, dict):
+                missing.append(chemin)
+            else:
+                absents = [
+                    sc for sc in sous_champs
+                    if not isinstance(value.get(sc), (int, float, str)) or value.get(sc) in (None, "")
+                ]
+                if absents:
+                    missing.append(f"{chemin} ({', '.join(absents)})")
+
+        elif ftype == "list":
+            if not isinstance(value, list):
+                missing.append(chemin)
+            elif field.get("non_vide", False) and len(value) == 0:
+                missing.append(chemin)
+
+    return (len(missing) == 0), missing

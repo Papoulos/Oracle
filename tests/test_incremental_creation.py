@@ -10,6 +10,18 @@ def setup_module():
     os.makedirs("Memory", exist_ok=True)
 
 def test_incremental_creation():
+    # Ecriture d'un schéma de fiche de test avant d'initialiser l'agent
+    schema = {
+        "champs_requis": [
+            {"chemin": "nom", "type": "string"},
+            {"chemin": "race", "type": "string"},
+            {"chemin": "classe", "type": "string"}
+        ]
+    }
+    os.makedirs("Memory", exist_ok=True)
+    with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
+        json.dump(schema, f)
+
     agent = RPGAgent()
 
     # Mock sheet manager update_sheet behavior to avoid calling actual LLM/connection

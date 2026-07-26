@@ -5,6 +5,11 @@ import os
 from unittest import mock
 
 def test_character_completion_transition():
+    if os.path.exists("Memory/character_schema.json"):
+        try:
+            os.remove("Memory/character_schema.json")
+        except Exception:
+            pass
     agent = RPGAgent()
 
     # Mock update_sheet directly to return the final character data with status complete
