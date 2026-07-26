@@ -96,6 +96,33 @@ def get_embeddings():
             api_key="sk-no-key-required"
         )
 
+def get_full_store_text(store, log) -> str:
+    """Récupère et concatène tout le texte indexé dans `store`, trié par page."""
+    try:
+        result = store.get(include=["documents", "metadatas"])
+        paired = sorted(
+            zip(result.get("documents", []), result.get("metadatas", []) or [{}] * len(result.get("documents", []))),
+            key=lambda x: x[1].get("page", 0) if x[1] else 0
+        )
+        return "\n\n".join(doc for doc, _ in paired)
+    except Exception as e:
+        log(f"⚠ Erreur lors de la récupération du texte complet : {e}")
+        return ""
+
+
+def get_relevant_context(store, queries, log, threshold_chars, k=15) -> str:
+    """Texte source complet si sa taille le permet, sinon RAG par requêtes dédupliqué."""
+    full_text = get_full_store_text(store, log)
+    if full_text and len(full_text) <= threshold_chars:
+        log(f"Utilisation du texte source complet (taille: {len(full_text)} <= {threshold_chars} car.)")
+        return full_text
+    log(f"Utilisation de requêtes RAG par similarité (taille de full_text: {len(full_text)})")
+    all_docs = []
+    for q in queries:
+        all_docs.extend(store.similarity_search(q, k=k))
+    unique_contents = {d.page_content: d for d in all_docs}
+    return "\n\n---\n\n".join(unique_contents.keys())
+
 class BaseAgent:
     def __init__(self, model=None, temperature=0.7):
         model_name = model if model else config.LLM_MODEL
