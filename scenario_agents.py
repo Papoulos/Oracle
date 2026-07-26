@@ -394,6 +394,41 @@ Réponds UNIQUEMENT avec un JSON au format suivant :
         return res
 
 
+SCHEMA_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Tu es un expert en conception de systèmes de jeu de rôle.
+À partir des extraits de règles fournis, produis un SCHÉMA décrivant les champs
+qu'une fiche de personnage DOIT contenir pour être considérée comme complète
+dans CE système de jeu précis.
+
+CONSIGNES CRITIQUES :
+1. N'invente aucun champ absent des règles fournies.
+2. Utilise des clés techniques cohérentes en minuscules sans accents (ex: "points_de_vie",
+   pas "PV" ni "Points de Vie"), même si les règles utilisent une abréviation ou un autre terme.
+3. Un champ de type "object" (bloc de caractéristiques, bloc de ressources...) doit lister
+   ses sous_champs attendus, avec les noms exacts utilisés par CE système (peuvent être
+   très différents d'un système à l'autre : "Force/Dextérité" ou "FOR/DEX/POU", etc.).
+4. Un champ de type "list" doit préciser si une liste vide est acceptable ("non_vide": false)
+   ou non ("non_vide": true).
+5. Inclue toute ressource de vitalité mentionnée par les règles, même s'il y en a plusieurs
+   (ex: points de vie ET santé mentale, ou boîtes de blessure ET stress).
+6. N'inclus PAS de champs purement narratifs (historique, apparence, nom du joueur) sauf
+   si les règles les rendent strictement nécessaires pour jouer.
+
+Réponds UNIQUEMENT avec un JSON de cette forme, entouré de balises ```json :
+```json
+{{
+  "champs_requis": [
+    {{"chemin": "nom", "type": "string"}},
+    {{"chemin": "caracteristiques", "type": "object", "sous_champs": ["...noms exacts du système..."]}},
+    {{"chemin": "ressources.<nom_ressource>", "type": "object", "sous_champs": ["actuels", "max"]}},
+    {{"chemin": "equipement", "type": "list", "non_vide": true}}
+  ]
+}}
+```"""),
+    ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
+])
+
+
 class ManualGeneratorAgent(BaseAgent):
     """
     Agent one-shot : extrait les étapes de création de personnage du Core RAG.
@@ -495,6 +530,23 @@ FORMAT JSON ATTENDUE :
             json.dump(manual, f, indent=4, ensure_ascii=False)
 
         log("✓ Manuel de création généré dans Memory/creation_manual.json.")
+
+        schema_chain = SCHEMA_PROMPT | self.llm
+        try:
+            schema_response = schema_chain.invoke({"context": contexte_deduplique})
+            schema = extract_json(schema_response.content, expected_type=dict)
+        except Exception as e:
+            log(f"✗ Erreur lors de la génération du schéma de fiche : {e}")
+            schema = None
+
+        if not schema or not schema.get("champs_requis"):
+            log("⚠ Schéma de fiche vide ou invalide - repli sur un schéma minimal (nom uniquement).")
+            schema = {"champs_requis": [{"chemin": "nom", "type": "string"}]}
+
+        with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
+            json.dump(schema, f, indent=4, ensure_ascii=False)
+        log("✓ Schéma de fiche de personnage généré dans Memory/character_schema.json.")
+
         return manual
 
 
