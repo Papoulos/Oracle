@@ -1,61 +1,110 @@
 # 🎲 RPG Oracle - Multi-Agent RAG System
 
-RPG Oracle is an advanced Tabletop Role-Playing Game (TTRPG) assistant that uses a multi-agent architecture and Retrieval-Augmented Generation (RAG) to provide a complete, autonomous gaming experience. It handles everything from character creation to complex narrative orchestration.
+RPG Oracle is an advanced, ruleset-agnostic Tabletop Role-Playing Game (TTRPG) assistant. Powered by a multi-agent architecture and Retrieval-Augmented Generation (RAG), it orchestrates everything from dynamic character creation to complex narrative management, deterministic state progression tracking, and pure mechanical enforcement.
 
 ---
 
 ## 🏗 Architecture & Agents
 
-The system is powered by several specialized agents, each with its own prompt, model configuration, and specific responsibilities.
+The system uses specialized agents, each with dedicated prompts, LLM configurations, and clear responsibilities to split creative storytelling from rigorous rules enforcement.
 
 ### 1. The Orchestrator (`RPGAgent`)
-*   **Role**: The "Brain" of the system. It handles high-level logic, state transitions (Creation → Summary → Adventure), and technical rules analysis.
+*   **Role**: The "Brain" of the system. It handles state transitions (`CREATION` → `SUMMARY` → `ADVENTURE`), triggers technical rules analysis, and coordinates all sub-agents.
 *   **Key Functions**:
-    *   Determines when a dice roll is needed based on the rules.
-    *   Calculates bonuses using character data and RAG context.
-    *   Coordinates other agents by providing precise MJ instructions.
-    *   Performs **deterministic scene and act lookups** on the loaded `scenario_structure.json` and manages state transitions through a 3-branch player action classifier.
-*   **Context**: Accesses the `core_collection` (rules) for game mechanics, and reads current narrative elements via direct structured lookups. Uses raw `scenario_collection` chunks purely for long-form dialogue and world descriptions.
+    *   Determines when a roll or action is needed based on rules.
+    *   Runs a pre-narrative **3-branch Player Action Classifier** (transition, improvisation, or contournement/bypass) in `ADVENTURE` mode to deterministically update active scenes/acts.
+    *   Integrates the `GameStateEngine` to validate actions and apply consequences (damage, healing, XP, clock progress) before instructing the Narrator.
+    *   Uses a factorized narrative builder to instruct the Narrator on exactly what facts to describe and what mechanical parameters are active.
 
 ### 2. Character Creator (`CharacterCreator`)
-*   **Role**: Guides the player through a step-by-step character building process.
+*   **Role**: Guides the player step-by-step through the ruleset-specific character building process.
 *   **Key Functions**:
-    *   Proposes races, classes, and equipment based on the Codex.
-    *   Calculates derived stats (HP, AC, Saves).
-    *   Generates a persistent JSON character sheet.
-*   **Context**: Strictly uses `core_collection` for rule compliance.
+    *   Operates purely in narrative mode (does not output technical JSON directly) to maintain an immersive experience.
+    *   Prepend the previous Master response to the user's input to enrich RAG queries and prevent conversational drift.
+    *   Acts in tandem with the Sheet Manager to decouple raw chat interaction from structured technical data extraction.
 
 ### 3. The Narrator (`Narrator`)
-*   **Role**: The "Voice" of the Game Master. It transforms technical decisions into immersive storytelling.
+*   **Role**: The "Voice" of the Game Master. Translates dry technical state changes into rich, atmospheric storytelling.
 *   **Key Functions**:
-    *   Strict 5-part response structure: Immediate Perception, Environment Details, Narrative Tension, Action Hook, and Information Summary.
-    *   Always writes in the second person ("You").
-    *   Strictly prohibited from deciding rules or interpreting player intent.
+    *   Enforces a strict narrative prompt: writes in the second person ("You"), never uses bullet points or numbering in its storytelling, and never decides rules or interprets player intent.
+    *   Concludes every turn with a strict text block: `--- \n 📌 Résumé des informations`, which must report only facts explicitly stated in the narrative block.
 
 ### 4. Sheet Manager (`SheetManagerAgent`)
-*   **Role**: Maintains the character's state in real-time.
+*   **Role**: Audits and maintains the character sheet in real-time.
 *   **Key Functions**:
-    *   Updates HP, inventory, and experience based on narrative events.
-    *   Ensures character sheet updates follow the game's mechanics.
-*   **Context**: Uses `core_collection` to validate mechanical changes.
+    *   Decoupled from the direct narrative flow of character creation. When end-phrases or state changes are detected, it runs an `audit_and_complete` pass on the conversational history to extract missing fields.
+    *   Updates experience points, items, and inventory based on storyline event transitions.
 
 ### 5. Chronicle Agent (`ChronicleAgent`)
-*   **Role**: The historian. It maintains a factual, concise summary of the adventure.
+*   **Role**: The historian. Maintains a factual, concise chronicle of the adventure.
 *   **Key Functions**:
-    *   Updates `Memory/Chronicle.json` after every turn.
-    *   Integrates `ecart_notable` (notable deviations / clock events) into the running chronicle of events.
+    *   Updates `Memory/Chronicle.json` after every player action.
+    *   Records clock consequences, major milestones, and `ecart_notable` (notable game-state deviations) as part of the persistent log.
 
-### 6. Setup Agent (`ScenarioExtractorAgent`)
-*   **Role**: Unified pipeline extractor (one-shot).
+### 6. Manual Generator (`ManualGeneratorAgent`)
+*   **Role**: Ruleset extraction pipeline (one-shot).
 *   **Key Functions**:
-    *   Performs a **5-pass extraction** from the adventure PDF to build the highly complete `Memory/scenario_structure.json` (Entities, Scene Nodes, Macro-structure, Global Clocks, and Metadata).
-    *   Applies **cross-validation** to filter orphan references (removing invalid PNJ/scene/lieu references) and performs **bidirectional act-scene corrections**.
+    *   Dynamically scans the Core vector store using rule-agnostic queries (e.g. searching for descriptors, playbooks, aspects, attributes instead of assuming generic D&D classes/races).
+    *   Generates a structural creation handbook (`Memory/creation_manual.json`) and a rules-specific schema (`Memory/character_schema.json`) to validate completed character sheets.
+
+### 7. Setup Agent (`ScenarioExtractorAgent`)
+*   **Role**: Unified scenario compiler.
+*   **Key Functions**:
+    *   Processes PDF adventure modules via a 5-pass sequential extraction (Entities, Scene Nodes, Macro-structure, Global Clocks, and Metadata).
+    *   Generates the deterministic reference file `Memory/scenario_structure.json`.
+
+### 8. Scene Graph Agent (`SceneGraphAgent`)
+*   **Role**: Scene mapper.
+*   **Key Functions**:
+    *   Extracts logical scene nodes and formats scene links, logical outputs, objectives, and anticipated NPC reactions into `Memory/scenes.json`.
+
+---
+
+## ⚡ Agnostic Character Creation System
+
+Traditional TTRPG digital assistants are hardcoded to specific systems (like D&D 5e). RPG Oracle is **entirely ruleset-agnostic**, using a dual-stage extraction and dynamic validation pipeline.
+
+```mermaid
+graph TD
+    A[Core Rules PDFs in data/core/] --> B[ManualGeneratorAgent]
+    B -->|1. Discovery Phase| C[Identify unique ruleset components e.g. Aspects, Playbooks]
+    B -->|2. Generation Phase| D[Create Memory/creation_manual.json]
+    B -->|3. Schema Extraction| E[Create Memory/character_schema.json]
+    F[CharacterCreator Chat] --> G[SheetManagerAgent Audit]
+    G --> H[Validate sheet against Memory/character_schema.json]
+    H -->|Complete| I[Transition to SUMMARY State]
+    H -->|Missing Fields| F
+```
+
+1.  **Component Discovery**: `ManualGeneratorAgent` uses a specialized discovery prompt to scan raw rules documents. It detects the exact terminology used by the ruleset (whether it uses D&D-style Classes/Races, Numenera-style Type/Descriptor/Focus, or Powered by the Apocalypse Playbooks) and bypasses hardcoded templates.
+2.  **Dynamic Handbooks & Schemas**: It compiles these rules into:
+    *   `Memory/creation_manual.json`: The technical steps and limits (e.g., "Choose 3 skills", "Distribute 15 points") used to guide the player.
+    *   `Memory/character_schema.json`: A dynamically compiled JSON schema defining the fields (and nested properties) required for a complete character sheet in this ruleset.
+3.  **Two-Step Decoupled Creation**:
+    *   The `CharacterCreator` guides the player narratively without halting to produce complex JSON blocks.
+    *   When the player finishes, the `SheetManagerAgent` executes an `audit_and_complete` call, reviewing the whole chat transcript to extract stats, items, and attributes.
+4.  **Schema-Based Validation**: The Orchestrator calls `validate_character_sheet()`, checking the extracted sheet against the ruleset's dynamic `character_schema.json`. If missing fields are found, the creator prompts the player for them; otherwise, the state transitions cleanly to `SUMMARY`.
+
+---
+
+## ⚙️ Game State Engine (Pure Python / Zero LLM)
+
+To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle separates narration from mathematics. The `GameStateEngine` (`game_state_engine.py`) is a pure-Python, zero-LLM engine that acts as the absolute source of truth for stats and resources.
+
+### Key Capabilities
+*   **Resource Tracking**: Manages HP, XP, generic consumable pools (e.g., Rage, Inspiration), and structured spell slots (e.g., `niveau_1` to `niveau_9`).
+*   **Automatic Action Detection**: Analyzes player input for mechanical keywords (e.g., "cast", "rage", "rest") to flag action consumption or trigger restoration before generating responses.
+*   **Derived Stat Recalculation**: The `synchronize_and_recalculate()` method handles stat dependencies (e.g., normalizing legacy HP fields, converting base attributes to modifiers, and capping current pools at maximums).
+*   **Resting Mechanics**: Handles standard resting states:
+    *   `long`: Complete restoration of all HP, spell slots, and generic daily resource pools.
+    *   `short`: Partial restoration (e.g., healing 25% of max HP, recovering short-rest capabilities).
+*   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
 
 ---
 
 ## 📂 Scenario Reference & State Models
 
-Narrative progression is tracked **deterministically** through static reference and active state JSON files.
+RPG Oracle manages adventure progression deterministically, keeping static plot structures separated from the active session state.
 
 ### 1. `Memory/scenario_structure.json`
 Acts as the static scenario blueprint. No RAG is performed on this file.
@@ -146,140 +195,120 @@ Tracks the active progression state of the running adventure session.
 
 ---
 
-## 🔄 Data Flows
+## 🛠️ Scenario Loading & Self-Healing Pipeline
 
-### Character Creation Flow
-```mermaid
-sequenceDiagram
-    participant Player
-    participant CC as Character Creator
-    participant RAG as Core RAG (Rules)
-    participant Mem as Memory (character.json)
+During world setup (`setup_world()`), the system ensures scenario files are clean, valid, and highly optimized:
 
-    Player->>CC: Input (Name, Choice, etc.)
-    CC->>RAG: Query Rules
-    RAG-->>CC: Rule Context
-    CC->>Player: Narrative Proposal + JSON State
-    CC->>Mem: Update JSON
-```
+### 1. Source Detection
+The orchestrator scans `data/scenario/` for resources:
+*   **Single JSON File**: Directly loads and validations the file as the blueprint.
+*   **Multiple JSON Files**: Raises a `ValueError` to prevent session collisions.
+*   **No JSON Files (PDFs only)**: Begins the 5-pass extraction using `ScenarioExtractorAgent`.
 
-### Adventure Initialization
-```mermaid
-graph TD
-    A[Character Completed] --> B{Scan data/scenario/ JSON files}
-    B -->|Exactly 1 JSON file| C[Directly load & validate JSON]
-    B -->|Multiple JSON files| D[Raise ValueError]
-    B -->|0 JSON files / only PDFs| E[ScenarioExtractorAgent 5-Pass Extraction]
-    C --> F[Generate validated scenario_structure.json]
-    E --> F
-    F --> G[Initialize progression.json]
-    G --> H[Generate Introduction]
-    H --> I[Start Adventure Mode]
-```
+### 2. Static Validation & Self-Healing
+Every loaded scenario runs through a strict validation suite in `validation.py` before execution starts:
+*   **Orphan Cleanups**: Replaces invalid PNJ, scene, or place references with `null` or removes them with warning logs.
+*   **Bidirectional Act-Scene Alignment**: Auto-synchronizes scenes pointing to acts and acts listing scenes, correcting missing cross-references dynamically.
+*   **Duplicate ID Detection**: Detects duplicated entity or scene IDs across collections to prevent silent state overrides.
+*   **Seuil Defaulting**: Missing global clock thresholds auto-heal to a default of `6`.
+*   **Blocking Validation**: If critical fields (like `condition_resolution` or `acte_rattache_id`) are missing, the validator halts initialization and flags a manual fix or re-extraction.
 
-### 🛠️ Scenario Loading: Source Detection, Validation & Optimization
+### 3. Full-Text Bypass Optimization
+Standard RAG similarity searches can fail to resolve context for shorter modules. If a scenario's concatenated text length is under `SCENARIO_FULLTEXT_THRESHOLD_CHARS` (default: `40000`), the extractor **bypasses semantic search completely**, feeding the complete raw text directly to all extraction passes to guarantee absolute structural context.
 
-#### 1. Source Detection in `data/scenario/`
-During the world setup phase (`setup_world()`), before any extraction agent is called, the system scans `data/scenario/` for JSON files:
-* **Exactly One JSON File**: The system assumes this is a pre-structured scenario (e.g., generated externally). It bypasses `ScenarioExtractorAgent` completely, loads the JSON, and runs it through the validation suite.
-* **Multiple JSON Files**: The system raises a `ValueError` indicating that only one structured scenario can be loaded at a time.
-* **No JSON Files (PDFs only)**: The system starts the extraction pipeline using `ScenarioExtractorAgent` on the indexed PDF. The raw output is then passed to the validation suite.
+---
 
-Regardless of the source (pre-structured JSON or extracted PDF), the final result is written to `Memory/scenario_structure.json` and loaded as the static blueprint.
+## 🔄 Core Gameplay Loop (Adventure Mode)
 
-#### 2. Robust Static Validation & Self-Healing
-Every loaded or extracted scenario must pass the `validate_scenario_structure()` suite located in `validation.py`. This ensures consistency without silent failures:
-* **Orphan References**: Invalid PNJ, scene, or place references (such as unknown `lieu_rattache_id` or `pnj_presents` lists) are automatically cleaned and set to `null`/removed with warnings.
-* **PNJ Localization**: Checks if `pnj.localisation_habituelle` references a valid place ID. If not, it resets it to `null` with a warning.
-* **Duplicate ID Detection**: Detects any duplicate entity IDs (PNJs, Places, Scenes, Acts) across lists to prevent downstream lookups from silently overriding data.
-* **Bidirectional Scene-Act Coherence**: If a scene points to an act, but the act does not list the scene under `scenes_incluses`, it is auto-repaired and synchronized.
-* **Clock Defaulting**: If an global clock has a missing `seuil` value, it defaults to `6` with a warning.
-* **Blocking Errors**: If critical elements (such as `condition_resolution` on a scene, or an unknown `acte_rattache_id`) are missing, the system generates blocking errors and **refuses to start the game**, prompting a manual fix or re-extraction.
-
-#### 3. Short Scenario Optimization (Full-Text Bypassing)
-For shorter scenarios, standard semantic similarity searches (RAG) can fail to retrieve distinct chunks. To optimize:
-* The system measures the total length of concatenated pages reconstructed in page sequence from `scenario_store`.
-* If the total character count is under the threshold `SCENARIO_FULLTEXT_THRESHOLD_CHARS` (default: `40000`), the `ScenarioExtractorAgent` **bypasses similarity RAG search** and passes the complete source text to all 5 extraction passes.
-* This guarantees that the LLM has complete context, resolving RAG discrimination issues for small volumes of text.
-
-### Core Gameplay Loop (Adventure Mode)
 ```mermaid
 sequenceDiagram
     participant Player
     participant Orch as Orchestrator (RPGAgent)
-    participant CL as Action Classifier (3-branch LLM)
-    participant Narr as Narrator
-    participant SM as Sheet Manager
-    participant Chron as Chronicle
+    participant GSE as GameStateEngine (Python)
+    participant CL as Action Classifier (LLM)
+    participant Narr as Narrator (LLM)
 
-    Player->>Orch: Action
-    Orch->>Orch: Technical & Mechanics Analysis (Rules RAG)
-    Orch->>CL: Classify Action (transition / improvisation / contournement)
-    CL-->>Orch: Category + Next Scene ID + Clocks + Ecart Notable
-    Orch->>Orch: Deterministically update progression.json & check Clocks
-    Orch->>Narr: Narrative instructions (Structured Context Lookup + Roll Results)
-    Narr->>Player: Immersive Response
-    Orch->>SM: (Async) Update Character Sheet
-    Orch->>Chron: (Async) Update Chronicle (with ecart_notable/clock consequence)
+    Player->>Orch: Action Input (e.g. "I cast Fireball")
+    Orch->>GSE: Auto-detect & validate resource usage
+    alt Resource Available
+        GSE-->>Orch: Success (Deduct slot)
+    else Depleted
+        GSE-->>Orch: Blocked reason (Fail or warn)
+    end
+    Orch->>CL: Classify player action relative to scene's objective
+    CL-->>Orch: Classification (transition / improvisation / contournement) + clocks
+    Orch->>GSE: Apply physical updates (damage, healing, rests)
+    Orch->>Orch: Update progression.json & check clock consequences
+    Orch->>Narr: Final Structured MJ Instructions (Mechanical status + Context lookup)
+    Narr->>Player: Immersive Response (Perception, tension, action hook) + Info Summary block
 ```
 
 ---
 
 ## 📚 RAG & Indexing
 
-The project uses a dual-path RAG system to separate general rules from specific adventure plots.
+RPG Oracle runs a bilingual dual-path vector store system to split system rules from story plots.
 
 ### Directory Structure
-*   `data/core/`: Place PDFs containing general game rules, world settings, and bestiaries here.
-*   `data/scenario/`: Place PDFs containing the specific adventure module or campaign plot here.
+*   `data/core/`: Place PDFs containing system mechanics, world setting guidelines, and bestiaries.
+*   `data/scenario/`: Place PDFs containing adventure structures, scenario books, or campaign logs.
 
 ### Using the Indexer
-The `indexer.py` script processes these PDFs into a ChromaDB vector store.
+Run the custom CLI script `indexer.py` to index rules, compile character handbooks, and reset databases:
 ```bash
-# Basic indexing
+# Basic indexing of core and scenario folders
 python indexer.py
 
-# Clear existing database and re-index
-python indexer.py --clear
+# Wipe Chroma DB, clear Memory/, re-index rules, and generate manuals
+python indexer.py --reset
+
+# Index rules only
+python indexer.py --core
+
+# Index scenario documents only
+python indexer.py --scenario
+
+# Re-run character handbook generation only
+python indexer.py --pj
 ```
-*Note: The system supports bilingual RAG. Queries are generated in both French and English to ensure maximum retrieval accuracy from diverse source materials.*
 
 ---
 
 ## ⚙️ Configuration (.env)
 
-The system is highly configurable via the `.env` file. You can assign different models and temperatures to each agent.
+Adjust settings and models individually per agent:
 
 | Variable | Description |
 | :--- | :--- |
-| `LLM_PROVIDER` | `ollama` or `openai` (compatible with llama-cpp) |
-| `LLM_MODEL` | Default fallback model |
-| `CHARACTER_MODEL` | Model specialized in rule-heavy character creation |
-| `NARRATOR_MODEL` | Model specialized in creative writing |
-| `ORCHESTRATOR_MODEL` | High-reasoning model for MJ logic |
-| `RAG_SEARCH_K` | Number of document chunks to retrieve (default: 12) |
-| `SCENARIO_FULLTEXT_THRESHOLD_CHARS` | Character length threshold under which raw full text is passed directly to the scenario extractor instead of using semantic search (default: 40000) |
-| `SERVER_PORT` | Streamlit port (default: 8501) |
+| `LLM_PROVIDER` | `ollama` or `openai` (or any compatible OpenAI endpoints) |
+| `LLM_MODEL` | Default fallback model name |
+| `CHARACTER_MODEL` | Specialized rules model for character creation |
+| `NARRATOR_MODEL` | Creative model for immersive narrative prose |
+| `ORCHESTRATOR_MODEL` | High-reasoning model for MJ state logic |
+| `RAG_SEARCH_K` | Number of rules chunks to retrieve (default: 12) |
+| `SCENARIO_FULLTEXT_THRESHOLD_CHARS` | Threshold under which the full scenario text is processed directly (default: 40000) |
+| `CORE_FULLTEXT_THRESHOLD_CHARS` | Threshold under which the full core rules text is processed directly (default: 40000) |
+| `SERVER_PORT` | Streamlit server port (default: 8501) |
 
 ---
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-*   **Python 3.9 to 3.13**: (Python 3.14+ is currently incompatible with ChromaDB/Pydantic V1).
-*   An LLM Backend (Ollama or an OpenAI-compatible API).
+*   **Python 3.9 to 3.13** (Note: Python 3.14+ is currently unsupported due to ChromaDB dependencies).
+*   An LLM backend (Ollama, llama.cpp, or OpenAI compatible APIs).
 
 ### Installation
-1.  Install dependencies:
+1.  Install pinned dependencies:
     ```bash
     python -m pip install -r requirements.txt
     ```
-2.  Configure your environment:
+2.  Setup environment variables:
     ```bash
     cp .env.example .env
-    # Edit .env with your model names and URLs
+    # Edit .env to set your LLM providers and models
     ```
-3.  Index your data:
+3.  Index system files:
     ```bash
     python indexer.py
     ```
@@ -290,11 +319,11 @@ The system is highly configurable via the `.env` file. You can assign different 
 
 ---
 
-## 💾 Session Management & State Deletion
-The system automatically saves game state in the `Memory/` directory:
-*   `character.json`: Current character sheet.
-*   `scenario_structure.json`: Loaded static structural blueprint.
-*   `progression.json`: Running story and scenario state.
-*   `Chronicle.json`: Running narrative summary.
+## 💾 Session Management & Save States
+Session state is written to the `Memory/` directory:
+*   `character.json`: Current active character sheet.
+*   `scenario_structure.json`: Loaded static structural scenario reference.
+*   `progression.json`: Active campaign progression, completed scenes, and horloges.
+*   `Chronicle.json`: Running story and narrative timeline.
 
-*   **Resetting Session**: Calling `clear_history()` resets the active session by deleting `character.json`, `Chronicle.json`, and `progression.json`, while **preserving** `scenario_structure.json` as a static blueprint.
+*   **Resetting Session**: Calling `clear_history()` resets the active session by deleting `character.json`, `Chronicle.json`, and `progression.json`, while **preserving** `scenario_structure.json` as a static reference blueprint.
