@@ -202,12 +202,83 @@ class GameStateEngine:
             msg += " — MONTÉE DE NIVEAU disponible !"
         return ActionResult(success=True, message=msg, state_changes={"xp": {"avant": current_xp, "apres": new_xp}, "level_up": level_up})
 
-    def rest(self, rest_type: str = "long") -> ActionResult:
-        """
-        Applique un repos.
-        rest_type = "long"  → restaure tout (PV, sorts, ressources)
-        rest_type = "short" → restaure PV uniquement (ou ressources courtes)
-        """
+    def _load_recovery_rules(self) -> dict:
+        path = "Memory/recovery_rules.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"paliers_repos": []}
+
+    def rest(self, palier_id: str = "long") -> ActionResult:
+        recovery_rules = self._load_recovery_rules()
+        palier = next((p for p in recovery_rules.get("paliers_repos", []) if p["id"] == palier_id), None)
+
+        # Fallback to legacy resting logic if palier is not found but it is a standard legacy type (long or short)
+        if not palier:
+            if palier_id in ("long", "short"):
+                return self._legacy_rest(palier_id)
+            return ActionResult(success=False, message=f"Palier de récupération '{palier_id}' inconnu.")
+
+        ressources = self.state.get("ressources", {})
+        restored = []
+
+        for effet in palier.get("effets", []):
+            chemin = effet.get("ressource", "")
+            parts = chemin.split(".", 1)
+            cle = parts[1] if len(parts) > 1 and parts[0] == "ressources" else chemin
+            res = ressources.get(cle, {})
+
+            # Handle nested sub-dicts
+            if isinstance(res, dict) and "max" not in res:
+                is_sub_dict = any(isinstance(v, dict) and "max" in v for v in res.values())
+                if is_sub_dict:
+                    for sub_key, sub_res in res.items():
+                        if isinstance(sub_res, dict) and "max" in sub_res:
+                            action = effet.get("action")
+                            val_key = "actuels" if sub_key == "points_de_vie" else "restants"
+                            if action == "restaurer_complet":
+                                sub_res[val_key] = sub_res["max"]
+                            elif action == "restaurer_pourcentage":
+                                gain = max(1, sub_res["max"] * effet.get("valeur", 100) // 100)
+                                sub_res[val_key] = min(sub_res["max"], sub_res.get(val_key, 0) + gain)
+                            elif action == "restaurer_valeur_fixe":
+                                gain = effet.get("valeur", 0)
+                                sub_res[val_key] = min(sub_res["max"], sub_res.get(val_key, 0) + gain)
+                    restored.append(cle)
+                    continue
+
+            if not isinstance(res, dict) or "max" not in res:
+                continue
+
+            val_key = "actuels" if cle == "points_de_vie" else "restants"
+            action = effet.get("action")
+            if action == "restaurer_complet":
+                res[val_key] = res["max"]
+            elif action == "restaurer_pourcentage":
+                gain = max(1, res["max"] * effet.get("valeur", 100) // 100)
+                res[val_key] = min(res["max"], res.get(val_key, 0) + gain)
+            elif action == "restaurer_valeur_fixe":
+                gain = effet.get("valeur", 0)
+                res[val_key] = min(res["max"], res.get(val_key, 0) + gain)
+            else:
+                continue
+            restored.append(cle)
+
+        if "points_de_vie" in ressources:
+            self.state["pv"] = ressources.get("points_de_vie", {}).get("actuels", self.state.get("pv", 0))
+
+        self.state["ressources"] = ressources
+        self.save()
+        return ActionResult(
+            success=True,
+            message=f"Repos '{palier['nom']}' effectué. Restauré : {', '.join(restored) if restored else 'rien'}.",
+            state_changes={"rest": palier_id, "restored": restored}
+        )
+
+    def _legacy_rest(self, rest_type: str = "long") -> ActionResult:
         ressources = self.state.get("ressources", {})
         restored = []
 
@@ -235,7 +306,7 @@ class GameStateEngine:
                     restored.append(key)
 
         elif rest_type == "short":
-            # Uniquement PV (règle générique — à affiner selon le système)
+            # Uniquement PV
             pv = ressources.get("points_de_vie", {})
             if pv:
                 heal = max(1, pv.get("max", 1) // 4)
@@ -304,6 +375,12 @@ class GameStateEngine:
         Retourne une clé d'action ou None si pas d'action mécanique détectée.
         """
         text = user_input.lower()
+
+        recovery_rules = self._load_recovery_rules()
+        for palier in recovery_rules.get("paliers_repos", []):
+            if any(kw.lower() in text for kw in palier.get("declencheurs_texte", [])):
+                return f"rest:{palier['id']}"
+
         if any(w in text for w in ["lance", "utilise", "sort", "magie", "spell", "incantation"]):
             return "spell"
         if any(w in text for w in ["rage", "berserk", "fureur"]):

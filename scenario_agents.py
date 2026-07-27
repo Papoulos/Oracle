@@ -680,3 +680,205 @@ Réponds UNIQUEMENT avec un JSON valide suivant EXACTEMENT ce schéma :
 
         log(f"✓ Graphe de scènes généré ({len(scenes_data['scenes'])} scènes) dans Memory/scenes.json.")
         return scenes_data
+
+
+DISCOVERY_RECOVERY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Tu es un expert en systèmes de jeu de rôle.
+À partir des extraits de règles ci-dessous, identifie les MÉCANISMES DE RÉCUPÉRATION
+DE RESSOURCES (repos, downtime, guérison entre les rencontres) propres à CE système,
+avec leurs noms EXACTS. Certains systèmes ont deux paliers (repos long/court), d'autres
+plusieurs paliers différents (ex: récupération à 10 minutes / 1 heure / 10 heures /
+24 heures), d'autres quasiment aucune récupération automatique (guérison lente sur
+plusieurs jours par exemple). Ne suppose jamais un modèle "long/court" par défaut.
+
+Réponds UNIQUEMENT avec :
+```json
+{{"paliers": ["nom exact du palier 1", "nom exact du palier 2"]}}
+```
+Liste vide si le système n'a pas de mécanisme de récupération formalisé."""),
+    ("human", "EXTRAITS DU CODEX :\n{context}"),
+])
+
+EXTRACTION_RECOVERY_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Pour CHAQUE palier de récupération listé, précise son déclencheur et
+les ressources qu'il restaure. Utilise UNIQUEMENT ces trois types d'effet :
+- "restaurer_complet" : la ressource revient à son maximum.
+- "restaurer_pourcentage" : remonte d'un pourcentage du maximum ("valeur": entier 1-100).
+- "restaurer_valeur_fixe" : remonte d'une valeur fixe ("valeur": entier). Si les règles
+  indiquent un jet de dés, utilise une estimation raisonnable de sa moyenne.
+
+Le champ "ressource" de chaque effet DOIT correspondre EXACTEMENT à l'un des chemins
+suivants (issus du schéma de personnage déjà généré pour ce système) : {ressources_connues}
+Si aucune ressource connue ne correspond à ce que décrivent les règles, ignore cet effet
+plutôt que d'inventer un nom de ressource.
+
+PALIERS À DÉTAILLER : {paliers}
+
+Réponds UNIQUEMENT avec :
+```json
+{{
+  "paliers_repos": [
+    {{
+      "id": "identifiant_court_sans_espaces",
+      "nom": "nom exact du palier",
+      "declencheurs_texte": ["variante 1", "variante 2"],
+      "effets": [{{"ressource": "chemin_exact_connu", "action": "restaurer_complet", "valeur": null}}]
+    }}
+  ]
+}}
+```"""),
+    ("human", "EXTRAITS DU CODEX :\n{context}"),
+])
+
+DISCOVERY_ACTIONS_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Identifie les ACTIONS COURANTES qu'un personnage peut entreprendre en
+jeu (combat, discrétion, persuasion, perception, etc.) et qui nécessitent une résolution
+par les règles (jet de dé, comparaison à un seuil). Utilise les noms EXACTS de ce système.
+
+Réponds UNIQUEMENT avec :
+```json
+{{"actions": ["nom exact action 1", "nom exact action 2"]}}
+```"""),
+    ("human", "EXTRAITS DU CODEX :\n{context}"),
+])
+
+EXTRACTION_ACTIONS_PROMPT = ChatPromptTemplate.from_messages([
+    ("system", """Pour CHAQUE action listée, précise comment elle se résout dans ce
+système : quel jet, quelle caractéristique/compétence, contre quoi, et les conséquences
+de succès/échec.
+
+ACTIONS À DÉTAILLER : {actions}
+
+Réponds UNIQUEMENT avec :
+```json
+{{
+  "actions_courantes": [
+    {{
+      "nom": "nom exact de l'action",
+      "declencheurs": ["variante 1", "variante 2"],
+      "resolution": "description de la mécanique de résolution",
+      "en_cas_de_succes": "...",
+      "en_cas_d_echec": "..."
+    }}
+  ]
+}}
+```"""),
+    ("human", "EXTRAITS DU CODEX :\n{context}"),
+])
+
+
+class GameplayRulesAgent(BaseAgent):
+    def __init__(self, core_store):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+        self.core_store = core_store
+
+    def _load_character_schema(self) -> dict:
+        path = "Memory/character_schema.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"champs_requis": []}
+
+    def generate_recovery_rules(self, log_callback=None) -> dict:
+        def log(msg):
+            (log_callback or print)(f"[GameplayRules] {msg}")
+
+        character_schema = self._load_character_schema()
+
+        full_core = get_full_store_text(self.core_store, log)
+        if full_core and len(full_core) <= config.CORE_FULLTEXT_THRESHOLD_CHARS:
+            context_decouverte = full_core
+        else:
+            context_decouverte = get_relevant_context(
+                self.core_store,
+                ["repos, récupération, guérison entre les rencontres, downtime, recovery, healing"],
+                log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
+            )
+
+        paliers = []
+        if context_decouverte.strip():
+            try:
+                resp = (DISCOVERY_RECOVERY_PROMPT | self.llm).invoke({"context": context_decouverte})
+                result = extract_json(resp.content, expected_type=dict)
+                paliers = result.get("paliers", []) if result else []
+            except Exception as e:
+                log(f"⚠ Erreur découverte paliers de récupération : {e}")
+
+        if not paliers:
+            log("Aucun palier de récupération détecté - le système n'en a peut-être pas (ex: guérison lente).")
+            recovery_rules = {"paliers_repos": []}
+        else:
+            log(f"Paliers découverts : {paliers}")
+            queries = [f"{p}, récupération, repos" for p in paliers]
+            context_extraction = get_relevant_context(
+                self.core_store, queries, log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
+            )
+            ressources_connues = [
+                f["chemin"] for f in character_schema.get("champs_requis", [])
+                if f["chemin"].startswith("ressources.")
+            ]
+            try:
+                resp = (EXTRACTION_RECOVERY_PROMPT | self.llm).invoke({
+                    "paliers": json.dumps(paliers, ensure_ascii=False),
+                    "ressources_connues": json.dumps(ressources_connues, ensure_ascii=False),
+                    "context": context_extraction,
+                })
+                recovery_rules = extract_json(resp.content, expected_type=dict) or {"paliers_repos": []}
+            except Exception as e:
+                log(f"⚠ Erreur extraction des règles de récupération : {e}")
+                recovery_rules = {"paliers_repos": []}
+
+        with open("Memory/recovery_rules.json", "w", encoding="utf-8") as f:
+            json.dump(recovery_rules, f, indent=4, ensure_ascii=False)
+        log(f"✓ {len(recovery_rules.get('paliers_repos', []))} palier(s) de récupération sauvegardé(s).")
+        return recovery_rules
+
+    def generate_action_catalog(self, log_callback=None) -> dict:
+        def log(msg):
+            (log_callback or print)(f"[GameplayRules] {msg}")
+
+        full_core = get_full_store_text(self.core_store, log)
+        if full_core and len(full_core) <= config.CORE_FULLTEXT_THRESHOLD_CHARS:
+            context_decouverte = full_core
+        else:
+            context_decouverte = get_relevant_context(
+                self.core_store,
+                ["actions de combat, tests de compétence, résolution d'action, combat actions, skill checks"],
+                log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
+            )
+
+        actions = []
+        if context_decouverte.strip():
+            try:
+                resp = (DISCOVERY_ACTIONS_PROMPT | self.llm).invoke({"context": context_decouverte})
+                result = extract_json(resp.content, expected_type=dict)
+                actions = result.get("actions", []) if result else []
+            except Exception as e:
+                log(f"⚠ Erreur découverte des actions courantes : {e}")
+
+        if not actions:
+            log("⚠ Aucune action courante détectée - le catalogue restera vide, le RAG sera utilisé systématiquement.")
+            action_catalog = {"actions_courantes": []}
+        else:
+            log(f"Actions découvertes : {actions}")
+            queries = [f"{a}, résolution, jet de dé" for a in actions]
+            context_extraction = get_relevant_context(
+                self.core_store, queries, log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
+            )
+            try:
+                resp = (EXTRACTION_ACTIONS_PROMPT | self.llm).invoke({
+                    "actions": json.dumps(actions, ensure_ascii=False),
+                    "context": context_extraction,
+                })
+                action_catalog = extract_json(resp.content, expected_type=dict) or {"actions_courantes": []}
+            except Exception as e:
+                log(f"⚠ Erreur extraction du catalogue d'actions : {e}")
+                action_catalog = {"actions_courantes": []}
+
+        with open("Memory/action_catalog.json", "w", encoding="utf-8") as f:
+            json.dump(action_catalog, f, indent=4, ensure_ascii=False)
+        log(f"✓ {len(action_catalog.get('actions_courantes', []))} action(s) courante(s) sauvegardée(s).")
+        return action_catalog

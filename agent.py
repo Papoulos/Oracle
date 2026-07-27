@@ -695,6 +695,16 @@ Réponds UNIQUEMENT avec le bloc JSON :
                 pass
         return {"champs_requis": [{"chemin": "nom", "type": "string"}]}
 
+    def _load_action_catalog(self) -> dict:
+        path = "Memory/action_catalog.json"
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {"actions_courantes": []}
+
     def _check_resources(self, action):
         """Vérifie si l'action consomme une ressource et si elle est disponible."""
         if not self.character_data or "ressources" not in self.character_data:
@@ -815,7 +825,6 @@ Réponds UNIQUEMENT avec ce JSON :
                 self.history.add_ai_message(msg)
                 return msg
 
-            core_context = self.get_core_context(user_input, k=config.RAG_K_ADVENTURE)
             scenario_context = self.get_scenario_context(user_input, k=config.RAG_K_ADVENTURE)
             npcs_summary = self.get_npcs_context()
             chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
@@ -829,6 +838,9 @@ Réponds UNIQUEMENT avec ce JSON :
                 mechanical_result = self.gse.consume_spell_slot(spell_level)
             elif action_type == "rage":
                 mechanical_result = self.gse.consume_resource("points_de_rage")
+            elif action_type and action_type.startswith("rest:"):
+                palier_id = action_type.split(":", 1)[1]
+                mechanical_result = self.gse.rest(palier_id)
             elif action_type == "rest":
                 rest_type = "long" if any(w in user_input.lower() for w in ["long", "nuit", "camp"]) else "short"
                 mechanical_result = self.gse.rest(rest_type)
@@ -844,69 +856,111 @@ Réponds UNIQUEMENT avec ce JSON :
             state_summary = self.gse.get_state_summary()
             self.character_data = self.gse.state # Sync avant l'analyse
 
-            # 1. L'Orchestrateur analyse l'action avec le Codex (règles)
-            analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
-            Basé sur les RÈGLES du CODEX suivantes :
-            {core_context}
+            # Catalogue d'actions avant RAG systématique
+            action_catalog = self._load_action_catalog()
+            analysis_json = None
 
-            Historique de l'aventure (Chronique) :
-            {chronicle_text}
+            if action_catalog.get("actions_courantes"):
+                catalog_prompt = f"""Analyse l'action du joueur : "{user_input}"
 
-            PNJs présents et leurs secrets (si pertinent) :
-            {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
+CATALOGUE D'ACTIONS COURANTES DE CE SYSTÈME :
+{json.dumps(action_catalog, ensure_ascii=False, indent=2)}
 
-            ÉTAT MÉCANIQUE : {state_summary}
-            {mechanical_context}
+Historique de l'aventure (Chronique) :
+{chronicle_text}
 
-            Selon le personnage ({json.dumps(self.character_data, ensure_ascii=False)}), un jet de dé est-il nécessaire ?
-            Si oui, identifie le bonus approprié en appliquant RIGOUREUSEMENT les règles du CODEX ci-dessus à la fiche de personnage du joueur.
-            Détermine aussi si cette action ou ses conséquences immédiates entraînent des dégâts, des soins ou un gain d'XP.
+PNJs présents et leurs secrets (si pertinent) :
+{json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
-            Réponds au format JSON :
-            {{
-                "need_roll": boolean,
-                "stat": "nom_stat_ou_null",
-                "bonus": integer_ou_null,
-                "calculation_breakdown": "explication du bonus (ex: +3 Force, +2 Athlétisme)",
-                "dc": integer_ou_null,
-                "reason": "explication courte",
-                "mechanical_decision": {{
-                    "action": "damage" | "heal" | "xp" | null,
-                    "amount": integer_ou_null
+ÉTAT MÉCANIQUE : {state_summary}
+{mechanical_context}
+
+Cette action correspond-elle à une entrée du catalogue ci-dessus ? Si oui, applique sa
+résolution à la fiche du personnage ({json.dumps(self.character_data, ensure_ascii=False)}).
+Si l'action ne correspond à AUCUNE entrée, réponds "couvert_par_catalogue": false SANS
+deviner - le système ira chercher dans les règles complètes.
+
+Réponds au format JSON :
+{{
+    "couvert_par_catalogue": boolean,
+    "need_roll": boolean, "stat": "nom_stat_ou_null", "bonus": integer_ou_null,
+    "calculation_breakdown": "...", "dc": integer_ou_null, "reason": "...",
+    "mechanical_decision": {{"action": "damage" | "heal" | "xp" | null, "amount": integer_ou_null}}
+}}
+"""
+                try:
+                    analysis_response = self.llm.invoke(catalog_prompt).content
+                    analysis_json = extract_json(analysis_response, expected_type=dict)
+                except Exception as e:
+                    print(f"[RPGAgent] Erreur lors de l'analyse avec le catalogue : {e}")
+
+            if not analysis_json or analysis_json.get("couvert_par_catalogue") is False:
+                core_context = self.get_core_context(user_input, k=config.RAG_K_ADVENTURE)
+                analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
+                Basé sur les RÈGLES du CODEX suivantes :
+                {core_context}
+
+                Historique de l'aventure (Chronique) :
+                {chronicle_text}
+
+                PNJs présents et leurs secrets (si pertinent) :
+                {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
+
+                ÉTAT MÉCANIQUE : {state_summary}
+                {mechanical_context}
+
+                Selon le personnage ({json.dumps(self.character_data, ensure_ascii=False)}), un jet de dé est-il nécessaire ?
+                Si oui, identifie le bonus approprié en appliquant RIGOUREUSEMENT les règles du CODEX ci-dessus à la fiche de personnage du joueur.
+                Détermine aussi si cette action ou ses conséquences immédiates entraînent des dégâts, des soins ou un gain d'XP.
+
+                Réponds au format JSON :
+                {{
+                    "need_roll": boolean,
+                    "stat": "nom_stat_ou_null",
+                    "bonus": integer_ou_null,
+                    "calculation_breakdown": "explication du bonus (ex: +3 Force, +2 Athlétisme)",
+                    "dc": integer_ou_null,
+                    "reason": "explication courte",
+                    "mechanical_decision": {{
+                        "action": "damage" | "heal" | "xp" | null,
+                        "amount": integer_ou_null
+                    }}
                 }}
-            }}
-            """
-            analysis_response = self.llm.invoke(analysis_prompt).content
+                """
+                try:
+                    analysis_response = self.llm.invoke(analysis_prompt).content
+                    analysis_json = extract_json(analysis_response, expected_type=dict)
+                except Exception as e:
+                    print(f"[RPGAgent] Erreur lors de l'analyse avec le Codex : {e}")
+
             roll_info = ""
             roll_result = None
 
             try:
-                analysis_data = extract_json(analysis_response)
-                if not analysis_data:
-                    print(f"[RPGAgent] ✗ Échec de l'extraction JSON de l'analyse : {analysis_response[:200]}...")
-                    analysis_data = {"need_roll": False}
+                if not analysis_json:
+                    analysis_json = {"need_roll": False}
 
                 # Application de la décision mécanique de l'Orchestrateur (Actions réactives)
-                m_decision = analysis_data.get("mechanical_decision")
+                m_decision = analysis_json.get("mechanical_decision")
                 if m_decision and m_decision.get("action"):
                     m_res = self.gse.apply_orchestrator_decision(m_decision)
                     mechanical_context += f"\nDECISION MJ : {m_res.message}"
                     self.character_data = self.gse.state # Sync après décision
 
-                if analysis_data.get("need_roll"):
+                if analysis_json.get("need_roll"):
                     die_roll = self.roll_dice(20)
-                    bonus = analysis_data.get("bonus")
+                    bonus = analysis_json.get("bonus")
                     if bonus is None:
                         bonus = 0
                     total = die_roll + bonus
-                    stat_name = analysis_data.get("stat", "Inconnu")
-                    dc = analysis_data.get("dc", 10)
-                    breakdown = analysis_data.get("calculation_breakdown", f"bonus +{bonus}")
+                    stat_name = analysis_json.get("stat", "Inconnu")
+                    dc = analysis_json.get("dc", 10)
+                    breakdown = analysis_json.get("calculation_breakdown", f"bonus +{bonus}")
 
                     roll_info = f"Jet de {stat_name} (DC {dc}) : {die_roll} + {bonus} ({breakdown}) = {total}"
                     roll_result = "Succès" if total >= dc else "Échec"
             except Exception:
-                analysis_data = {"need_roll": False}
+                analysis_json = {"need_roll": False}
 
             # 2. Analyse de Scène de l'Orchestrateur (Transition / Improvisation / Contournement)
             scene_analysis_result = {
