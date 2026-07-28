@@ -47,20 +47,46 @@ The system uses specialized agents, each with dedicated prompts, LLM configurati
     *   Dynamically scans the Core vector store using rule-agnostic queries (e.g. searching for descriptors, playbooks, aspects, attributes instead of assuming generic D&D classes/races).
     *   Generates a structural creation handbook (`Memory/creation_manual.json`) and a rules-specific schema (`Memory/character_schema.json`) to validate completed character sheets.
 
-### 7. Setup Agent (`ScenarioExtractorAgent`)
+### 7. Gameplay Rules Agent (`GameplayRulesAgent`)
+*   **Role**: Extraction of gameplay and recovery rules (one-shot).
+*   **Key Functions**:
+    *   Discovers ruleset-specific recovery steps and builds a dynamic recovery ruleset (`Memory/recovery_rules.json`).
+    *   Identifies common player actions and rules-based resolution mechanics to compile a structured action catalog (`Memory/action_catalog.json`).
+
+### 8. Setup Agent (`ScenarioExtractorAgent`)
 *   **Role**: Unified scenario compiler.
 *   **Key Functions**:
     *   Processes PDF adventure modules via a 5-pass sequential extraction (Entities, Scene Nodes, Macro-structure, Global Clocks, and Metadata).
     *   Generates the deterministic reference file `Memory/scenario_structure.json`.
 
-### 8. Scene Graph Agent (`SceneGraphAgent`)
+### 9. Scene Graph Agent (`SceneGraphAgent`)
 *   **Role**: Scene mapper.
 *   **Key Functions**:
     *   Extracts logical scene nodes and formats scene links, logical outputs, objectives, and anticipated NPC reactions into `Memory/scenes.json`.
 
 ---
 
-## ⚡ Agnostic Character Creation System
+## ⚡ Two-Tiered Action Resolution (RAG-Bypass)
+
+To optimize ruleset resolution and eliminate repetitive, expensive RAG similarity search operations on identical actions (e.g. attacking, hiding, persuading), RPG Oracle leverages a **two-tiered lookup model**:
+
+```mermaid
+graph TD
+    A[Player Action] --> B{Action Catalog Loaded?}
+    B -->|Yes| C{Action covered by catalog?}
+    C -->|Yes (RAG Bypassed)| D[Apply Catalog-based Mechanical Resolution Prompt]
+    C -->|No| E[RAG Search on Core Rules Codex]
+    B -->|No| E
+    E --> F[Apply Standard Codex-based Mechanical Resolution Prompt]
+```
+
+1. **Pre-extracted Catalog**: The `GameplayRulesAgent` scans the Core rules on indexing and extracts common, ruleset-defined player actions and their specific resolution procedures (roll, key attributes, success/failure consequences) into `Memory/action_catalog.json`.
+2. **First Tier (Direct Match)**: When a player declares an action in `ADVENTURE` mode, the Orchestrator first evaluates it against the cached action catalog using a high-efficiency context prompt. If matched, it resolves the mechanical roll and consequences immediately.
+3. **Second Tier (Codex Fallback)**: If the action is not found in the catalog (`"couvert_par_catalogue": false`), the system falls back to a targeted similarity search (RAG) on the complete rules Codex to dynamically extract the resolution method.
+
+---
+
+## ⚡ Agnostic Character Creation & Gameplay Systems
 
 Traditional TTRPG digital assistants are hardcoded to specific systems (like D&D 5e). RPG Oracle is **entirely ruleset-agnostic**, using a dual-stage extraction and dynamic validation pipeline.
 
@@ -95,9 +121,9 @@ To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle sep
 *   **Resource Tracking**: Manages HP, XP, generic consumable pools (e.g., Rage, Inspiration), and structured spell slots (e.g., `niveau_1` to `niveau_9`).
 *   **Automatic Action Detection**: Analyzes player input for mechanical keywords (e.g., "cast", "rage", "rest") to flag action consumption or trigger restoration before generating responses.
 *   **Derived Stat Recalculation**: The `synchronize_and_recalculate()` method handles stat dependencies (e.g., normalizing legacy HP fields, converting base attributes to modifiers, and capping current pools at maximums).
-*   **Resting Mechanics**: Handles standard resting states:
-    *   `long`: Complete restoration of all HP, spell slots, and generic daily resource pools.
-    *   `short`: Partial restoration (e.g., healing 25% of max HP, recovering short-rest capabilities).
+*   **Resting Mechanics**: Supports both ruleset-agnostic dynamic resting and standard/legacy fallbacks:
+    *   *Dynamic Recovery (Agnostic)*: Loads recovery tiers and triggers from `Memory/recovery_rules.json` and updates stats/resources dynamically based on the rule definition (e.g., full recovery, percentage recovery, flat recovery).
+    *   *Standard Fallbacks*: Restores 100% of all resource pools and HP on a legacy `long` rest, and 25% HP on a legacy `short` rest if no custom recovery rules are present.
 *   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
 
 ---
