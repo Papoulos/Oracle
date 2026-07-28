@@ -416,17 +416,25 @@ Réponds UNIQUEMENT avec un JSON de cette forme, entouré de balises ```json :
 
 DISCOVERY_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """Tu es un expert en analyse de systèmes de jeu de rôle.
-À partir des extraits de règles ci-dessous, identifie les GRANDES COMPOSANTES de
-la création de personnage dans CE système précis, en utilisant EXCLUSIVEMENT le
-vocabulaire propre à ce système - jamais de synonymes génériques type "race/classe"
-si le système ne les utilise pas. Certains systèmes utilisent des concepts très
-différents (ex: "Type/Descripteur/Focus", "Occupation", "Aspects", "Playbooks",
-"Origine/Voie/Vocation"...). Utilise les termes EXACTS des règles fournies.
+À partir des extraits de règles ci-dessous, dresse une liste EXHAUSTIVE de toutes les
+étapes et procédures concrètes de création de personnage décrites par CE texte, à la
+MÊME granularité que la source. Si la source énumère des étapes numérotées détaillées
+(ex: 14 étapes distinctes), liste les 14 séparément - NE RÉSUME JAMAIS plusieurs étapes
+numérotées de la source en une seule catégorie générique du type "méthode A" / "méthode B".
+Si le système propose plusieurs méthodes ou voies de création, liste séparément CHAQUE
+étape de CHAQUE méthode.
+
+N'invente aucune étape absente du texte. N'omets aucune étape présente, même mineure
+(ex: "noter les valeurs d'attaque", "choisir un alignement", "acheter l'équipement" sont
+des étapes à part entière si le texte les mentionne séparément).
+
+Utilise EXCLUSIVEMENT le vocabulaire propre à ce système - jamais de synonymes génériques
+type "race/classe" si le système ne les utilise pas.
 
 Réponds UNIQUEMENT avec un JSON de cette forme :
 ```json
 {{
-  "composantes": ["terme exact 1", "terme exact 2", "..."]
+  "composantes": ["étape/procédure exacte 1", "étape/procédure exacte 2", "..."]
 }}
 ```"""),
     ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
@@ -450,7 +458,7 @@ Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le jo
 Il doit être COMPLET sur toutes les étapes requises par le système de jeu, mais rester PUREMENT STRUCTUREL.
 
 CONSIGNES CRITIQUES :
-1. Liste TOUTES les étapes de création dans l'ordre logique requis par CE système, en utilisant EXCLUSIVEMENT la terminologie et les catégories propres à ce système. Ne suppose JAMAIS l'existence de composantes traditionnelles si les règles fournies n'en parlent pas explicitement - certains systèmes utilisent des concepts complètement différents (types, descripteurs, focus, occupations, aspects, réserves multiples, etc.).
+1. Liste TOUTES les étapes de création dans l'ordre logique requis par CE système, à la MÊME granularité que le texte source fourni - si la source énumère des étapes numérotées détaillées, reproduis cette même décomposition fine, ne résume JAMAIS plusieurs étapes numérotées de la source en une seule étape générique. Utilise EXCLUSIVEMENT la terminologie propre à ce système. N'INVENTE JAMAIS un concept absent des règles fournies (ex: ne mentionne pas d'espèce ou de profil traditionnel si le système n'en a pas). En revanche, si un concept existe réellement dans les règles (caractéristiques, points de vie, armure/protection, ou toute autre mécanique), il DOIT être détaillé intégralement et fidèlement - cette consigne d'agnosticisme ne justifie jamais de réduire le niveau de detail sur des mécaniques qui existent réellement dans ce système.
 2. Pour chaque étape, donne une description de la procédure à suivre.
 3. NE LISTE PAS les options spécifiques individuelles de CE système (par exemple pour un système à professions, ne liste pas de métiers précis). Indique simplement qu'il faut faire un choix dans chaque catégorie identifiée, quelle qu'elle soit dans ce système précis.
 4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
@@ -515,6 +523,12 @@ FORMAT JSON ATTENDUE :
             if composantes:
                 log(f"Composantes découvertes : {composantes}")
                 queries = [f"{c}, création de personnage" for c in composantes]
+                if len(composantes) < config.MIN_COMPOSANTES_DECOUVERTES:
+                    log(f"⚠ Seulement {len(composantes)} composante(s) découverte(s) - ajout de requêtes génériques de secours en complément.")
+                    queries += [
+                        "étapes numérotées de création de personnage, procédure complète",
+                        "caractéristiques, points de vie, équipement, capacités de classe",
+                    ]
             else:
                 log("⚠ Aucune composante découverte - repli sur des requêtes génériques.")
                 queries = [
@@ -564,12 +578,19 @@ FORMAT JSON ATTENDUE :
             schema = None
 
         if not schema or not schema.get("champs_requis"):
-            log("⚠ Schéma de fiche vide ou invalide - repli sur un schéma minimal (nom uniquement).")
-            schema = {"champs_requis": [{"chemin": "nom", "type": "string"}]}
+            log("✗ ERREUR : le schéma de fiche généré est vide ou invalide. Le fichier sera "
+                "quand même sauvegardé pour inspection, mais la validation le traitera comme "
+                "non-fiable et ne permettra AUCUNE transition automatique vers SUMMARY tant "
+                "qu'un schéma valide n'aura pas été régénéré ou corrigé manuellement.")
+            schema = schema or {"champs_requis": []}
 
         with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
             json.dump(schema, f, indent=4, ensure_ascii=False)
         log("✓ Schéma de fiche de personnage généré dans Memory/character_schema.json.")
+
+        if len(manual.get("etapes", [])) < 4:
+            log(f"⚠ Le manuel généré ne contient que {len(manual.get('etapes', []))} étape(s) "
+                f"- possible perte de détail, vérifier Memory/creation_manual.json manuellement.")
 
         return manual
 
