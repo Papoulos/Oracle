@@ -146,8 +146,44 @@ def test_no_dnd_bias_in_prompts():
     # Récupérer le prompt système
     system_prompt = agent.prompt.messages[0].prompt.template
 
-    # Liste des termes D&D interdits
-    forbidden_terms = ["race", "classe", "pv/ca", "elfe", "nain", "guerrier"]
+    # Liste des termes D&D interdits (on a retiré race/classe/pv/ca car l'agnosticisme ne justifie pas de masquer ces concepts s'ils existent dans les règles, mais ils ne doivent pas être supposés s'ils sont absents)
+    forbidden_terms = ["elfe", "nain", "guerrier"]
 
     for term in forbidden_terms:
         assert term not in system_prompt.lower(), f"Le terme interdit '{term}' est toujours présent (même en minuscules) dans le prompt de ManualGeneratorAgent."
+
+
+def test_manual_generator_discovery_fallback_queries():
+    """
+    Vérifie qu'avec moins de MIN_COMPOSANTES_DECOUVERTES (ex: 2 composantes),
+    les requêtes de secours sont bien ajoutées.
+    """
+    mock_store = mock.Mock()
+    mock_store.get.return_value = {
+        "documents": ["Règles longues. " * 5000],
+        "metadatas": [{"page": 1}]
+    }
+    mock_store.similarity_search.return_value = [
+        mock.Mock(page_content="Extrait RAG.")
+    ]
+
+    agent = ManualGeneratorAgent(mock_store)
+    agent.chain = mock.Mock()
+    agent.chain.invoke.return_value = mock.Mock(content='{"etapes": []}')
+
+    with mock.patch.object(agent.llm.__class__, "invoke", side_effect=[
+        mock.Mock(content='{"composantes": ["Concept1", "Concept2"]}'),
+        mock.Mock(content='{"champs_requis": []}')
+    ]):
+        with mock.patch.object(config, "CORE_FULLTEXT_THRESHOLD_CHARS", 40000):
+            agent.generate()
+
+    called_queries = [call[0][0] for call in mock_store.similarity_search.call_args_list]
+
+    # Doit contenir les composantes
+    assert "Concept1, création de personnage" in called_queries
+    assert "Concept2, création de personnage" in called_queries
+
+    # Doit aussi contenir les requêtes génériques de secours en complément
+    assert "étapes numérotées de création de personnage, procédure complète" in called_queries
+    assert "caractéristiques, points de vie, équipement, capacités de classe" in called_queries

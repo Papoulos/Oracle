@@ -167,8 +167,11 @@ def validate_character_sheet(character_data: dict, schema: dict) -> tuple[bool, 
       ]
     }
     """
-    if not character_data or not schema:
-        return False, [f["chemin"] for f in (schema or {}).get("champs_requis", [])] or ["character_data ou schema absent"]
+    if not character_data:
+        return False, ["character_data absent"]
+
+    if not schema or not schema.get("champs_requis"):
+        return False, ["schema de validation absent ou vide - la création ne peut pas être confirmée automatiquement, vérifier Memory/character_schema.json"]
 
     missing = []
 

@@ -98,14 +98,19 @@ def test_pure_validation_investigation_horror():
 
 
 def test_pure_validation_fallback_schema():
-    # Schéma absent / vide -> repli sur {"chemin": "nom", "type": "string"}
+    # Schéma absent / vide -> doit retourner False et un message clair
     is_complete, missing = validate_character_sheet({"nom": "Test"}, None)
     assert not is_complete
-    assert missing == ["character_data ou schema absent"]
+    assert "schema de validation absent ou vide" in missing[0]
+
+    # Schéma vide
+    is_complete_empty_schema, missing_empty_schema = validate_character_sheet({"nom": "Test"}, {"champs_requis": []})
+    assert not is_complete_empty_schema
+    assert "schema de validation absent ou vide" in missing_empty_schema[0]
 
     is_complete_empty, missing_empty = validate_character_sheet(None, {"champs_requis": [{"chemin": "nom", "type": "string"}]})
     assert not is_complete_empty
-    assert "nom" in missing_empty
+    assert "character_data absent" in missing_empty
 
 
 def test_orchestration_audit_triggered():
@@ -180,7 +185,7 @@ def test_orchestration_transition_no_audit_when_already_complete():
 
 def test_manual_generator_agent_schema_fallback():
     # Un test où ManualGeneratorAgent's appel LLM mocké pour le schéma renvoie un JSON invalide/vide
-    # -> vérifier le repli sur {"champs_requis": [{"chemin": "nom", "type": "string"}]} et que character_schema.json est écrit.
+    # -> vérifier le repli sur {"champs_requis": []} et que character_schema.json est écrit.
 
     # On vide la Memory au début
     schema_path = "Memory/character_schema.json"
@@ -195,7 +200,7 @@ def test_manual_generator_agent_schema_fallback():
 
     # On mocke l'appel invoke de self.chain (pour creation_manual)
     agent.chain = mock.Mock()
-    agent.chain.invoke.return_value = mock.Mock(content='{"etapes": []}')
+    agent.chain.invoke.return_value = mock.Mock(content='{"etapes": [{"etape": 1, "nom": "Etape 1", "description": "Desc"}, {"etape": 2, "nom": "Etape 2", "description": "Desc"}, {"etape": 3, "nom": "Etape 3", "description": "Desc"}, {"etape": 4, "nom": "Etape 4", "description": "Desc"}]}')
 
     # On mocke l'appel LLM pour le schéma afin qu'il lève une exception ou renvoie du texte vide
     agent.llm = mock.Mock()
@@ -203,8 +208,8 @@ def test_manual_generator_agent_schema_fallback():
 
     res = agent.generate()
 
-    assert res == {"etapes": []}
+    assert len(res.get("etapes", [])) == 4
     assert os.path.exists(schema_path)
     with open(schema_path, "r", encoding="utf-8") as f:
         written_schema = json.load(f)
-    assert written_schema == {"champs_requis": [{"chemin": "nom", "type": "string"}]}
+    assert written_schema == {"champs_requis": []}
