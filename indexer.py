@@ -10,7 +10,7 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 import chromadb
 import config
-from scenario_agents import ManualGeneratorAgent
+from scenario_agents import ManualGeneratorAgent, GameplayRulesAgent
 
 def get_embeddings():
     if config.EMBEDDING_PROVIDER == "ollama":
@@ -174,6 +174,11 @@ def main():
         )
         generator = ManualGeneratorAgent(core_store)
         generator.generate()
+
+        print("Génération des règles de récupération et du catalogue d'actions...")
+        gameplay_agent = GameplayRulesAgent(core_store)
+        gameplay_agent.generate_recovery_rules()
+        gameplay_agent.generate_action_catalog()
 
 if __name__ == "__main__":
     main()
