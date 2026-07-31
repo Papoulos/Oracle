@@ -14,17 +14,16 @@ def test_character_completion_transition():
 
     # Mock update_sheet directly to return the final character data with status complete
     agent.sheet_manager.update_sheet = mock.Mock(
-        return_value={"nom": "Test", "classe": "Guerrier", "statut": "complet"}
+        return_value={"name": "Test", "class": "Guerrier", "status": "complet"}
     )
 
     # Mock the character creator response
-    mock_json = '{"nom": "Test", "classe": "Guerrier"}'
+    mock_json = '{"name": "Test", "class": "Guerrier"}'
     mock_response = f"Voici votre personnage :\n```json\n{mock_json}\n```\nPrêt pour l'aventure ?"
 
     # Mock the internal call to character_creator.generate_response
     original_generate = agent.character_creator.generate_response
-    # Add statut: complet to trigger transition
-    mock_response_with_status = f"Voici votre personnage :\n```json\n" + json.dumps({"nom": "Test", "classe": "Guerrier", "statut": "complet"}) + "\n```\nPrêt pour l'aventure ?"
+    mock_response_with_status = f"Voici votre personnage :\n```json\n" + json.dumps({"name": "Test", "class": "Guerrier", "status": "complet"}) + "\n```\nPrêt pour l'aventure ?"
     agent.character_creator.generate_response = lambda input, history, char_data: mock_response_with_status
 
     # Also mock _extract_and_add_resources to prevent LLM/RAG invocation
@@ -34,7 +33,7 @@ def test_character_completion_transition():
     agent.chat("Finalise mon perso")
 
     assert agent.game_state == "SUMMARY"
-    assert agent.character_data["nom"] == "Test"
+    assert agent.character_data["name"] == "Test"
     assert os.path.exists("Memory/character.json")
 
     # Restore

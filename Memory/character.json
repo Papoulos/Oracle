@@ -1,8 +1,8 @@
 {
-    "nom": "Test",
-    "classe": "Guerrier",
-    "statut": "complet",
-    "ressources": {
-        "points_de_vie": {}
+    "name": "Test",
+    "class": "Guerrier",
+    "status": "complet",
+    "resources": {
+        "hit_points": {}
     }
 }

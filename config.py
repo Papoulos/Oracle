@@ -4,17 +4,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Configuration LLM (Texte) ---
+# --- LLM Configuration (Text) ---
 LLM_PROVIDER = os.getenv("LLM_PROVIDER")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL")
 LLM_MODEL = os.getenv("LLM_MODEL")
 
-# --- Configuration Embeddings ---
+# --- Embeddings Configuration ---
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
-# --- Configuration par Agent ---
+# --- Agent-Specific Configuration ---
 CHARACTER_MODEL = os.getenv("CHARACTER_MODEL")
 CHARACTER_TEMP = float(os.getenv("CHARACTER_TEMP")) if os.getenv("CHARACTER_TEMP") else None
 
@@ -27,23 +27,23 @@ ORCHESTRATOR_TEMP = float(os.getenv("ORCHESTRATOR_TEMP")) if os.getenv("ORCHESTR
 CHRONICLE_MODEL = os.getenv("CHRONICLE_MODEL")
 CHRONICLE_TEMP = float(os.getenv("CHRONICLE_TEMP")) if os.getenv("CHRONICLE_TEMP") else None
 
-# Fallback sur LLM_MODEL si SHEET_MANAGER_MODEL n'est pas défini dans le .env
+# Fallback to LLM_MODEL if SHEET_MANAGER_MODEL is not defined in the .env
 SHEET_MANAGER_MODEL = os.getenv("SHEET_MANAGER_MODEL")
 if not SHEET_MANAGER_MODEL:
     SHEET_MANAGER_MODEL = os.getenv("LLM_MODEL")
 
 SHEET_MANAGER_TEMP = float(os.getenv("SHEET_MANAGER_TEMP", 0.1))
 
-# --- Configuration Serveur ---
+# --- Server Configuration ---
 SERVER_ADDRESS = os.getenv("SERVER_ADDRESS")
 SERVER_PORT = int(os.getenv("SERVER_PORT")) if os.getenv("SERVER_PORT") else None
 
-# --- Autres paramètres ---
+# --- Other Parameters ---
 CHROMA_PATH = os.getenv("CHROMA_PATH")
 CORE_DATA_PATH = os.getenv("CORE_DATA_PATH")
 SCENARIO_DATA_PATH = os.getenv("SCENARIO_DATA_PATH")
 
-# Noms des collections VectorDB
+# VectorDB collection names
 CORE_COLLECTION_NAME = os.getenv("CORE_COLLECTION_NAME")
 SCENARIO_COLLECTION_NAME = os.getenv("SCENARIO_COLLECTION_NAME")
 
@@ -56,15 +56,15 @@ SCENARIO_FULLTEXT_THRESHOLD_CHARS = int(os.getenv("SCENARIO_FULLTEXT_THRESHOLD_C
 CORE_FULLTEXT_THRESHOLD_CHARS = int(os.getenv("CORE_FULLTEXT_THRESHOLD_CHARS", 40000))
 MIN_COMPOSANTES_DECOUVERTES = int(os.getenv("MIN_COMPOSANTES_DECOUVERTES", 4))
 
-# --- Compatibilité Ollama (Anciennes variables) ---
+# --- Ollama Compatibility (Old variables) ---
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL")
 OLLAMA_EMBED_MODEL = os.getenv("OLLAMA_EMBED_MODEL")
 
 def check_config():
     """
-    Vérifie que toutes les variables de configuration nécessaires sont présentes.
-    S'arrête si une variable obligatoire est manquante.
+    Verifies that all required configuration variables are present.
+    Exits if any mandatory variable is missing.
     """
     required_vars = [
         "LLM_PROVIDER", "LLM_BASE_URL", "LLM_MODEL",
@@ -86,9 +86,9 @@ def check_config():
             missing_vars.append(var)
 
     if missing_vars:
-        print("\n❌ ERREUR DE CONFIGURATION")
-        print("Les variables d'environnement suivantes sont manquantes dans votre fichier .env :")
+        print("\n❌ CONFIGURATION ERROR")
+        print("The following environment variables are missing from your .env file:")
         for var in missing_vars:
             print(f"  - {var}")
-        print("\nVeuillez copier .env.example vers .env et configurer les variables manquantes.")
+        print("\nPlease copy .env.example to .env and configure the missing variables.")
         sys.exit(1)

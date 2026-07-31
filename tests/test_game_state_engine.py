@@ -7,17 +7,17 @@ from game_state_engine import GameStateEngine, ActionResult
 def temp_character_file(tmp_path):
     char_file = tmp_path / "character.json"
     data = {
-        "nom": "Test Hero",
-        "niveau": 1,
+        "name": "Test Hero",
+        "level": 1,
         "xp": 0,
-        "xp_prochain_niveau": 1000,
+        "next_level_xp": 1000,
         "pv": 10,
-        "ressources": {
-            "points_de_vie": {"actuels": 10, "max": 10},
-            "sorts_par_jour": {
-                "niveau_1": {"restants": 2, "max": 2}
+        "resources": {
+            "hit_points": {"current": 10, "max": 10},
+            "spells_per_day": {
+                "level_1": {"current": 2, "max": 2}
             },
-            "points_de_rage": {"restants": 2, "max": 2}
+            "points_de_rage": {"current": 2, "max": 2}
         }
     }
     char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -25,14 +25,14 @@ def temp_character_file(tmp_path):
 
 def test_gse_load_save(temp_character_file):
     gse = GameStateEngine(temp_character_file)
-    assert gse.state["nom"] == "Test Hero"
+    assert gse.state["name"] == "Test Hero"
 
-    gse.state["nom"] = "Updated Hero"
+    gse.state["name"] = "Updated Hero"
     gse.save()
 
     with open(temp_character_file, "r", encoding="utf-8") as f:
         saved_data = json.load(f)
-    assert saved_data["nom"] == "Updated Hero"
+    assert saved_data["name"] == "Updated Hero"
 
 def test_gse_get_hp(temp_character_file):
     gse = GameStateEngine(temp_character_file)
@@ -58,7 +58,7 @@ def test_gse_consume_spell_slot(temp_character_file):
     gse = GameStateEngine(temp_character_file)
     res = gse.consume_spell_slot(1)
     assert res.success is True
-    assert gse.get_resource("sorts_par_jour", level=1)[0] == 1
+    assert gse.get_resource("spells_per_day", level=1)[0] == 1
 
     gse.consume_spell_slot(1)
     res = gse.consume_spell_slot(1)
@@ -74,7 +74,7 @@ def test_gse_rest_long(temp_character_file):
     res = gse.rest("long")
     assert res.success is True
     assert gse.get_hp()[0] == 10
-    assert gse.get_resource("sorts_par_jour", level=1)[0] == 2
+    assert gse.get_resource("spells_per_day", level=1)[0] == 2
     assert gse.get_resource("points_de_rage")[0] == 2
 
 def test_gse_detect_action_type():

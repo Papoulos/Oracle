@@ -10,77 +10,77 @@ import config
 def clean_scenario_data():
     return {
         "metadata": {
-            "titre": "La Larme de l'Oubli",
-            "pitch_global": "Un scénario d'exploration fantastique.",
-            "scene_initiale": "SCENE_01_AUBERGE"
+            "title": "La Larme de l'Oubli",
+            "global_pitch": "Un scénario d'exploration fantastique.",
+            "starting_scene": "SCENE_01_AUBERGE"
         },
-        "macro_structure": [
+        "acts": [
             {
-                "id_acte": "ACTE_1",
-                "titre": "Le Départ",
-                "condition_entree": "Création terminée",
-                "condition_validation": "Le joueur quitte l'auberge",
-                "scenes_incluses": ["SCENE_01_AUBERGE", "SCENE_02_ROUTE"]
+                "act_id": "ACTE_1",
+                "title": "Le Départ",
+                "entry_condition": "Création terminée",
+                "completion_condition": "Le joueur quitte l'auberge",
+                "included_scenes": ["SCENE_01_AUBERGE", "SCENE_02_ROUTE"]
             }
         ],
-        "horloges_globales": [
+        "global_clocks": [
             {
-                "nom": "L'Orage",
-                "declencheur": "Le temps passe",
+                "name": "L'Orage",
+                "trigger": "Le temps passe",
                 "consequence": "La foudre tombe",
-                "seuil": 6
+                "threshold": 6
             }
         ],
-        "entites": {
-            "pnj": [
+        "entities": {
+            "npcs": [
                 {
                     "id": "MAITRE_ELROND",
-                    "nom_complet": "Maître Elrond",
-                    "localisation_habituelle": "LIEU_FONDCOMBE",
-                    "agenda_et_motivation": "Aider",
-                    "peurs_et_faiblesses": "Aucune",
-                    "attitude_initiale": "Neutre",
-                    "stats_et_capacites": "Fort"
+                    "full_name": "Maître Elrond",
+                    "usual_location": "LIEU_FONDCOMBE",
+                    "agenda_and_motivation": "Aider",
+                    "fears_and_weaknesses": "Aucune",
+                    "initial_attitude": "Neutre",
+                    "stats_and_abilities": "Fort"
                 }
             ],
-            "lieux": [
+            "locations": [
                 {
                     "id": "LIEU_FONDCOMBE",
-                    "nom_complet": "Fondcombe",
-                    "ambiance_sensorielle": "Calme",
-                    "elements_interactifs": "Livre"
+                    "full_name": "Fondcombe",
+                    "sensory_atmosphere": "Calme",
+                    "interactive_elements": "Livre"
                 }
             ]
         },
-        "noeuds_sceniques": [
+        "scene_nodes": [
             {
-                "id_scene": "SCENE_01_AUBERGE",
-                "acte_rattache_id": "ACTE_1",
-                "lieu_rattache_id": "LIEU_FONDCOMBE",
-                "titre": "Rencontre à l'auberge",
-                "pnj_presents": ["MAITRE_ELROND"],
-                "objectif_mj": "Présenter Elrond",
-                "condition_resolution": "Le PJ parle à Elrond",
-                "limites_et_regles_locales": "Pas de combat",
-                "defis_et_rencontres": [],
-                "sorties_logiques": [
+                "scene_id": "SCENE_01_AUBERGE",
+                "act_id": "ACTE_1",
+                "location_id": "LIEU_FONDCOMBE",
+                "title": "Rencontre à l'auberge",
+                "present_npcs": ["MAITRE_ELROND"],
+                "gm_objective": "Présenter Elrond",
+                "resolution_condition": "Le PJ parle à Elrond",
+                "local_rules_and_limits": "Pas de combat",
+                "challenges_and_encounters": [],
+                "logical_exits": [
                     {
-                        "action_ou_direction": "Prendre la route",
+                        "action_or_direction": "Prendre la route",
                         "destination_scene_id": "SCENE_02_ROUTE"
                     }
                 ]
             },
             {
-                "id_scene": "SCENE_02_ROUTE",
-                "acte_rattache_id": "ACTE_1",
-                "lieu_rattache_id": "LIEU_FONDCOMBE",
-                "titre": "Sur la route",
-                "pnj_presents": [],
-                "objectif_mj": "Avancer",
-                "condition_resolution": "La route se termine",
-                "limites_et_regles_locales": "",
-                "defis_et_rencontres": [],
-                "sorties_logiques": []
+                "scene_id": "SCENE_02_ROUTE",
+                "act_id": "ACTE_1",
+                "location_id": "LIEU_FONDCOMBE",
+                "title": "Sur la route",
+                "present_npcs": [],
+                "gm_objective": "Avancer",
+                "resolution_condition": "La route se termine",
+                "local_rules_and_limits": "",
+                "challenges_and_encounters": [],
+                "logical_exits": []
             }
         ]
     }
@@ -99,23 +99,23 @@ def test_validation_idempotente(clean_scenario_data):
     assert len(errors2) == 0
 
 def test_validation_casse_et_reparable(clean_scenario_data):
-    # Case 2: Version sabotée mais réparable
+    # Case 2: Sabotaged but repairable version
     saboted = clean_scenario_data
-    # 1. Lieu inconnu sur scène
-    saboted["noeuds_sceniques"][0]["lieu_rattache_id"] = "LIEU_INCONNU"
-    # 2. PNJ orphelin
-    saboted["noeuds_sceniques"][0]["pnj_presents"].append("PNJ_ORPHELIN")
-    # 3. Sortie logique vers scène inconnue
-    saboted["noeuds_sceniques"][0]["sorties_logiques"].append({
-        "action_ou_direction": "Inconnu",
+    # 1. Unknown location on scene
+    saboted["scene_nodes"][0]["location_id"] = "LIEU_INCONNU"
+    # 2. Orphan NPC
+    saboted["scene_nodes"][0]["present_npcs"].append("NPC_ORPHELIN")
+    # 3. Logical exit to unknown scene
+    saboted["scene_nodes"][0]["logical_exits"].append({
+        "action_or_direction": "Inconnu",
         "destination_scene_id": "SCENE_INCONNUE"
     })
-    # 4. Incohérence bidirectionnelle : acte ne liste pas la scène
-    saboted["macro_structure"][0]["scenes_incluses"].remove("SCENE_02_ROUTE")
-    # 5. Scene_incluse orpheline dans l'acte
-    saboted["macro_structure"][0]["scenes_incluses"].append("SCENE_ORPHELINE")
-    # 6. Seuil de l'horloge manquant
-    del saboted["horloges_globales"][0]["seuil"]
+    # 4. Bidirectional incoherence: act does not list the scene
+    saboted["acts"][0]["included_scenes"].remove("SCENE_02_ROUTE")
+    # 5. Orphan included_scene in the act
+    saboted["acts"][0]["included_scenes"].append("SCENE_ORPHELINE")
+    # 6. Missing clock threshold
+    del saboted["global_clocks"][0]["threshold"]
 
     data, warnings, errors = validate_scenario_structure(saboted)
 
@@ -124,46 +124,46 @@ def test_validation_casse_et_reparable(clean_scenario_data):
     assert len(warnings) > 0
 
     # Assertions on corrections
-    assert data["noeuds_sceniques"][0]["lieu_rattache_id"] is None
-    assert "PNJ_ORPHELIN" not in data["noeuds_sceniques"][0]["pnj_presents"]
-    assert len(data["noeuds_sceniques"][0]["sorties_logiques"]) == 1 # unknown output removed
-    assert "SCENE_02_ROUTE" in data["macro_structure"][0]["scenes_incluses"] # bidirectionally repaired
-    assert "SCENE_ORPHELINE" not in data["macro_structure"][0]["scenes_incluses"] # orphan removed
-    assert data["horloges_globales"][0]["seuil"] == 6 # fallback to default
+    assert data["scene_nodes"][0]["location_id"] is None
+    assert "NPC_ORPHELIN" not in data["scene_nodes"][0]["present_npcs"]
+    assert len(data["scene_nodes"][0]["logical_exits"]) == 1 # unknown output removed
+    assert "SCENE_02_ROUTE" in data["acts"][0]["included_scenes"] # bidirectionally repaired
+    assert "SCENE_ORPHELINE" not in data["acts"][0]["included_scenes"] # orphan removed
+    assert data["global_clocks"][0]["threshold"] == 6 # fallback to default
 
 def test_validation_erreurs_bloquantes(clean_scenario_data):
     # Case 3: Blocking errors that cannot be fixed
-    # 1. Missing condition_resolution
-    del clean_scenario_data["noeuds_sceniques"][0]["condition_resolution"]
-    # 2. Invalide acte_rattache_id
-    clean_scenario_data["noeuds_sceniques"][0]["acte_rattache_id"] = "ACTE_INEXISTANT"
+    # 1. Missing resolution_condition
+    del clean_scenario_data["scene_nodes"][0]["resolution_condition"]
+    # 2. Invalid act_id
+    clean_scenario_data["scene_nodes"][0]["act_id"] = "ACTE_INEXISTANT"
 
     data, warnings, errors = validate_scenario_structure(clean_scenario_data)
     assert len(errors) == 2
-    assert any("condition_resolution manquant" in e for e in errors)
-    assert any("acte_rattache_id" in e for e in errors)
+    assert any("resolution_condition missing" in e for e in errors)
+    assert any("act_id" in e for e in errors)
 
 def test_validation_doublons_et_localisation_pnj(clean_scenario_data):
-    # Test new rules added: duplicates detection and pnj localisation_habituelle validation
+    # Test new rules added: duplicates detection and npc usual_location validation
     data = clean_scenario_data
-    # Duplicate PNJ ID
-    data["entites"]["pnj"].append({
+    # Duplicate NPC ID
+    data["entities"]["npcs"].append({
         "id": "MAITRE_ELROND",
-        "nom_complet": "Autre Elrond",
-        "localisation_habituelle": "LIEU_INCONNU",
-        "agenda_et_motivation": "Rien",
-        "peurs_et_faiblesses": "Aucune",
-        "attitude_initiale": "Amical",
-        "stats_et_capacites": "Inconnu"
+        "full_name": "Autre Elrond",
+        "usual_location": "LIEU_INCONNU",
+        "agenda_and_motivation": "Rien",
+        "fears_and_weaknesses": "Aucune",
+        "initial_attitude": "Amical",
+        "stats_and_abilities": "Inconnu"
     })
 
     corrected, warnings, errors = validate_scenario_structure(data)
     assert len(errors) == 0
-    assert any("id dupliqué 'MAITRE_ELROND'" in w for w in warnings)
-    assert any("localisation_habituelle 'LIEU_INCONNU' inconnue -> mise à null." in w for w in warnings)
+    assert any("duplicate id 'MAITRE_ELROND'" in w for w in warnings)
+    assert any("usual_location 'LIEU_INCONNU' unknown -> set to null." in w for w in warnings)
 
-    assert corrected["entites"]["pnj"][0]["localisation_habituelle"] == "LIEU_FONDCOMBE"
-    assert corrected["entites"]["pnj"][1]["localisation_habituelle"] is None
+    assert corrected["entities"]["npcs"][0]["usual_location"] == "LIEU_FONDCOMBE"
+    assert corrected["entities"]["npcs"][1]["usual_location"] is None
 
 def test_setup_world_json_scenarios(tmp_path, monkeypatch):
     # Setup test configuration environment paths
@@ -176,11 +176,11 @@ def test_setup_world_json_scenarios(tmp_path, monkeypatch):
     # 1. Scenario with zero JSON files -> calls ScenarioExtractorAgent
     # Prepare some mock generation return value
     mock_sc_structure = {
-        "metadata": {"titre": "Aventure", "pitch_global": "Un pitch", "scene_initiale": "SCENE_01"},
-        "macro_structure": [{"id_acte": "ACTE_1", "titre": "Acte", "scenes_incluses": ["SCENE_01"]}],
-        "horloges_globales": [],
-        "entites": {"pnj": [], "lieux": []},
-        "noeuds_sceniques": [{"id_scene": "SCENE_01", "acte_rattache_id": "ACTE_1", "condition_resolution": "PJ sort"}]
+        "metadata": {"title": "Aventure", "global_pitch": "Un pitch", "starting_scene": "SCENE_01"},
+        "acts": [{"act_id": "ACTE_1", "title": "Acte", "included_scenes": ["SCENE_01"]}],
+        "global_clocks": [],
+        "entities": {"npcs": [], "locations": []},
+        "scene_nodes": [{"scene_id": "SCENE_01", "act_id": "ACTE_1", "resolution_condition": "PJ sort"}]
     }
     agent.scenario_extractor_agent.generate = mock.Mock(return_value=mock_sc_structure)
 
@@ -192,7 +192,7 @@ def test_setup_world_json_scenarios(tmp_path, monkeypatch):
 
     agent.setup_world()
     assert agent.scenario_extractor_agent.generate.called
-    assert agent.scenario_structure["metadata"]["titre"] == "Aventure"
+    assert agent.scenario_structure["metadata"]["title"] == "Aventure"
 
     # 2. Scenario with exactly one JSON file -> loads directly, never calls ScenarioExtractorAgent
     agent.scenario_extractor_agent.generate.reset_mock()
@@ -202,14 +202,14 @@ def test_setup_world_json_scenarios(tmp_path, monkeypatch):
 
     agent.setup_world()
     assert not agent.scenario_extractor_agent.generate.called
-    assert agent.scenario_structure["metadata"]["titre"] == "Aventure"
+    assert agent.scenario_structure["metadata"]["title"] == "Aventure"
 
     # 3. Scenario with multiple JSON files -> raises ValueError
     another_json = tmp_path / "another_scenario.json"
     with open(another_json, "w", encoding="utf-8") as f:
         json.dump(mock_sc_structure, f)
 
-    with pytest.raises(ValueError, match="Plusieurs fichiers JSON de scénario trouvés"):
+    with pytest.raises(ValueError, match="Multiple scenario JSON files found"):
         agent.setup_world()
 
 def test_full_text_below_threshold_avoid_similarity_search():
@@ -236,14 +236,14 @@ def test_full_text_below_threshold_avoid_similarity_search():
     extractor.llm = mock.Mock()
     extractor.llm.invoke = mock.Mock(return_value=mock_res)
 
-    extractor._extract_entites(log=lambda x: None)
+    extractor._extract_entities(log=lambda x: None)
 
     # similarity_search should NOT be called because length of text is 37 <= 100
     assert not store.similarity_search.called
 
     # Set threshold to a very low value so similarity_search is called (length = 37 > 10)
     config.SCENARIO_FULLTEXT_THRESHOLD_CHARS = 10
-    extractor._extract_entites(log=lambda x: None)
+    extractor._extract_entities(log=lambda x: None)
     assert store.similarity_search.called
 
     # Restore threshold
@@ -253,19 +253,19 @@ def test_truncated_json_repair():
     from base_utils import extract_json
     truncated_input = """```json
 {
-    "etapes": [
+    "steps": [
         {
-            "etape": 1,
-            "nom": "Étape 1",
+            "step": 1,
+            "name": "Étape 1",
             "description": "Procédure."
         },
         {
-            "etape": 2,
-            "nom": "Étape 2",
+            "step": 2,
+            "name": "Étape 2",
             "description": "Seconde"
 """
     result = extract_json(truncated_input)
     assert result is not None
-    assert "etapes" in result
-    assert len(result["etapes"]) == 1
-    assert result["etapes"][0]["nom"] == "Étape 1"
+    assert "steps" in result
+    assert len(result["steps"]) == 1
+    assert result["steps"][0]["name"] == "Étape 1"

@@ -10,12 +10,12 @@ def setup_module():
     os.makedirs("Memory", exist_ok=True)
 
 def test_incremental_creation():
-    # Ecriture d'un schéma de fiche de test avant d'initialiser l'agent
+    # Write a test schema before initializing the agent
     schema = {
-        "champs_requis": [
-            {"chemin": "nom", "type": "string"},
-            {"chemin": "race", "type": "string"},
-            {"chemin": "classe", "type": "string"}
+        "required_fields": [
+            {"path": "name", "type": "string"},
+            {"path": "race", "type": "string"},
+            {"path": "class", "type": "string"}
         ]
     }
     os.makedirs("Memory", exist_ok=True)
@@ -27,36 +27,35 @@ def test_incremental_creation():
     # Mock sheet manager update_sheet behavior to avoid calling actual LLM/connection
     def mock_update_sheet(char_sheet, user_input, response, mode="ADVENTURE"):
         if "Aragorn" in user_input:
-            return {"nom": "Aragorn", "statut": "en_cours"}
+            return {"name": "Aragorn", "status": "en_cours"}
         elif "Humain" in user_input:
-            return {"nom": "Aragorn", "race": "Humain", "statut": "en_cours"}
+            return {"name": "Aragorn", "race": "Humain", "status": "en_cours"}
         elif "Rôdeur" in user_input:
-            return {"nom": "Aragorn", "race": "Humain", "classe": "Rôdeur", "statut": "complet"}
+            return {"name": "Aragorn", "race": "Humain", "class": "Rôdeur", "status": "complet"}
         return char_sheet
 
     agent.sheet_manager.update_sheet = mock_update_sheet
     agent._extract_and_add_resources = mock.Mock()
 
     # Step 1: Initial creation (Name)
-    mock_json_1 = '{"nom": "Aragorn", "statut": "en_cours"}'
+    mock_json_1 = '{"name": "Aragorn", "status": "en_cours"}'
     mock_response_1 = f"Bonjour Aragorn ! Quelle est votre race ?\n```json\n{mock_json_1}\n```"
 
-    # Mocking character_creator.generate_response
     original_generate = agent.character_creator.generate_response
     agent.character_creator.generate_response = lambda input, history, char_data: mock_response_1
 
     agent.chat("Je m'appelle Aragorn")
 
     assert agent.game_state == "CREATION"
-    assert agent.character_data["nom"] == "Aragorn"
-    assert agent.character_data["statut"] == "en_cours"
+    assert agent.character_data["name"] == "Aragorn"
+    assert agent.character_data["status"] == "en_cours"
     assert os.path.exists("Memory/character.json")
 
-    # Step 2: Second step (Race) - MJ should receive existing data
-    mock_json_2 = '{"nom": "Aragorn", "race": "Humain", "statut": "en_cours"}'
+    # Step 2: Second step (Race) - GM should receive existing data
+    mock_json_2 = '{"name": "Aragorn", "race": "Humain", "status": "en_cours"}'
 
     def mock_gen_2(input, history, char_data):
-        assert char_data["nom"] == "Aragorn"
+        assert char_data["name"] == "Aragorn"
         return f"Un Humain, très bien !\n```json\n{mock_json_2}\n```"
 
     agent.character_creator.generate_response = mock_gen_2
@@ -66,14 +65,14 @@ def test_incremental_creation():
     assert agent.character_data["race"] == "Humain"
 
     # Step 3: Final step
-    mock_json_3 = '{"nom": "Aragorn", "race": "Humain", "classe": "Rôdeur", "statut": "complet"}'
+    mock_json_3 = '{"name": "Aragorn", "race": "Humain", "class": "Rôdeur", "status": "complet"}'
     agent.character_creator.generate_response = lambda input, history, char_data: f"Terminé !\n```json\n{mock_json_3}\n```"
 
     agent.chat("Je suis un Rôdeur")
 
     assert agent.game_state == "SUMMARY"
-    assert agent.character_data["classe"] == "Rôdeur"
-    assert agent.character_data["statut"] == "complet"
+    assert agent.character_data["class"] == "Rôdeur"
+    assert agent.character_data["status"] == "complet"
 
     # Restore
     agent.character_creator.generate_response = original_generate

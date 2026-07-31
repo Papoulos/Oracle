@@ -18,87 +18,87 @@ class MockScenarioStore:
         ]
 
 def test_scenario_extractor_validation():
-    # Test that invalid references (orphan PNJ, lieux, or scenes) are filtered or logged
+    # Test that invalid references (orphan NPC, location, or scene) are filtered or logged
     store = MockScenarioStore()
     extractor = ScenarioExtractorAgent(store)
 
     # Mock the LLM calls for each pass
-    # Pass 1: Entités
+    # Pass 1: Entities
     mock_entities = mock.Mock()
     mock_entities.content = """
     {
-      "pnj": [
-        {"id": "ELROND", "nom_complet": "Maître Elrond", "localisation_habituelle": "FONDCOMBE", "agenda_et_motivation": "Aider les PJ", "peurs_et_faiblesses": "Inconnu", "attitude_initiale": "Amical", "stats_et_capacites": "Inconnu"}
+      "npcs": [
+        {"id": "ELROND", "full_name": "Maître Elrond", "usual_location": "FONDCOMBE", "agenda_and_motivation": "Aider les PJ", "fears_and_weaknesses": "Inconnu", "initial_attitude": "Amical", "stats_and_abilities": "Inconnu"}
       ],
-      "lieux": [
-        {"id": "FONDCOMBE", "nom_complet": "Fondcombe", "ambiance_sensorielle": "Calme", "elements_interactifs": "Inconnu"}
+      "locations": [
+        {"id": "FONDCOMBE", "full_name": "Fondcombe", "sensory_atmosphere": "Calme", "interactive_elements": "Inconnu"}
       ]
     }
     """
-    # Pass 2: Nœuds scéniques (scène 1 has valid lieu ELROND is valid, scene 2 has invalid lieu_rattache_id and invalid pnj_presents)
+    # Pass 2: Scene nodes
     mock_scenes = mock.Mock()
     mock_scenes.content = """
     {
-      "noeuds_sceniques": [
+      "scene_nodes": [
         {
-          "id_scene": "SCENE_01_DEPART",
-          "acte_rattache_id": "ACTE_1",
-          "lieu_rattache_id": "FONDCOMBE",
-          "titre": "Départ",
-          "pnj_presents": ["ELROND"],
-          "objectif_mj": "Lancer l'aventure",
-          "condition_resolution": "Le PJ part",
-          "limites_et_regles_locales": "Aucune",
-          "defis_et_rencontres": [],
-          "sorties_logiques": [{"action_ou_direction": "Suivre la route", "destination_scene_id": "SCENE_02_ROUTE"}]
+          "scene_id": "SCENE_01_DEPART",
+          "act_id": "ACTE_1",
+          "location_id": "FONDCOMBE",
+          "title": "Départ",
+          "present_npcs": ["ELROND"],
+          "gm_objective": "Lancer l'aventure",
+          "resolution_condition": "Le PJ part",
+          "local_rules_and_limits": "Aucune",
+          "challenges_and_encounters": [],
+          "logical_exits": [{"action_or_direction": "Suivre la route", "destination_scene_id": "SCENE_02_ROUTE"}]
         },
         {
-          "id_scene": "SCENE_02_ROUTE",
-          "acte_rattache_id": "ACTE_1",
-          "lieu_rattache_id": "LIEU_INVALIDE",
-          "titre": "La route",
-          "pnj_presents": ["PNJ_INVALIDE"],
-          "objectif_mj": "Surmonter les dangers",
-          "condition_resolution": "La route est libre",
-          "limites_et_regles_locales": "Aucune",
-          "defis_et_rencontres": [],
-          "sorties_logiques": []
+          "scene_id": "SCENE_02_ROUTE",
+          "act_id": "ACTE_1",
+          "location_id": "LIEU_INVALIDE",
+          "title": "La route",
+          "present_npcs": ["PNJ_INVALIDE"],
+          "gm_objective": "Surmonter les dangers",
+          "resolution_condition": "La route est libre",
+          "local_rules_and_limits": "Aucune",
+          "challenges_and_encounters": [],
+          "logical_exits": []
         }
       ]
     }
     """
-    # Pass 3: Macro-structure (ACTE_1 has valid scenes but references an invalid SCENE_INVALIDE)
+    # Pass 3: Acts
     mock_macro = mock.Mock()
     mock_macro.content = """
     {
-      "macro_structure": [
+      "acts": [
         {
-          "id_acte": "ACTE_1",
-          "titre": "Le départ",
-          "condition_entree": "Création terminée",
-          "condition_validation": "Arrivée à Fondcombe",
-          "scenes_incluses": ["SCENE_01_DEPART", "SCENE_02_ROUTE", "SCENE_INVALIDE"]
+          "act_id": "ACTE_1",
+          "title": "Le départ",
+          "entry_condition": "Création terminée",
+          "completion_condition": "Arrivée à Fondcombe",
+          "included_scenes": ["SCENE_01_DEPART", "SCENE_02_ROUTE", "SCENE_INVALIDE"]
         }
       ]
     }
     """
-    # Pass 4: Horloges globales
+    # Pass 4: Global clocks
     mock_horloges = mock.Mock()
     mock_horloges.content = """
     {
-      "horloges_globales": [
-        {"nom": "Le réveil de Sauron", "declencheur": "Le temps passe", "consequence": "Le ciel s'assombrit", "seuil": "6"}
+      "global_clocks": [
+        {"name": "Le réveil de Sauron", "trigger": "Le temps passe", "consequence": "Le ciel s'assombrit", "threshold": "6"}
       ]
     }
     """
-    # Pass 5: Métadonnées
+    # Pass 5: Metadata
     mock_meta = mock.Mock()
     mock_meta.content = """
     {
       "metadata": {
-        "titre": "Le Hobbit",
-        "pitch_global": "Un voyage inattendu.",
-        "scene_initiale": "SCENE_01_DEPART"
+        "title": "Le Hobbit",
+        "global_pitch": "Un voyage inattendu.",
+        "starting_scene": "SCENE_01_DEPART"
       }
     }
     """
@@ -110,47 +110,47 @@ def test_scenario_extractor_validation():
 
     assert structure is not None
     # Verify that invalid references were validated and cleaned/removed
-    scenes = {s["id_scene"]: s for s in structure["noeuds_sceniques"]}
+    scenes = {s["scene_id"]: s for s in structure["scene_nodes"]}
     assert "SCENE_02_ROUTE" in scenes
-    assert scenes["SCENE_02_ROUTE"]["lieu_rattache_id"] is None
-    assert scenes["SCENE_02_ROUTE"]["pnj_presents"] == []
+    assert scenes["SCENE_02_ROUTE"]["location_id"] is None
+    assert scenes["SCENE_02_ROUTE"]["present_npcs"] == []
 
-    # Verify macro structure cleaned scenes_incluses
-    actes = {a["id_acte"]: a for a in structure["macro_structure"]}
+    # Verify macro structure cleaned included_scenes
+    actes = {a["act_id"]: a for a in structure["acts"]}
     assert "ACTE_1" in actes
-    assert "SCENE_INVALIDE" not in actes["ACTE_1"]["scenes_incluses"]
-    assert "SCENE_01_DEPART" in actes["ACTE_1"]["scenes_incluses"]
+    assert "SCENE_INVALIDE" not in actes["ACTE_1"]["included_scenes"]
+    assert "SCENE_01_DEPART" in actes["ACTE_1"]["included_scenes"]
 
 def test_get_current_context_lookup():
     agent = RPGAgent()
     agent.scenario_structure = {
-      "metadata": {"titre": "La Quête", "pitch_global": "Pitch...", "scene_initiale": "SCENE_01"},
-      "entites": {
-        "pnj": [{"id": "ELROND", "nom_complet": "Maître Elrond", "localisation_habituelle": "FONDCOMBE", "agenda_et_motivation": "Aider", "attitude_initiale": "Amical", "stats_et_capacites": "Inconnu"}],
-        "lieux": [{"id": "FONDCOMBE", "nom_complet": "Fondcombe", "ambiance_sensorielle": "Merveilleux", "elements_interactifs": "Livre de Lore"}]
+      "metadata": {"title": "La Quête", "global_pitch": "Pitch...", "starting_scene": "SCENE_01"},
+      "entities": {
+        "npcs": [{"id": "ELROND", "full_name": "Maître Elrond", "usual_location": "FONDCOMBE", "agenda_and_motivation": "Aider", "initial_attitude": "Amical", "stats_and_abilities": "Inconnu"}],
+        "locations": [{"id": "FONDCOMBE", "full_name": "Fondcombe", "sensory_atmosphere": "Merveilleux", "interactive_elements": "Livre de Lore"}]
       },
-      "macro_structure": [{"id_acte": "ACTE_1", "titre": "Le début", "condition_validation": "Parler à Elrond", "scenes_incluses": ["SCENE_01"]}],
-      "noeuds_sceniques": [
+      "acts": [{"act_id": "ACTE_1", "title": "Le début", "completion_condition": "Parler à Elrond", "included_scenes": ["SCENE_01"]}],
+      "scene_nodes": [
         {
-          "id_scene": "SCENE_01",
-          "acte_rattache_id": "ACTE_1",
-          "lieu_rattache_id": "FONDCOMBE",
-          "titre": "Rencontre",
-          "pnj_presents": ["ELROND"]
+          "scene_id": "SCENE_01",
+          "act_id": "ACTE_1",
+          "location_id": "FONDCOMBE",
+          "title": "Rencontre",
+          "present_npcs": ["ELROND"]
         }
       ]
     }
     agent._build_lookups()
     agent.progression = {
-        "scene_courante": "SCENE_01",
-        "scenes_resolues": [],
-        "scenes_contournees": [],
-        "horloges": {},
-        "ecarts_notables": []
+        "current_scene": "SCENE_01",
+        "resolved_scenes": [],
+        "bypassed_scenes": [],
+        "clocks": {},
+        "notable_deviations": []
     }
 
     context = agent.get_current_context()
-    assert "SCÈNE COURANTE : Rencontre" in context
+    assert "CURRENT SCENE : Rencontre" in context
     assert "Fondcombe" in context
     assert "Merveilleux" in context
     assert "Maître Elrond" in context
@@ -161,40 +161,40 @@ def test_transition_deterministic_logic():
     agent.game_state = "ADVENTURE"
     agent.current_scene_id = "SCENE_01"
     agent.scenario_structure = {
-      "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-      "entites": {"pnj": [], "lieux": []},
-      "macro_structure": [
-          {"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]},
-          {"id_acte": "ACTE_2", "titre": "Acte 2", "scenes_incluses": ["SCENE_02"]}
+      "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+      "entities": {"npcs": [], "locations": []},
+      "acts": [
+          {"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]},
+          {"act_id": "ACTE_2", "title": "Acte 2", "included_scenes": ["SCENE_02"]}
       ],
-      "noeuds_sceniques": [
+      "scene_nodes": [
         {
-          "id_scene": "SCENE_01",
-          "acte_rattache_id": "ACTE_1",
-          "titre": "Scène 1",
-          "objectif_mj": "...",
-          "condition_resolution": "Le PJ avance",
-          "sorties_logiques": [{"action_ou_direction": "Avancer", "destination_scene_id": "SCENE_02"}]
+          "scene_id": "SCENE_01",
+          "act_id": "ACTE_1",
+          "title": "Scène 1",
+          "gm_objective": "...",
+          "resolution_condition": "Le PJ avance",
+          "logical_exits": [{"action_or_direction": "Avancer", "destination_scene_id": "SCENE_02"}]
         },
         {
-          "id_scene": "SCENE_02",
-          "acte_rattache_id": "ACTE_2",
-          "titre": "Scène 2",
-          "objectif_mj": "...",
-          "condition_resolution": "Le PJ finit",
-          "sorties_logiques": []
+          "scene_id": "SCENE_02",
+          "act_id": "ACTE_2",
+          "title": "Scène 2",
+          "gm_objective": "...",
+          "resolution_condition": "Le PJ finit",
+          "logical_exits": []
         }
       ],
-      "horloges_globales": []
+      "global_clocks": []
     }
     agent._build_lookups()
     agent.progression = {
-        "acte_courant": "ACTE_1",
-        "scene_courante": "SCENE_01",
-        "scenes_resolues": [],
-        "scenes_contournees": [],
-        "horloges": {},
-        "ecarts_notables": []
+        "current_act": "ACTE_1",
+        "current_scene": "SCENE_01",
+        "resolved_scenes": [],
+        "bypassed_scenes": [],
+        "clocks": {},
+        "notable_deviations": []
     }
 
     # Mock RAG calls
@@ -208,7 +208,7 @@ def test_transition_deterministic_logic():
 
     # Mock LLM for classification (transition to SCENE_02)
     mock_classif = mock.Mock()
-    mock_classif.content = '{"categorie": "transition", "scene_suivante": "SCENE_02", "ecart_notable": "Le PJ a résolu l\'énigme."}'
+    mock_classif.content = '{"category": "transition", "next_scene": "SCENE_02", "notable_deviation": "Le PJ a résolu l\'énigme."}'
 
     agent.llm = mock.Mock()
     agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
@@ -219,9 +219,9 @@ def test_transition_deterministic_logic():
     agent.chat("Je marche vers la sortie")
 
     assert agent.current_scene_id == "SCENE_02"
-    assert agent.progression["scene_courante"] == "SCENE_02"
-    assert agent.progression["acte_courant"] == "ACTE_2"
-    assert "SCENE_01" in agent.progression["scenes_resolues"]
+    assert agent.progression["current_scene"] == "SCENE_02"
+    assert agent.progression["current_act"] == "ACTE_2"
+    assert "SCENE_01" in agent.progression["resolved_scenes"]
     agent.update_chronicle.assert_called_once_with("Je marche vers la sortie", "Le narrateur décrit la transition.", "Le PJ a résolu l'énigme.")
 
 def test_transition_invalid_fallback_to_improvisation():
@@ -229,28 +229,28 @@ def test_transition_invalid_fallback_to_improvisation():
     agent.game_state = "ADVENTURE"
     agent.current_scene_id = "SCENE_01"
     agent.scenario_structure = {
-      "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-      "entites": {"pnj": [], "lieux": []},
-      "macro_structure": [{"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}],
-      "noeuds_sceniques": [
+      "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+      "entities": {"npcs": [], "locations": []},
+      "acts": [{"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}],
+      "scene_nodes": [
         {
-          "id_scene": "SCENE_01",
-          "acte_rattache_id": "ACTE_1",
-          "titre": "Scène 1",
-          "objectif_mj": "...",
-          "condition_resolution": "Le PJ avance"
+          "scene_id": "SCENE_01",
+          "act_id": "ACTE_1",
+          "title": "Scène 1",
+          "gm_objective": "...",
+          "resolution_condition": "Le PJ avance"
         }
       ],
-      "horloges_globales": []
+      "global_clocks": []
     }
     agent._build_lookups()
     agent.progression = {
-        "acte_courant": "ACTE_1",
-        "scene_courante": "SCENE_01",
-        "scenes_resolues": [],
-        "scenes_contournees": [],
-        "horloges": {},
-        "ecarts_notables": []
+        "current_act": "ACTE_1",
+        "current_scene": "SCENE_01",
+        "resolved_scenes": [],
+        "bypassed_scenes": [],
+        "clocks": {},
+        "notable_deviations": []
     }
 
     agent.get_current_scene = mock.Mock(return_value="Scène de l'auberge")
@@ -262,7 +262,7 @@ def test_transition_invalid_fallback_to_improvisation():
 
     # transition to an invalid scene ID
     mock_classif = mock.Mock()
-    mock_classif.content = '{"categorie": "transition", "scene_suivante": "SCENE_INVALIDE", "ecart_notable": null}'
+    mock_classif.content = '{"category": "transition", "next_scene": "SCENE_INVALIDE", "notable_deviation": null}'
 
     agent.llm = mock.Mock()
     agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
@@ -274,33 +274,33 @@ def test_transition_invalid_fallback_to_improvisation():
 
     # Should fallback to improvisation: no scene change, no exception raised
     assert agent.current_scene_id == "SCENE_01"
-    assert "SCENE_01" not in agent.progression["scenes_resolues"]
+    assert "SCENE_01" not in agent.progression["resolved_scenes"]
 
 def test_contournement_non_blocking():
     agent = RPGAgent()
     agent.game_state = "ADVENTURE"
     agent.current_scene_id = "SCENE_01"
     agent.scenario_structure = {
-      "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-      "entites": {"pnj": [], "lieux": []},
-      "macro_structure": [{"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}],
-      "noeuds_sceniques": [
+      "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+      "entities": {"npcs": [], "locations": []},
+      "acts": [{"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}],
+      "scene_nodes": [
         {
-          "id_scene": "SCENE_01",
-          "acte_rattache_id": "ACTE_1",
-          "titre": "Scène 1"
+          "scene_id": "SCENE_01",
+          "act_id": "ACTE_1",
+          "title": "Scène 1"
         }
       ],
-      "horloges_globales": []
+      "global_clocks": []
     }
     agent._build_lookups()
     agent.progression = {
-        "acte_courant": "ACTE_1",
-        "scene_courante": "SCENE_01",
-        "scenes_resolues": [],
-        "scenes_contournees": [],
-        "horloges": {},
-        "ecarts_notables": []
+        "current_act": "ACTE_1",
+        "current_scene": "SCENE_01",
+        "resolved_scenes": [],
+        "bypassed_scenes": [],
+        "clocks": {},
+        "notable_deviations": []
     }
 
     agent.get_current_scene = mock.Mock(return_value="Scène de l'auberge")
@@ -311,7 +311,7 @@ def test_contournement_non_blocking():
     mock_mech.content = '{"need_roll": false, "mechanical_decision": null}'
 
     mock_classif = mock.Mock()
-    mock_classif.content = '{"categorie": "contournement", "scene_suivante": null, "ecart_notable": "Le PJ a contourné."}'
+    mock_classif.content = '{"category": "bypassed", "next_scene": null, "notable_deviation": "Le PJ a contourné."}'
 
     agent.llm = mock.Mock()
     agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
@@ -323,32 +323,32 @@ def test_contournement_non_blocking():
 
     assert response == "Narration contournement."
     assert agent.current_scene_id == "SCENE_01"
-    assert "SCENE_01" in agent.progression["scenes_contournees"]
+    assert "SCENE_01" in agent.progression["bypassed_scenes"]
 
 def test_clock_trigger_consequence_injection():
     agent = RPGAgent()
     agent.game_state = "ADVENTURE"
     agent.current_scene_id = "SCENE_01"
     agent.scenario_structure = {
-      "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-      "entites": {"pnj": [], "lieux": []},
-      "macro_structure": [{"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}],
-      "noeuds_sceniques": [{"id_scene": "SCENE_01", "acte_rattache_id": "ACTE_1", "titre": "Scène 1"}],
-      "horloges_globales": [
-        {"nom": "Le Volcan", "declencheur": "Chaleur", "consequence": "Le volcan entre en éruption !", "seuil": 3}
+      "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+      "entities": {"npcs": [], "locations": []},
+      "acts": [{"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}],
+      "scene_nodes": [{"scene_id": "SCENE_01", "act_id": "ACTE_1", "title": "Scène 1"}],
+      "global_clocks": [
+        {"name": "Le Volcan", "trigger": "Chaleur", "consequence": "Le volcan entre en éruption !", "threshold": 3}
       ]
     }
     agent._build_lookups()
     # Clock segments at 2 (so adding 1 triggers it)
     agent.progression = {
-        "acte_courant": "ACTE_1",
-        "scene_courante": "SCENE_01",
-        "scenes_resolues": [],
-        "scenes_contournees": [],
-        "horloges": {
+        "current_act": "ACTE_1",
+        "current_scene": "SCENE_01",
+        "resolved_scenes": [],
+        "bypassed_scenes": [],
+        "clocks": {
             "Le Volcan": {"segments": 2, "declenchee": False}
         },
-        "ecarts_notables": []
+        "notable_deviations": []
     }
 
     agent.get_current_scene = mock.Mock(return_value="Scène")
@@ -360,12 +360,11 @@ def test_clock_trigger_consequence_injection():
 
     # Classification output adds 1 segment to "Le Volcan"
     mock_classif = mock.Mock()
-    mock_classif.content = '{"categorie": "improvisation", "scene_suivante": null, "horloges_impactees": [{"nom": "Le Volcan", "segments_ajoutes": 1}], "ecart_notable": null}'
+    mock_classif.content = '{"category": "improvisation", "next_scene": null, "impacted_clocks": [{"name": "Le Volcan", "segments_added": 1}], "notable_deviation": null}'
 
     agent.llm = mock.Mock()
     agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
 
-    # We want to capture the instructions passed to narrator
     agent.narrator.generate_response = mock.Mock(return_value="Le volcan explose.")
     agent.sheet_manager.update_sheet = mock.Mock(return_value={})
     agent.update_chronicle = mock.Mock()
@@ -373,15 +372,15 @@ def test_clock_trigger_consequence_injection():
     agent.chat("Je fais une action")
 
     # Verify clock segment was incremented and declenchee set to True
-    assert agent.progression["horloges"]["Le Volcan"]["segments"] == 3
-    assert agent.progression["horloges"]["Le Volcan"]["declenchee"] is True
+    assert agent.progression["clocks"]["Le Volcan"]["segments"] == 3
+    assert agent.progression["clocks"]["Le Volcan"]["declenchee"] is True
 
     # Verify that consequence was injected in instructions to Narrator
     call_args = agent.narrator.generate_response.call_args[0]
     instructions = call_args[2]
     assert "ÉVÉNEMENT DÉCLENCHÉ (horloge 'Le Volcan') : Le volcan entre en éruption !" in instructions
 
-    # Verify that the consequence was passed as ecart_notable to Chronicle update
+    # Verify that the consequence was passed as notable_deviation to Chronicle update
     agent.update_chronicle.assert_called_once_with("Je fais une action", "Le volcan explose.", "Le volcan entre en éruption !")
 
 def test_load_game_restores_scene_progression():
@@ -390,31 +389,31 @@ def test_load_game_restores_scene_progression():
     os.makedirs("Memory", exist_ok=True)
     with open("Memory/scenario_structure.json", "w", encoding="utf-8") as f:
         json.dump({
-          "metadata": {"titre": "La Quête", "pitch_global": "Un anneau...", "scene_initiale": "SCENE_01"},
-          "entites": {"pnj": [], "lieux": []},
-          "macro_structure": [{"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}],
-          "noeuds_sceniques": [{"id_scene": "SCENE_01", "acte_rattache_id": "ACTE_1", "titre": "Scène 1"}],
-          "horloges_globales": []
+          "metadata": {"title": "La Quête", "global_pitch": "Un anneau...", "starting_scene": "SCENE_01"},
+          "entities": {"npcs": [], "locations": []},
+          "acts": [{"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}],
+          "scene_nodes": [{"scene_id": "SCENE_01", "act_id": "ACTE_1", "title": "Scène 1"}],
+          "global_clocks": []
         }, f)
 
     with open("Memory/progression.json", "w", encoding="utf-8") as f:
         json.dump({
-            "acte_courant": "ACTE_1",
-            "scene_courante": "SCENE_01",
-            "scenes_resolues": [],
-            "scenes_contournees": [],
-            "horloges": {},
-            "ecarts_notables": ["Quelque chose de remarquable"]
+            "current_act": "ACTE_1",
+            "current_scene": "SCENE_01",
+            "resolved_scenes": [],
+            "bypassed_scenes": [],
+            "clocks": {},
+            "notable_deviations": ["Quelque chose de remarquable"]
         }, f)
 
     with open("Memory/character.json", "w", encoding="utf-8") as f:
-        json.dump({"nom": "Frodon", "classe": "Rogue"}, f)
+        json.dump({"name": "Frodon", "class": "Rogue"}, f)
 
     loaded = agent.load_game()
     assert loaded is True
     assert agent.current_scene_id == "SCENE_01"
-    assert agent.progression["acte_courant"] == "ACTE_1"
-    assert agent.progression["ecarts_notables"] == ["Quelque chose de remarquable"]
+    assert agent.progression["current_act"] == "ACTE_1"
+    assert agent.progression["notable_deviations"] == ["Quelque chose de remarquable"]
 
     # Cleanup
     for file in ["character.json", "scenario_structure.json", "progression.json"]:

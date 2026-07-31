@@ -14,37 +14,37 @@ from scenario_agents import ScenarioExtractorAgent
 from validation import validate_scenario_structure, validate_character_sheet
 
 class CharacterCreator(BaseAgent):
-    def __init__(self, vector_store):
-        super().__init__(model=config.CHARACTER_MODEL, temperature=config.CHARACTER_TEMP)
+    def __init__(self, vector_store, verbose=False):
+        super().__init__(model=config.CHARACTER_MODEL, temperature=config.CHARACTER_TEMP, verbose=verbose)
         self.vector_store = vector_store
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es un Maître du Jeu (MJ) expert en jeux de rôle.
-            Ton but actuel est de guider le joueur dans la création de son personnage.
-            Utilise le MANUEL DE CRÉATION comme une liste de contrôle (checklist) pour ne rien oublier, mais reste interactif et flexible.
+            ("system", """You are a Game Master (GM) expert in role-playing games.
+            Your current goal is to guide the player in creating their character.
+            Use the CHARACTER CREATION MANUAL as a checklist to ensure nothing is forgotten, but remain interactive and flexible.
 
-            MANUEL DE CRÉATION (Structure globale) :
+            CHARACTER CREATION MANUAL (Global structure):
             {manual}
 
-            CONSIGNES DE DIALOGUE ET MÉCANIQUES :
-            1. Réponds TOUJOURS en français.
-            2. Pose UNE SEULE QUESTION à la fois.
-            3. PRÉPARATION TECHNIQUE : Avant de poser une question, utilise le CODEX (RAG) pour connaître TOUTES les contraintes et bénéfices liés au choix actuel (ex: "Combien d'armes peut-il maîtriser ?", "Quels sont les bonus de cette race ?").
-            4. PÉDAGOGIE : Explique TOUJOURS au joueur les conséquences techniques de son choix (ex: "En choisissant cette classe, tu as droit à 3 maîtrises d'armes qui te donneront un bonus de +2 aux jets d'attaque").
-            5. Pour les statistiques/caractéristiques : Demande TOUJOURS au joueur s'il souhaite que tu lances les dés pour lui (selon la méthode du Codex) ou s'il préfère le faire lui-même.
-            6. Pour les choix de Race et de Classe : Interroge le CODEX (RAG) pour obtenir la liste complète et exacte des options disponibles et présente-les de manière concise au joueur.
-            7. Calcule les statistiques dérivées (PV, CA, modificateurs) en suivant scrupuleusement les formules du CODEX.
+            DIALOGUE AND MECHANICAL GUIDELINES:
+            1. ALWAYS respond to the player in French.
+            2. Ask ONLY ONE question at a time.
+            3. TECHNICAL PREPARATION: Before asking a question, consult the CODEX (RAG) to know ALL constraints and benefits related to the current choice (e.g., "How many weapons can they master?", "What are the benefits of this race?").
+            4. PEDAGOGY: ALWAYS explain to the player the technical consequences of their choice in French (e.g., "En choisissant cette classe, tu as droit à 3 maîtrises d'armes qui te donneront un bonus de +2 aux jets d'attaque").
+            5. For statistics/attributes: ALWAYS ask the player if they want you to roll the dice for them (according to the Codex method) or if they prefer to do it themselves.
+            6. For Race and Class choices: Query the CODEX (RAG) to get the complete and exact list of available options and present them concisely to the player.
+            7. Calculate derived statistics (hit_points, AC, modifiers) scrupulously following the formulas from the CODEX.
 
-            CHAMPS ENCORE MANQUANTS (Tu dois impérativement guider le joueur pour remplir ces champs) :
-            {champs_manquants}
+            STILL MISSING FIELDS (You must guide the player to fill these):
+            {missing_fields}
 
-            CONSIGNES DE FIN DE CRÉATION :
-            Si toutes les étapes du manuel sont terminées, félicite le joueur et indique-lui que son personnage est prêt pour l'aventure.
-            Utilise le mot-clé "CRÉATION_TERMINÉE" dans ton texte uniquement lorsque TOUTES les étapes sont validées.
+            CONSIGNES DE FIN DE CRÉATION (In French for player):
+            If all steps of the manual are completed, congratulate the player and tell them their character is ready for adventure.
+            Use the keyword "CREATION_COMPLETED" in your text only when ALL steps are validated.
 
-            ÉTAT ACTUEL DU PERSONNAGE (pour ton information) :
+            CURRENT CHARACTER STATE (for your information):
             {current_character}
 
-            CODEX (Détails des règles à interroger pour chaque choix) :
+            CODEX (Details of the rules to query for each choice):
             {context}
             """),
             MessagesPlaceholder(variable_name="history"),
@@ -54,17 +54,16 @@ class CharacterCreator(BaseAgent):
 
     def get_context(self, query):
         try:
-            # Réduction légère du nombre de documents pour la création (de 8 à 5)
-            # pour éviter de saturer la fenêtre de contexte avec des extraits trop longs.
+            # Slightly reduce RAG depth for creation to optimize context window
             k = max(1, config.RAG_K_CREATION - 3)
             docs = self.vector_store.similarity_search(query, k=k)
-            print(f"[CharacterCreator] DEBUG: Recherche contextuelle pour '{query}' -> {len(docs)} docs trouvés.")
+            print(f"[CharacterCreator] DEBUG: Contextual search for '{query}' -> {len(docs)} docs found.")
             if docs:
-                print(f"[CharacterCreator] DEBUG: Premier extrait : {docs[0].page_content[:200]}...")
+                print(f"[CharacterCreator] DEBUG: First excerpt: {docs[0].page_content[:200]}...")
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception as e:
-            print(f"[CharacterCreator] DEBUG: Erreur RAG : {e}")
-            return "Aucun contexte trouvé."
+            print(f"[CharacterCreator] DEBUG: RAG Error: {e}")
+            return "No context found."
 
     def _load_manual(self):
         path = "Memory/creation_manual.json"
@@ -73,101 +72,98 @@ class CharacterCreator(BaseAgent):
                 with open(path, "r", encoding="utf-8") as f:
                     return json.dumps(json.load(f), ensure_ascii=False, indent=2)
             except Exception:
-                return "Manuel non disponible (utiliser le Codex)."
-        return "Manuel non disponible (utiliser le Codex)."
+                return "Manual unavailable (use Codex)."
+        return "Manual unavailable (use Codex)."
 
-    def generate_response(self, user_input, history, character_data=None, champs_manquants=None):
-        # On enrichit la requête RAG avec les derniers messages pour avoir du contexte sur l'étape de création
+    def generate_response(self, user_input, history, character_data=None, missing_fields=None):
+        # Enrich the RAG query with the previous turn to focus context retrieval
         rag_query = user_input
         if len(history) >= 1:
             last_msg = history[-1].content
-            # On extrait une partie du dernier message du MJ pour aider le RAG
             rag_query = f"{last_msg[:100]} {user_input}"
 
         context = self.get_context(rag_query)
         manual = self._load_manual()
 
-        if champs_manquants and isinstance(champs_manquants, list):
-            champs_manquants_str = ", ".join(champs_manquants)
+        if missing_fields and isinstance(missing_fields, list):
+            missing_fields_str = ", ".join(missing_fields)
         else:
-            champs_manquants_str = "Aucun (fiche complète)."
+            missing_fields_str = "None (sheet is complete)."
 
         inputs = {
             "manual": manual,
             "context": context,
             "history": history,
             "input": user_input,
-            "current_character": json.dumps(character_data, ensure_ascii=False, indent=2) if character_data else "Aucune donnée pour le moment.",
-            "champs_manquants": champs_manquants_str
+            "current_character": json.dumps(character_data, ensure_ascii=False, indent=2) if character_data else "No data yet.",
+            "missing_fields": missing_fields_str
         }
         response = self.chain.invoke(inputs)
         return response.content
 
 class ChronicleAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(model=config.CHRONICLE_MODEL, temperature=config.CHRONICLE_TEMP)
+    def __init__(self, verbose=False):
+        super().__init__(model=config.CHRONICLE_MODEL, temperature=config.CHRONICLE_TEMP, verbose=verbose)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es le Chroniqueur d'une aventure de jeu de rôle.
-            Ton rôle est de tenir à jour un résumé factuel et concis de l'histoire jusqu'à présent.
-            Tu reçois l'ancien résumé, l'action du joueur, la réponse du narrateur et éventuellement un fait additionnel.
-            Tu dois produire un NOUVEAU résumé mis à jour qui intègre ces nouveaux événements.
+            ("system", """You are the Chronicler of a role-playing adventure.
+            Your role is to maintain a factual and concise summary of the story so far in FRENCH.
+            You receive the old summary, the player's action, the narrator's response, and potentially an additional fact.
+            You must produce a NEW updated summary that integrates these new events.
 
-            CONSIGNES :
-            - Sois concis et factuel.
-            - Garde les éléments importants (lieux, rencontres, objets obtenus, blessures).
-            - Utilise le français.
-            - Réponds uniquement avec le nouveau résumé, sans fioritures.
+            CONSIGNES:
+            - Be concise and factual.
+            - Keep important elements (locations, encounters, obtained items, wounds).
+            - Always respond in French.
+            - Reply only with the new summary, with no fluff.
             """),
-            ("human", """ANCIEN RÉSUMÉ : {old_chronicle}
-            ACTION JOUEUR : {user_input}
-            RÉPONSE NARRATEUR : {narrator_response}
-            FAIT ADDITIONNEL À CONSERVER (peut diverger du scénario source) : {ecart_notable}
+            ("human", """OLD CHRONICLE: {old_chronicle}
+            PLAYER ACTION: {user_input}
+            NARRATOR RESPONSE: {narrator_response}
+            ADDITIONAL FACT TO KEEP (may diverge from source scenario): {notable_deviation}
 
-            Nouveau résumé mis à jour :"""),
+            New updated summary:"""),
         ])
         self.chain = self.prompt | self.llm
 
-    def update(self, old_chronicle, user_input, narrator_response, ecart_notable=None):
+    def update(self, old_chronicle, user_input, narrator_response, notable_deviation=None):
         inputs = {
             "old_chronicle": old_chronicle if old_chronicle else "L'aventure commence à peine.",
             "user_input": user_input,
             "narrator_response": narrator_response,
-            "ecart_notable": ecart_notable if ecart_notable else "Aucun fait additionnel."
+            "notable_deviation": notable_deviation if notable_deviation else "Aucun fait additionnel."
         }
         response = self.chain.invoke(inputs)
         return response.content
 
 class SheetManagerAgent(BaseAgent):
-    def __init__(self, vector_store):
-        super().__init__(model=config.SHEET_MANAGER_MODEL, temperature=config.SHEET_MANAGER_TEMP)
+    def __init__(self, vector_store, verbose=False):
+        super().__init__(model=config.SHEET_MANAGER_MODEL, temperature=config.SHEET_MANAGER_TEMP, verbose=verbose)
         self.vector_store = vector_store
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es le Gestionnaire de Fiche de Personnage.
-            Ton rôle est de mettre à jour la fiche JSON du personnage pour les aspects NARRATIFS uniquement (inventaire, relations, notes, descriptions).
-            Tu reçois la fiche actuelle, l'action du joueur, la réponse du narrateur et les règles pertinentes.
+            ("system", """You are the Character Sheet Manager.
+            Your role is to update the JSON character sheet for NARRATIVE aspects only (equipment, status, description).
+            You receive the current sheet, the player's action, the narrator's response, and relevant rules.
 
-            ⚠️ RÈGLE CRITIQUE : Tu ne dois JAMAIS modifier les Points de Vie (PV), l'XP, le niveau, les sorts ou les ressources (rage, etc.). Ces éléments sont gérés de façon déterministe par le GameStateEngine.
+            ⚠️ CRITICAL RULE: You must NEVER modify Hit Points (hit_points), XP, level, spells, or resources (rage, etc.). These elements are managed deterministically by the GameStateEngine.
 
-            CONSIGNES :
-            - Mets à jour les Points de Vie (PV) si le personnage a été blessé ou soigné.
-            - RESSOUCES ET SORTS : Mets à jour les 'restants' dans la section 'ressources' si une capacité a été utilisée ou si le personnage a pris un REPOS (rétablissement des ressources).
-            - Ajoute ou retire des objets de l'inventaire si nécessaire.
-            - Mets à jour l'expérience (XP) ou le niveau si mentionné, en suivant les tables de progression du CODEX.
-            - Ne modifie pas les statistiques de base (Force, etc.) sauf si un événement permanent l'exige.
-            - Assure-toi que le JSON est valide et complet.
-            - Réponds UNIQUEMENT avec le bloc JSON entouré de ```json and ```.
+            CONSIGNES:
+            - Add or remove items from the equipment list if necessary.
+            - Ensure the JSON is valid and complete.
+            - Never modify base statistics unless a permanent event demands it.
+            - Use the exact keys from the glossary: "name", "race", "class", "statistics", "equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").
+            - Reply ONLY with the JSON block enclosed between ```json and ```.
 
-            RÈGLES DU CODEX (Contexte) :
+            CODEX RULES (Context):
             {context}
             """),
-            ("human", """FICHE ACTUELLE :
+            ("human", """CURRENT SHEET:
             {character_sheet}
 
-            DERNIERS ÉVÉNEMENTS :
-            Action joueur : {user_input}
-            Réponse narrateur : {narrator_response}
+            LATEST EVENTS:
+            Player action: {user_input}
+            Narrator response: {narrator_response}
 
-            Nouvelle fiche JSON mise à jour :"""),
+            New updated JSON sheet:"""),
         ])
         self.chain = self.prompt | self.llm
 
@@ -176,36 +172,36 @@ class SheetManagerAgent(BaseAgent):
             docs = self.vector_store.similarity_search(query, k=config.RAG_K_ADVENTURE)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
-            return "Aucune règle trouvée pour la mise à jour."
+            return "No rules found for update."
 
     def update_sheet(self, character_sheet, user_input, narrator_response, mode="ADVENTURE"):
-        context = self.get_context(f"Règles pour : {user_input} {narrator_response}")
+        context = self.get_context(f"Rules for: {user_input} {narrator_response}")
 
-        # On s'assure d'avoir un LLM valide même si le modèle spécifié a échoué (fallback manuel)
         llm = self.llm
 
         if mode == "CREATION":
             creation_prompt = ChatPromptTemplate.from_messages([
-                ("system", """Tu es le Gestionnaire de Fiche de Personnage en phase de CRÉATION.
-                Ton rôle est d'extraire les informations de la conversation pour mettre à jour la fiche JSON.
+                ("system", """You are the Character Sheet Manager in the CREATION phase.
+                Your role is to extract information from the conversation to update the JSON character sheet.
 
-                CONSIGNES :
-                - Analyse l'action du joueur et la réponse du MJ pour identifier les nouveaux choix (nom, race, classe, statistiques, équipement, etc.).
-                - Mets à jour TOUS les champs nécessaires.
-                - Si le MJ  mentionne que la création est terminée (mot-clé "CRÉATION_TERMINÉE"), mets le champ "statut" à "complet".
-                - Réponds UNIQUEMENT avec le bloc JSON complet.
+                CONSIGNES:
+                - Analyze the player's action and the GM's response to identify new choices (name, race, class, statistics, equipment, etc.).
+                - Update all necessary fields.
+                - If the GM mentions that creation is complete (keyword "CREATION_COMPLETED"), set the "status" field to "complet".
+                - Use the exact keys from the glossary: "name", "race", "class", "statistics", "equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").
+                - Reply ONLY with the complete JSON block.
 
-                RÈGLES DU CODEX (Contexte) :
+                CODEX RULES (Context):
                 {context}
                 """),
-                ("human", """FICHE ACTUELLE :
+                ("human", """CURRENT SHEET:
                 {character_sheet}
 
-                DERNIERS ÉVÉNEMENTS :
-                Action joueur : {user_input}
-                Réponse MJ : {narrator_response}
+                LATEST EVENTS:
+                Player action: {user_input}
+                GM Response: {narrator_response}
 
-                Nouvelle fiche JSON mise à jour :"""),
+                New updated JSON sheet:"""),
             ])
             chain = creation_prompt | llm
             inputs = {
@@ -218,7 +214,7 @@ class SheetManagerAgent(BaseAgent):
                 response = chain.invoke(inputs)
             except Exception as e:
                 if "404" in str(e) or "not found" in str(e).lower():
-                    print(f"[SheetManagerAgent] ⚠ Modèle '{config.SHEET_MANAGER_MODEL}' non trouvé, fallback sur '{config.LLM_MODEL}'.")
+                    print(f"[SheetManagerAgent] ⚠ Model '{config.SHEET_MANAGER_MODEL}' not found, fallback to '{config.LLM_MODEL}'.")
                     fallback_llm = get_llm(config.LLM_MODEL, config.SHEET_MANAGER_TEMP)
                     chain = creation_prompt | fallback_llm
                     response = chain.invoke(inputs)
@@ -235,7 +231,7 @@ class SheetManagerAgent(BaseAgent):
                 response = self.chain.invoke(inputs)
             except Exception as e:
                 if "404" in str(e) or "not found" in str(e).lower():
-                    print(f"[SheetManagerAgent] ⚠ Modèle '{config.SHEET_MANAGER_MODEL}' non trouvé, fallback sur '{config.LLM_MODEL}'.")
+                    print(f"[SheetManagerAgent] ⚠ Model '{config.SHEET_MANAGER_MODEL}' not found, fallback to '{config.LLM_MODEL}'.")
                     fallback_llm = get_llm(config.LLM_MODEL, config.SHEET_MANAGER_TEMP)
                     fallback_chain = self.prompt | fallback_llm
                     response = fallback_chain.invoke(inputs)
@@ -248,19 +244,18 @@ class SheetManagerAgent(BaseAgent):
     def audit_and_complete(self, character_data: dict, messages: list, schema: dict) -> dict | None:
         context = self.get_context("statistiques, points de vie, équipement, armes, armures, ressources")
         audit_prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es le Gestionnaire de Fiche de Personnage, en AUDIT FINAL de création.
-Relis l'INTÉGRALITÉ de la conversation de création ci-dessous et produis la fiche JSON la
-plus complète et fidèle possible, en te basant sur le schéma des champs requis fourni.
-Cherche en particulier les valeurs mentionnées dans la conversation mais absentes de la
-fiche actuelle (souvent oubliées par les mises à jour incrémentales tour par tour).
-Ne modifie pas les champs déjà corrects et ne modifie pas leur nom/structure existante.
-Réponds UNIQUEMENT avec le bloc JSON complet de la fiche.
+            ("system", """You are the Character Sheet Manager, performing a FINAL AUDIT of character creation.
+Review the ENTIRE creation conversation below and produce the most complete and faithful JSON character sheet possible, based on the provided required fields schema.
+Search in particular for values mentioned in the conversation but missing from the current sheet (often forgotten by incremental turn-by-turn updates).
+Do not modify fields that are already correct and do not change their existing name/structure.
+Use the exact keys from the glossary: "name", "race", "class", "statistics", "equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").
+Reply ONLY with the complete JSON block of the sheet.
 
-SCHÉMA DES CHAMPS REQUIS : {schema}
-RÈGLES DU CODEX : {context}
+REQUIRED FIELDS SCHEMA: {schema}
+CODEX RULES: {context}
 """),
             MessagesPlaceholder(variable_name="history"),
-            ("human", "FICHE ACTUELLE :\n{character_sheet}\n\nProduis la fiche JSON finale, complète."),
+            ("human", "CURRENT SHEET:\n{character_sheet}\n\nProduce the final, complete JSON sheet."),
         ])
         chain = audit_prompt | self.llm
         try:
@@ -275,74 +270,47 @@ RÈGLES DU CODEX : {context}
             return None
 
 class Narrator(BaseAgent):
-    def __init__(self):
-        super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP)
+    def __init__(self, verbose=False):
+        super().__init__(model=config.NARRATOR_MODEL, temperature=config.NARRATOR_TEMP, verbose=verbose)
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es le Narrateur d'une aventure de jeu de rôle. Tu reçois des instructions
-structurées de l'Orchestrateur (MJ) et tu les transformes en narration à la
-deuxième personne du singulier, en français, de manière immersive.
+            ("system", """You are the Narrator of a role-playing adventure. You receive structured instructions
+from the Orchestrator (GM) and you transform them into immersive narration in the second person singular, in FRENCH.
 
-RÈGLES ABSOLUES :
-- Tu ne décides JAMAIS des règles, des jets de dés ou des résultats d'actions.
-- Tu ne modifies JAMAIS l'état du jeu.
-- Tu n'interprètes JAMAIS à la place du joueur — tu décris ce que son personnage
-  perçoit, pas ce qu'il comprend ou conclut.
-- Tu ne révèles JAMAIS directement le nom de l'antagoniste final, la nature
-  exacte de la menace, ou la condition de résolution du scénario tant que
-  le joueur ne les a pas découverts par le jeu - même si cette information
-  t'est donnée en contexte par l'Orchestrateur.
+ABSOLUTE RULES:
+- You NEVER decide on rules, dice rolls, or action outcomes.
+- You NEVER modify the game state.
+- You NEVER interpret on behalf of the player — you describe what their character perceives, not what they understand or conclude.
+- You NEVER directly reveal the name of the final antagonist, the exact nature of the threat, or the scenario resolution condition until the player has discovered them through gameplay - even if this information is given to you in context by the Orchestrator.
 
-STRUCTURE DE CHAQUE RÉPONSE :
+STRUCTURE of each response:
 
-Rédige une narration continue et fluide, SANS titres, SANS numéros, SANS
-puces dans le texte narratif lui-même. Fais avancer ton texte à travers ces
-mouvements, sans jamais les annoncer explicitement au joueur :
+Write a continuous and fluid narration in FRENCH, WITHOUT titles, WITHOUT numbers, WITHOUT bullet points in the narrative text itself. Advance your text through these movements, without ever announcing them explicitly to the player:
 
-- Perception immédiate : ce que le personnage voit, entend, sent à l'instant T.
-  Concret et sensoriel. Pas de conclusions, pas d'interprétations.
+- Immediate perception: what the character sees, hears, smells at the current moment. Concrete and sensory. No conclusions, no interpretations.
   ❌ "Vous comprenez que quelque chose a été tué ici."
-  ✅ "Le sol est couvert d'une substance sombre et poisseuse. Une odeur
-      âcre de fer et de chair vous prend à la gorge."
-- Détails et environnement : ce que le personnage remarque en regardant
-  alentour, toujours de son propre point de vue - ce qu'il voit
-  réellement, jamais ce que le MJ sait en plus.
-- Tension ou impulsion : un élément actif qui pousse le joueur à réagir
-  (un bruit, un mouvement, une présence, un choix visible). Ne laisse
-  jamais la description en suspension.
-- Question ou amorce d'action, pour terminer : une question directe ou
-  une proposition concrète.
-  ❌ "Que faites-vous ?" (trop vague)
-  ✅ "Le couloir nord semble plus sombre — aucune torche n'y brûle.
-      À l'est, vous distinguez ce qui ressemble à une porte.
-      Vous avancez, ou vous faites demi-tour ?"
+  ✅ "Le sol est couvert d'une substance sombre et poisseuse. Une odeur âcre de fer et de chair vous prend à la gorge."
+- Details and environment: what the character notices looking around, always from their own point of view - what they actually see, never what the GM knows in addition.
+- Tension or impulse: an active element that pushes the player to react (a noise, a movement, a presence, a visible choice). Never leave the description in suspension.
+- Question or action prompt, to finish: a direct question or concrete proposal in French.
+  ❌ "Que faites-vous ?" (too vague)
+  ✅ "Le couloir nord semble plus sombre — aucune torche n'y brûle. À l'est, vous distinguez ce qui ressemble à une porte. Vous avancez, ou vous faites demi-tour ?"
 
-Après ce texte narratif, ajoute un bloc résumé séparé, introduit par "---"
-et l'en-tête "📌 Résumé des informations" (voir règles strictes ci-dessous).
+After this narrative text, add a separate summary block, introduced by "---" and the header "📌 Résumé des informations" (see strict rules below).
 
-RÈGLES STRICTES DU BLOC RÉSUMÉ :
-- Liste UNIQUEMENT des faits que tu viens d'énoncer explicitement dans le
-  texte narratif ci-dessus, dans cette même réponse.
-- N'ajoute JAMAIS un fait, un nom, une signification ou une interprétation
-  qui n'apparaît pas (mot pour mot ou en substance très proche) dans le
-  texte que tu viens d'écrire. Si un objet ou indice existe mais que son
-  contenu ou sa signification n'a pas encore été révélé au joueur dans la
-  narration, ne mentionne PAS ce contenu dans le résumé - mentionne
-  seulement son existence physique si elle a été décrite.
-  ❌ Narration : "des gravures anciennes ornent les parois." / Résumé :
-     "Indice : des gravures décrivant la gloire d'Aethelgard."
-     (information non révélée dans la narration → INTERDIT)
-  ✅ Narration : "des gravures anciennes ornent les parois." / Résumé :
-     "Des gravures anciennes ornent les parois, non encore examinées."
+STRICT RULES OF THE SUMMARY BLOCK:
+- List ONLY facts that you have just explicitly stated in the narrative text above, in this same response.
+- NEVER add a fact, name, meaning, or interpretation that does not appear (word for word or in very close substance) in the text you have just written. If an object or clue exists but its content or meaning has not yet been revealed to the player in the narration, do NOT mention this content in the summary - only mention its physical existence if it has been described.
+  ❌ Narration: "des gravures anciennes ornent les parois." / Summary: "Indice : des gravures décrivant la gloire d'Aethelgard." (information not revealed in narration → FORBIDDEN)
+  ✅ Narration: "des gravures anciennes ornent les parois." / Summary: "Des gravures anciennes ornent les parois, non encore examinées."
 
-STYLE :
-- Deuxième personne du singulier ("vous").
-- Présent de narration.
-- Phrases courtes et rythmées pour les moments de tension,
-  plus longues pour les descriptions calmes.
-- Ne liste jamais les PNJ présents ou les lieux de façon technique.
+STYLE:
+- Second person singular ("vous").
+- Present tense of narration.
+- Short, rhythmic sentences for moments of tension, longer ones for calm descriptions.
+- Never list NPCs present or locations technically.
 """),
             MessagesPlaceholder(variable_name="history"),
-            ("system", "CONSIGNES DE L'ORCHESTRATEUR : {instructions}"),
+            ("system", "ORCHESTRATOR INSTRUCTIONS: {instructions}"),
             ("human", "{input}"),
         ])
         self.chain = self.prompt | self.llm
@@ -357,37 +325,37 @@ STYLE :
         return response.content
 
 class RPGAgent(BaseAgent):
-    def __init__(self):
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.ORCHESTRATOR_TEMP)
+    def __init__(self, verbose=False):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.ORCHESTRATOR_TEMP, verbose=verbose)
         self.embeddings = get_embeddings()
         self.client = chromadb.PersistentClient(path=config.CHROMA_PATH)
 
-        # Collection pour les règles (Core)
+        # Core Rules collection
         self.core_store = Chroma(
             client=self.client,
             collection_name=config.CORE_COLLECTION_NAME,
             embedding_function=self.embeddings
         )
 
-        # Collection pour le scénario
+        # Scenario collection
         self.scenario_store = Chroma(
             client=self.client,
             collection_name=config.SCENARIO_COLLECTION_NAME,
             embedding_function=self.embeddings
         )
 
-        self.character_creator = CharacterCreator(self.core_store)
-        self.narrator = Narrator()
-        self.chronicle_agent = ChronicleAgent()
-        self.sheet_manager = SheetManagerAgent(self.core_store)
+        self.character_creator = CharacterCreator(self.core_store, verbose=verbose)
+        self.narrator = Narrator(verbose=verbose)
+        self.chronicle_agent = ChronicleAgent(verbose=verbose)
+        self.sheet_manager = SheetManagerAgent(self.core_store, verbose=verbose)
 
-        # Agent de setup unifié
-        self.scenario_extractor_agent = ScenarioExtractorAgent(self.scenario_store)
+        # Setup Agent
+        self.scenario_extractor_agent = ScenarioExtractorAgent(self.scenario_store, verbose=verbose)
 
         from game_state_engine import GameStateEngine
         self.gse = GameStateEngine()
 
-        # Données de scénario et progression
+        # Scenario data & progression
         self.scenario_structure = None
         self.progression = None
         self._pnj_by_id = {}
@@ -419,8 +387,8 @@ class RPGAgent(BaseAgent):
 
     def _check_collections(self):
         checks = [
-            (config.CORE_COLLECTION_NAME,     "Règles"),
-            (config.SCENARIO_COLLECTION_NAME, "Scénario"),
+            (config.CORE_COLLECTION_NAME,     "Rules"),
+            (config.SCENARIO_COLLECTION_NAME, "Scenario"),
         ]
         all_ok = True
         for coll_name, label in checks:
@@ -428,12 +396,12 @@ class RPGAgent(BaseAgent):
                 collection = self.client.get_collection(coll_name)
                 count = collection.count()
                 if count == 0:
-                    print(f"⚠ [{label}] Collection '{coll_name}' est vide — lance 'python indexer.py'")
+                    print(f"⚠ [{label}] Collection '{coll_name}' is empty — run 'python indexer.py'")
                     all_ok = False
                 else:
-                    print(f"✓ [{label}] {count} chunks disponibles.")
+                    print(f"✓ [{label}] {count} chunks available.")
             except Exception:
-                print(f"✗ [{label}] Collection '{coll_name}' introuvable.")
+                print(f"✗ [{label}] Collection '{coll_name}' not found.")
                 all_ok = False
         return all_ok
 
@@ -444,7 +412,7 @@ class RPGAgent(BaseAgent):
             docs = self.core_store.similarity_search(query, k=k)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
-            return "Aucune règle trouvée."
+            return "No rules found."
 
     def get_scenario_context(self, query, k=None):
         if k is None:
@@ -453,11 +421,11 @@ class RPGAgent(BaseAgent):
             docs = self.scenario_store.similarity_search(query, k=k)
             return "\n\n".join([doc.page_content for doc in docs])
         except Exception:
-            return "Aucun élément de scénario trouvé."
+            return "No scenario details found."
 
     def get_current_scene(self) -> str:
         """
-        Récupère la scène courante par lookup (plus de RAG ni de filtre Chroma pour la scène).
+        Retrieves current scene by direct lookup (no RAG or Chroma filtering).
         """
         if not self.scenario_structure or not self.current_scene_id:
             return ""
@@ -468,30 +436,30 @@ class RPGAgent(BaseAgent):
 
     def get_current_context(self) -> str:
         """
-        Génère un contexte lisible à partir de la progression et des lookups statiques (Pas de RAG).
+        Generates clean context from progression and static lookups (no RAG).
         """
         if not self.progression or not self.scenario_structure:
             return ""
-        scene_id = self.progression.get("scene_courante")
+        scene_id = self.progression.get("current_scene")
         scene = self._scenes_by_id.get(scene_id)
         if not scene:
             return ""
-        lieu = self._lieux_by_id.get(scene.get("lieu_rattache_id"))
-        pnjs = [self._pnj_by_id[pid] for pid in scene.get("pnj_presents", []) if pid in self._pnj_by_id]
-        acte = self._actes_by_id.get(scene.get("acte_rattache_id"))
+        location = self._lieux_by_id.get(scene.get("location_id"))
+        npcs = [self._pnj_by_id[pid] for pid in scene.get("present_npcs", []) if pid in self._pnj_by_id]
+        act = self._actes_by_id.get(scene.get("act_id"))
 
         context_lines = []
-        context_lines.append(f"SCÈNE COURANTE : {scene.get('titre')} (ID: {scene_id})")
-        if lieu:
-            context_lines.append(f"Lieu : {lieu.get('nom_complet')} ({lieu.get('ambiance_sensorielle')})")
-            if lieu.get("elements_interactifs"):
-                context_lines.append(f"Éléments interactifs du décor : {lieu.get('elements_interactifs')}")
-        if pnjs:
-            context_lines.append("PNJs présents :")
-            for p in pnjs:
-                context_lines.append(f"- {p.get('nom_complet')} (Motivation: {p.get('agenda_et_motivation')}, Attitude: {p.get('attitude_initiale')}, Stats/Capacités: {p.get('stats_et_capacites')})")
-        if acte:
-            context_lines.append(f"Acte rattaché : {acte.get('titre')} (Validation: {acte.get('condition_validation')})")
+        context_lines.append(f"CURRENT SCENE : {scene.get('title')} (ID: {scene_id})")
+        if location:
+            context_lines.append(f"Location : {location.get('full_name')} ({location.get('sensory_atmosphere')})")
+            if location.get("interactive_elements"):
+                context_lines.append(f"Interactive elements: {location.get('interactive_elements')}")
+        if npcs:
+            context_lines.append("NPCs present:")
+            for p in npcs:
+                context_lines.append(f"- {p.get('full_name')} (Motivation: {p.get('agenda_and_motivation')}, Attitude: {p.get('initial_attitude')}, Stats/Abilities: {p.get('stats_and_abilities')})")
+        if act:
+            context_lines.append(f"Parent Act: {act.get('title')} (Completion Condition: {act.get('completion_condition')})")
 
         return "\n".join(context_lines)
 
@@ -499,69 +467,69 @@ class RPGAgent(BaseAgent):
         return random.randint(1, sides)
 
     def _extract_and_add_resources(self):
-        """Extrait les ressources de classe (sorts, rage, etc.) et les ajoute à la fiche."""
-        self.log("Extraction des ressources et capacités de classe...")
-        classe = self.character_data.get("classe", "Inconnu")
-        niveau = self.character_data.get("niveau", 1)
+        """Extracts class resources (spells, rage, etc.) and adds them to the character sheet."""
+        self.log("Extracting class resources and abilities...")
+        classe = self.character_data.get("class", "Inconnu")
+        niveau = self.character_data.get("level", 1)
         race = self.character_data.get("race", "Inconnu")
 
         query = f"Ressources de classe pour {classe} niveau {niveau}, race {race}. Emplacements de sorts, points de rage, capacités limitées par jour, points de vie."
         context = self.get_core_context(query, k=10)
 
-        prompt = f"""Tu es un expert en règles de JDR.
-Basé sur les extraits du CODEX suivants, identifie TOUTES les ressources consommables (sorts par jour, capacités à usages limités, points de vie, etc.) pour un personnage de niveau {niveau}, de classe {classe} et de race {race}.
+        prompt = f"""You are an expert in RPG rules.
+Based on the following CODEX excerpts, identify ALL consumable resources (spell slots per day, limited use abilities, hit points, etc.) for a character of level {niveau}, class {classe} and race {race}.
 
-EXTRAITS DU CODEX :
+CODEX EXCERPTS:
 {context}
 
-FICHE ACTUELLE :
+CURRENT SHEET:
 {json.dumps(self.character_data, ensure_ascii=False, indent=2)}
 
-Produis un objet JSON 'ressources' qui pourra être intégré à la fiche.
-Chaque ressource doit avoir un 'total' et un 'restants' égal au total.
-Utilise des noms de clés clairs en français (ex: 'emplacements_sorts_niv1', 'points_de_rage').
-Si le personnage a des sorts, liste également les sorts connus s'ils sont mentionnés ou suggérés pour ce niveau.
+Produce a JSON 'resources' object that can be integrated into the sheet.
+Each resource must have a 'total' and a 'current' equal to total.
+Use clear, lowercase technical French key names for custom classes resources (e.g. 'emplacements_sorts_niv1', 'points_de_rage') except for hit_points which is already 'hit_points'. Always keep the main wrapper as 'resources'.
+If the character has spells, also list known spells if mentioned or suggested for this level.
 
-Réponds UNIQUEMENT avec le bloc JSON :
+Reply ONLY with the JSON block:
 {{
-  "ressources": {{
-    "nom_ressource": {{ "total": X, "restants": X }},
+  "resources": {{
+    "nom_ressource": {{ "total": X, "current": X }},
     ...
   }},
-  "sorts": ["nom_sort1", "nom_sort2"]
+  "spells": ["spell_name_1", "spell_name_2"]
 }}
 """
         try:
             response = self.llm.invoke(prompt).content
             data = extract_json(response)
             if data:
-                if "ressources" in data and data["ressources"]:
-                    if "ressources" not in self.character_data:
-                        self.character_data["ressources"] = {}
-                    self.character_data["ressources"].update(data["ressources"])
+                if "resources" in data and data["resources"]:
+                    if "resources" not in self.character_data:
+                        self.character_data["resources"] = {}
+                    self.character_data["resources"].update(data["resources"])
 
-                if "sorts" in data and data["sorts"]:
-                    existing_spells = self.character_data.get("sorts", [])
-                    if not existing_spells or len(existing_spells) < len(data["sorts"]):
-                        self.character_data["sorts"] = data["sorts"]
+                if "spells" in data and data["spells"]:
+                    existing_spells = self.character_data.get("spells", [])
+                    if not existing_spells or len(existing_spells) < len(data["spells"]):
+                        self.character_data["spells"] = data["spells"]
 
                 os.makedirs("Memory", exist_ok=True)
                 with open("Memory/character.json", "w", encoding="utf-8") as f:
                     json.dump(self.character_data, f, indent=4, ensure_ascii=False)
-                self.log("✓ Ressources et sorts mis à jour dans la fiche.")
+                self.log("✓ Resources and spells updated in character sheet.")
         except Exception as e:
-            self.log(f"⚠ Erreur lors de l'extraction des ressources : {e}")
+            self.log(f"⚠ Error during resources extraction: {e}")
 
     def setup_world(self) -> bool:
         """
-        Pipeline de setup complet (one-shot, exécuté après la création du PJ).
-        Génère scenario_structure.json et initialise progression.json.
+        Complete setup pipeline (one-shot, executed after character creation).
+        Generates scenario_structure.json and initializes progression.json.
         """
         if not self._check_collections():
             return False
 
         self.setup_logs = [] # Reset logs
-        self.log("── Setup du monde ──")
+        self.log("── World Setup ──")
         total_start = time.time()
 
         json_files = [f for f in os.listdir(config.SCENARIO_DATA_PATH) if f.endswith(".json")]
@@ -569,18 +537,18 @@ Réponds UNIQUEMENT avec le bloc JSON :
         try:
             if len(json_files) > 1:
                 raise ValueError(
-                    f"Plusieurs fichiers JSON de scénario trouvés dans {config.SCENARIO_DATA_PATH} : "
-                    f"{json_files}. Un seul scénario structuré est supporté à la fois."
+                    f"Multiple scenario JSON files found in {config.SCENARIO_DATA_PATH}: "
+                    f"{json_files}. Only one structured scenario is supported at a time."
                 )
             elif len(json_files) == 1:
-                # Cas 1 : scénario déjà structuré (généré par l'outil externe)
-                self.log(f"Chargement direct du scénario structuré : {json_files[0]}")
+                # Direct load of pre-structured scenario
+                self.log(f"Direct loading of structured scenario: {json_files[0]}")
                 with open(os.path.join(config.SCENARIO_DATA_PATH, json_files[0]), encoding="utf-8") as f:
                     raw = json.load(f)
                 self.scenario_structure, warnings, errors = validate_scenario_structure(raw)
             else:
-                # Cas 2 : uniquement des PDF -> extraction via ScenarioExtractorAgent
-                self.log("Extraction de la structure du scénario via ScenarioExtractorAgent en 5 passes...")
+                # Extract from PDFs
+                self.log("Extracting scenario structure via ScenarioExtractorAgent in 5 passes...")
                 raw = self.scenario_extractor_agent.generate(log_callback=self.log)
                 self.scenario_structure, warnings, errors = validate_scenario_structure(raw)
 
@@ -589,11 +557,10 @@ Réponds UNIQUEMENT avec le bloc JSON :
 
             if errors:
                 for e in errors:
-                    self.log(f"[Validation][ERREUR] {e}")
+                    self.log(f"[Validation][ERROR] {e}")
                 raise ValueError(
-                    "Le scénario contient des erreurs bloquantes non réparables automatiquement "
-                    "(voir logs) - correction manuelle ou relance de l'extraction nécessaire "
-                    "avant de démarrer une partie."
+                    "The scenario contains blocking errors that cannot be repaired automatically "
+                    "(see logs) - manual correction or re-extraction is required before starting."
                 )
 
             os.makedirs("Memory", exist_ok=True)
@@ -601,84 +568,81 @@ Réponds UNIQUEMENT avec le bloc JSON :
                 json.dump(self.scenario_structure, f, indent=2, ensure_ascii=False)
 
         except Exception as e:
-            self.log(f"✗ Erreur lors du setup ou de la validation de la structure : {e}")
+            self.log(f"✗ Error during setup or structure validation: {e}")
             raise e
 
-        # Construire les dictionnaires de lookup direct
+        # Build lookups
         self._build_lookups()
 
-        # Initialiser l'état de progression
-        scene_initiale = self.scenario_structure.get("metadata", {}).get("scene_initiale")
-        if not scene_initiale and self.scenario_structure.get("noeuds_sceniques"):
-            scene_initiale = self.scenario_structure["noeuds_sceniques"][0]["id_scene"]
-        elif not scene_initiale:
-            scene_initiale = "Inconnu"
+        # Initialize progression state
+        starting_scene = self.scenario_structure.get("metadata", {}).get("starting_scene")
+        if not starting_scene and self.scenario_structure.get("scene_nodes"):
+            starting_scene = self.scenario_structure["scene_nodes"][0]["scene_id"]
+        elif not starting_scene:
+            starting_scene = "Inconnu"
 
-        acte_courant = "Inconnu"
-        if scene_initiale in self._scenes_by_id:
-            acte_courant = self._scenes_by_id[scene_initiale].get("acte_rattache_id", "Inconnu")
+        current_act = "Inconnu"
+        if starting_scene in self._scenes_by_id:
+            current_act = self._scenes_by_id[starting_scene].get("act_id", "Inconnu")
 
         self.progression = {
-            "acte_courant": acte_courant,
-            "scene_courante": scene_initiale,
-            "scenes_resolues": [],
-            "scenes_contournees": [],
-            "horloges": {
-                h["nom"]: {"segments": 0, "declenchee": False} for h in self.scenario_structure.get("horloges_globales", [])
+            "current_act": current_act,
+            "current_scene": starting_scene,
+            "resolved_scenes": [],
+            "bypassed_scenes": [],
+            "clocks": {
+                h["name"]: {"segments": 0, "declenchee": False} for h in self.scenario_structure.get("global_clocks", [])
             },
-            "ecarts_notables": []
+            "notable_deviations": []
         }
 
-        # Sauvegarder la progression
+        # Save progression
         try:
             os.makedirs("Memory", exist_ok=True)
             with open("Memory/progression.json", "w", encoding="utf-8") as f:
                 json.dump(self.progression, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            self.log(f"⚠ Erreur de sauvegarde de progression.json : {e}")
+            self.log(f"⚠ Error saving progression.json: {e}")
 
-        self.current_scene_id = scene_initiale
+        self.current_scene_id = starting_scene
 
-        # Compatibilité avec app.py
+        # Compatibility with app.py using translated keys
         self.scenario_data = {
-            "titre": self.scenario_structure["metadata"]["titre"],
-            "pitch": self.scenario_structure["metadata"]["pitch_global"],
+            "title": self.scenario_structure["metadata"]["title"],
+            "pitch": self.scenario_structure["metadata"]["global_pitch"],
         }
         try:
             with open("Memory/scenario.json", "w", encoding="utf-8") as f:
                 json.dump(self.scenario_data, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            self.log(f"⚠ Erreur de sauvegarde de scenario.json : {e}")
+            self.log(f"⚠ Error saving scenario.json: {e}")
 
-        # Les PNJs pour le narrateur/orchestrateur
-        self.npcs_data = self.scenario_structure.get("entites", {}).get("pnj", [])
+        # NPCs for narrator and orchestrator
+        self.npcs_data = self.scenario_structure.get("entities", {}).get("npcs", [])
 
-        self.log(f"✨ Setup terminé en {time.time() - total_start:.2f}s.")
+        self.log(f"✨ Setup completed in {time.time() - total_start:.2f}s.")
         return True
 
     def _build_lookups(self):
         if not self.scenario_structure:
             return
-        self._pnj_by_id = {p["id"]: p for p in self.scenario_structure.get("entites", {}).get("pnj", []) if "id" in p}
-        self._lieux_by_id = {l["id"]: l for l in self.scenario_structure.get("entites", {}).get("lieux", []) if "id" in l}
-        self._scenes_by_id = {s["id_scene"]: s for s in self.scenario_structure.get("noeuds_sceniques", []) if "id_scene" in s}
-        self._actes_by_id = {a["id_acte"]: a for a in self.scenario_structure.get("macro_structure", []) if "id_acte" in a}
+        self._pnj_by_id = {p["id"]: p for p in self.scenario_structure.get("entities", {}).get("npcs", []) if "id" in p}
+        self._lieux_by_id = {l["id"]: l for l in self.scenario_structure.get("entities", {}).get("locations", []) if "id" in l}
+        self._scenes_by_id = {s["scene_id"]: s for s in self.scenario_structure.get("scene_nodes", []) if "scene_id" in s}
+        self._actes_by_id = {a["act_id"]: a for a in self.scenario_structure.get("acts", []) if "act_id" in a}
 
     def _unwrap_character_data(self, data):
-        """Désadresse les données du personnage si elles sont imbriquées dans une clé racine."""
+        """Unwraps nested character sheet if root keys are present."""
         if not isinstance(data, dict):
             return data
 
-        # Liste des clés racines courantes
         root_keys = ["personnage", "character", "pj", "sheet", "fiche"]
 
-        # Si on n'a qu'une seule clé et qu'elle est dans notre liste
         if len(data) == 1:
             key = list(data.keys())[0]
             if key.lower() in root_keys and isinstance(data[key], dict):
                 return data[key]
 
-        # Sinon on cherche si une de ces clés existe au premier niveau et contient un dictionnaire significatif
         for key in root_keys:
             if key in data and isinstance(data[key], dict) and len(data[key]) > 2:
                 return data[key]
@@ -693,7 +657,7 @@ Réponds UNIQUEMENT avec le bloc JSON :
                     return json.load(f)
             except Exception:
                 pass
-        return {"champs_requis": [{"chemin": "nom", "type": "string"}]}
+        return {"required_fields": [{"path": "name", "type": "string"}]}
 
     def _load_action_catalog(self) -> dict:
         path = "Memory/action_catalog.json"
@@ -703,69 +667,69 @@ Réponds UNIQUEMENT avec le bloc JSON :
                     return json.load(f)
             except Exception:
                 pass
-        return {"actions_courantes": []}
+        return {"common_actions": []}
 
     def _check_resources(self, action):
-        """Vérifie si l'action consomme une ressource et si elle est disponible."""
-        if not self.character_data or "ressources" not in self.character_data:
+        """Checks if player's action consumes any limited resource and whether it is available."""
+        if not self.character_data or "resources" not in self.character_data:
             return {"ok": True}
 
-        prompt = f"""Tu es un arbitre de JDR. Analyse l'action du joueur et détermine si elle consomme une ressource limitée de sa fiche.
-ACTION : "{action}"
-RESSOURCES DISPONIBLES : {json.dumps(self.character_data['ressources'], ensure_ascii=False)}
+        prompt = f"""You are an RPG referee. Analyze the player's action and determine if it consumes a limited resource from their sheet.
+ACTION: "{action}"
+AVAILABLE RESOURCES: {json.dumps(self.character_data['resources'], ensure_ascii=False)}
 
-Réponds UNIQUEMENT avec ce JSON :
+Reply ONLY with this JSON:
 {{
-  "consomme": boolean,
-  "nom_ressource": "nom_de_la_cle_dans_le_json_ou_null",
-  "quantite": integer_ou_null,
-  "raison": "explication courte"
+  "consumes": boolean,
+  "resource_name": "name_of_the_key_in_the_json_or_null",
+  "quantity": integer_or_null,
+  "reason": "short explanation"
 }}
 """
         try:
             response = self.llm.invoke(prompt).content
             analysis = extract_json(response)
-            if analysis and analysis.get("consomme"):
-                res_name = analysis.get("nom_ressource")
-                qty = analysis.get("quantite") or 1
+            if analysis and analysis.get("consumes"):
+                res_name = analysis.get("resource_name")
+                qty = analysis.get("quantity") or 1
 
-                # Recherche floue de la ressource si le nom exact n'est pas trouvé
                 actual_res_name = None
-                if res_name in self.character_data["ressources"]:
+                if res_name in self.character_data["resources"]:
                     actual_res_name = res_name
                 else:
-                    # Recherche insensible à la casse ou partielle
-                    for k in self.character_data["ressources"].keys():
+                    for k in self.character_data["resources"].keys():
                         if res_name.lower() in k.lower() or k.lower() in res_name.lower():
                             actual_res_name = k
                             break
 
                 if actual_res_name:
-                    res = self.character_data["ressources"][actual_res_name]
-                    if res.get("restants", 0) >= qty:
-                        return {"ok": True, "ressource": actual_res_name, "cout": qty}
+                    res = self.character_data["resources"][actual_res_name]
+                    if res.get("current", 0) >= qty or res.get("restants", 0) >= qty:
+                        return {"ok": True, "resource": actual_res_name, "cost": qty}
                     else:
-                        return {"ok": False, "raison": f"Ressource insuffisante : {actual_res_name} ({res.get('restants')}/{res.get('total')})"}
+                        cur_val = res.get("current") if "current" in res else res.get("restants", 0)
+                        max_val = res.get("max", res.get("total", 0))
+                        return {"ok": False, "reason": f"Ressource insuffisante : {actual_res_name} ({cur_val}/{max_val})"}
 
             return {"ok": True}
         except Exception as e:
-            print(f"[RPGAgent] Erreur check_resources : {e}")
+            print(f"[RPGAgent] Error check_resources: {e}")
             return {"ok": True}
 
     def chat(self, user_input):
         if self.game_state == "CREATION":
-            # 1. Étape Narrative : Dialogue avec le joueur
+            # 1. Narrative Step: Interact with player
             try:
                 response = self.character_creator.generate_response(
                     user_input, self.history.messages, self.character_data,
-                    champs_manquants=getattr(self, "_missing_character_fields", None)
+                    missing_fields=getattr(self, "_missing_character_fields", None)
                 )
             except TypeError:
                 response = self.character_creator.generate_response(
                     user_input, self.history.messages, self.character_data
                 )
 
-            # 2. Étape Technique (Masquée) : Mise à jour de la fiche via SheetManager
+            # 2. Technical Step (silent): Update sheet via SheetManager
             try:
                 new_sheet = self.sheet_manager.update_sheet(
                     self.character_data,
@@ -783,7 +747,7 @@ Réponds UNIQUEMENT avec ce JSON :
                 is_complete, missing_fields = validate_character_sheet(self.character_data, schema)
 
                 if not is_complete and any(
-                    kw in response.upper() for kw in ["TERMIN", "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE", "CREATION_TERMINEE", "CRÉATION_TERMINÉE"]
+                    kw in response.upper() for kw in ["TERMIN", "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE", "CREATION_TERMIN_E", "CREATION_COMPLETED"]
                 ):
                     audited = self.sheet_manager.audit_and_complete(
                         self.character_data, self.history.messages, schema
@@ -802,7 +766,7 @@ Réponds UNIQUEMENT avec ce JSON :
                 if is_complete:
                     if not self.character_data:
                         self.character_data = {}
-                    self.character_data["statut"] = "complet"
+                    self.character_data["status"] = "complet"
                     self._missing_character_fields = None
                     self._extract_and_add_resources()
                     self.game_state = "SUMMARY"
@@ -810,17 +774,17 @@ Réponds UNIQUEMENT avec ce JSON :
                     self._missing_character_fields = missing_fields
 
             except Exception as e:
-                print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour technique de la fiche : {e}")
+                print(f"[RPGAgent] ⚠ Error during technical character sheet update: {e}")
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(response)
             return response
 
         elif self.game_state == "ADVENTURE":
-            # 0. Vérification des ressources
+            # 0. Resources validation
             res_check = self._check_resources(user_input)
             if not res_check["ok"]:
-                msg = f"Action impossible : {res_check['raison']}"
+                msg = f"Action impossible : {res_check['reason']}"
                 self.history.add_user_message(user_input)
                 self.history.add_ai_message(msg)
                 return msg
@@ -829,12 +793,12 @@ Réponds UNIQUEMENT avec ce JSON :
             npcs_summary = self.get_npcs_context()
             chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
-            # Détection mécanique et validation (Actions proactives du joueur)
+            # Mechanical detection and validation (Proactive actions)
             action_type = self.gse.detect_action_type(user_input)
             mechanical_result = None
 
             if action_type == "spell":
-                spell_level = 1  # Par défaut, pourra être affiné plus tard
+                spell_level = 1
                 mechanical_result = self.gse.consume_spell_slot(spell_level)
             elif action_type == "rage":
                 mechanical_result = self.gse.consume_resource("points_de_rage")
@@ -845,7 +809,6 @@ Réponds UNIQUEMENT avec ce JSON :
                 rest_type = "long" if any(w in user_input.lower() for w in ["long", "nuit", "camp"]) else "short"
                 mechanical_result = self.gse.rest(rest_type)
 
-            # Ajouter au contexte Orchestrateur
             mechanical_context = ""
             if mechanical_result:
                 if not mechanical_result.success:
@@ -854,76 +817,74 @@ Réponds UNIQUEMENT avec ce JSON :
                     mechanical_context = f"\nMECANIQUE : {mechanical_result.message}"
 
             state_summary = self.gse.get_state_summary()
-            self.character_data = self.gse.state # Sync avant l'analyse
+            self.character_data = self.gse.state # Sync before analysis
 
-            # Catalogue d'actions avant RAG systématique
+            # Catalog lookups before system-wide RAG
             action_catalog = self._load_action_catalog()
             analysis_json = None
 
-            if action_catalog.get("actions_courantes"):
-                catalog_prompt = f"""Analyse l'action du joueur : "{user_input}"
+            if action_catalog.get("common_actions"):
+                catalog_prompt = f"""Analyze the player's action: "{user_input}"
 
-CATALOGUE D'ACTIONS COURANTES DE CE SYSTÈME :
+COMMON ACTIONS CATALOG FOR THIS SYSTEM:
 {json.dumps(action_catalog, ensure_ascii=False, indent=2)}
 
-Historique de l'aventure (Chronique) :
+Adventure history (Chronicle):
 {chronicle_text}
 
-PNJs présents et leurs secrets (si pertinent) :
+Present NPCs and their secrets (if relevant):
 {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
-ÉTAT MÉCANIQUE : {state_summary}
+MECHANICAL STATE: {state_summary}
 {mechanical_context}
 
-Cette action correspond-elle à une entrée du catalogue ci-dessus ? Si oui, applique sa
-résolution à la fiche du personnage ({json.dumps(self.character_data, ensure_ascii=False)}).
-Si l'action ne correspond à AUCUNE entrée, réponds "couvert_par_catalogue": false SANS
-deviner - le système ira chercher dans les règles complètes.
+Does this action correspond to an entry in the catalog above? If yes, apply its resolution to the character sheet ({json.dumps(self.character_data, ensure_ascii=False)}).
+If the action does not correspond to ANY entry, reply "covered_by_catalog": false WITHOUT guessing - the system will look up the complete rules.
 
-Réponds au format JSON :
+Reply in JSON format:
 {{
-    "couvert_par_catalogue": boolean,
-    "need_roll": boolean, "stat": "nom_stat_ou_null", "bonus": integer_ou_null,
-    "calculation_breakdown": "...", "dc": integer_ou_null, "reason": "...",
-    "mechanical_decision": {{"action": "damage" | "heal" | "xp" | null, "amount": integer_ou_null}}
+    "covered_by_catalog": boolean,
+    "need_roll": boolean, "stat": "stat_name_or_null", "bonus": integer_or_null,
+    "calculation_breakdown": "...", "dc": integer_or_null, "reason": "...",
+    "mechanical_decision": {{"action": "damage" | "heal" | "xp" | null, "amount": integer_or_null}}
 }}
 """
                 try:
                     analysis_response = self.llm.invoke(catalog_prompt).content
                     analysis_json = extract_json(analysis_response, expected_type=dict)
                 except Exception as e:
-                    print(f"[RPGAgent] Erreur lors de l'analyse avec le catalogue : {e}")
+                    print(f"[RPGAgent] Error during catalog analysis: {e}")
 
-            if not analysis_json or analysis_json.get("couvert_par_catalogue") is False:
+            if not analysis_json or analysis_json.get("covered_by_catalog") is False:
                 core_context = self.get_core_context(user_input, k=config.RAG_K_ADVENTURE)
-                analysis_prompt = f"""Analyse l'action du joueur : "{user_input}"
-                Basé sur les RÈGLES du CODEX suivantes :
+                analysis_prompt = f"""Analyze the player's action: "{user_input}"
+                Based on the following CODEX RULES:
                 {core_context}
 
-                Historique de l'aventure (Chronique) :
+                Adventure history (Chronicle):
                 {chronicle_text}
 
-                PNJs présents et leurs secrets (si pertinent) :
+                Present NPCs and their secrets (if relevant):
                 {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
-                ÉTAT MÉCANIQUE : {state_summary}
+                MECHANICAL STATE: {state_summary}
                 {mechanical_context}
 
-                Selon le personnage ({json.dumps(self.character_data, ensure_ascii=False)}), un jet de dé est-il nécessaire ?
-                Si oui, identifie le bonus approprié en appliquant RIGOUREUSEMENT les règles du CODEX ci-dessus à la fiche de personnage du joueur.
-                Détermine aussi si cette action ou ses conséquences immédiates entraînent des dégâts, des soins ou un gain d'XP.
+                According to the character ({json.dumps(self.character_data, ensure_ascii=False)}), is a dice roll required?
+                If so, identify the appropriate bonus by RIGOROUSLY applying the CODEX rules above to the player's character sheet.
+                Also determine if this action or its immediate consequences result in damage, healing, or XP gain.
 
-                Réponds au format JSON :
+                Reply in JSON format:
                 {{
                     "need_roll": boolean,
-                    "stat": "nom_stat_ou_null",
-                    "bonus": integer_ou_null,
-                    "calculation_breakdown": "explication du bonus (ex: +3 Force, +2 Athlétisme)",
-                    "dc": integer_ou_null,
-                    "reason": "explication courte",
+                    "stat": "stat_name_or_null",
+                    "bonus": integer_or_null,
+                    "calculation_breakdown": "bonus explanation (e.g., +3 Strength, +2 Athletics)",
+                    "dc": integer_or_null,
+                    "reason": "short explanation",
                     "mechanical_decision": {{
                         "action": "damage" | "heal" | "xp" | null,
-                        "amount": integer_ou_null
+                        "amount": integer_or_null
                     }}
                 }}
                 """
@@ -931,7 +892,7 @@ Réponds au format JSON :
                     analysis_response = self.llm.invoke(analysis_prompt).content
                     analysis_json = extract_json(analysis_response, expected_type=dict)
                 except Exception as e:
-                    print(f"[RPGAgent] Erreur lors de l'analyse avec le Codex : {e}")
+                    print(f"[RPGAgent] Error during Codex analysis: {e}")
 
             roll_info = ""
             roll_result = None
@@ -940,12 +901,11 @@ Réponds au format JSON :
                 if not analysis_json:
                     analysis_json = {"need_roll": False}
 
-                # Application de la décision mécanique de l'Orchestrateur (Actions réactives)
                 m_decision = analysis_json.get("mechanical_decision")
                 if m_decision and m_decision.get("action"):
                     m_res = self.gse.apply_orchestrator_decision(m_decision)
                     mechanical_context += f"\nDECISION MJ : {m_res.message}"
-                    self.character_data = self.gse.state # Sync après décision
+                    self.character_data = self.gse.state # Sync after decision
 
                 if analysis_json.get("need_roll"):
                     die_roll = self.roll_dice(20)
@@ -962,40 +922,39 @@ Réponds au format JSON :
             except Exception:
                 analysis_json = {"need_roll": False}
 
-            # 2. Analyse de Scène de l'Orchestrateur (Transition / Improvisation / Contournement)
+            # 2. Scene analysis from the Orchestrator (Transition / Improvisation / Bypassed)
             scene_analysis_result = {
-                "categorie": "improvisation",
-                "scene_suivante": None,
-                "horloges_impactees": [],
-                "ecart_notable": None
+                "category": "improvisation",
+                "next_scene": None,
+                "impacted_clocks": [],
+                "notable_deviation": None
             }
 
             if self.scenario_structure and self.current_scene_id:
                 current_scene_dict = self._scenes_by_id.get(self.current_scene_id, {})
 
-                scene_classification_prompt = f"""Analyse l'action du joueur par rapport à la scène courante.
+                scene_classification_prompt = f"""Analyze the player's action relative to the current scene.
 
-SCÈNE COURANTE (id {self.current_scene_id}) :
-Titre : {current_scene_dict.get('titre', 'Inconnu')}
-Objectif MJ (ambiance) : {current_scene_dict.get('objectif_mj', '')}
-Condition de résolution (le VRAI critère de sortie) : {current_scene_dict.get('condition_resolution', '')}
-Sorties logiques anticipées (indicatif) : {json.dumps(current_scene_dict.get('sorties_logiques', []), ensure_ascii=False)}
-Défis anticipés (indicatif) : {json.dumps(current_scene_dict.get('defis_et_rencontres', []), ensure_ascii=False)}
+CURRENT SCENE (id {self.current_scene_id}):
+Title: {current_scene_dict.get('title', 'Unknown')}
+GM Objective (atmosphere): {current_scene_dict.get('gm_objective', '')}
+Resolution Condition (the REAL exit criterion): {current_scene_dict.get('resolution_condition', '')}
+Anticipated Logical Exits (indicative): {json.dumps(current_scene_dict.get('logical_exits', []), ensure_ascii=False)}
+Anticipated Challenges (indicative): {json.dumps(current_scene_dict.get('challenges_and_encounters', []), ensure_ascii=False)}
 
-ACTION DU JOUEUR : {user_input}
+PLAYER ACTION: {user_input}
 
-Classe la situation en UNE des trois catégories. Ne bloque JAMAIS une action du joueur,
-quelle que soit la catégorie — cette classification sert uniquement au suivi interne.
-- "transition" : le joueur résout l'objectif narratif de cette scène d'une manière ou d'une autre (qui concrétise l'objectif formulé, ou s'y oppose mais résout l'esprit), permettant de passer à une scène suivante.
-- "improvisation" : le joueur agit dans la scène actuelle sans encore atteindre l'objectif ou faire bifurquer radicalement le scénario. On reste dans la scène courante.
-- "contournement" : le joueur sort complètement du cadre prévu, ignore le but, détruit l'opportunité de l'atteindre (ex: tue un donneur de quête clé, fuit l'endroit), ou improvise une solution non anticipée qui court-circuite la scène actuelle sans en faire une transition normale.
+Classify the situation into ONE of the three categories. NEVER block a player action, whatever the category — this classification serves only for internal tracking.
+- "transition": the player resolves the narrative objective of this scene in one way or another, allowing progression to a subsequent scene.
+- "improvisation": the player acts within the current scene without yet reaching the objective or radically shifting the scenario. We stay in the current scene.
+- "bypassed": the player completely exits the planned framework, ignores the goal, destroys the opportunity to reach it (e.g., kills a key quest giver, flees the area), or improvises an unanticipated solution that bypasses the current scene without a normal transition.
 
-Réponds UNIQUEMENT en JSON :
+Reply ONLY in JSON:
 {{
-  "categorie": "transition" | "improvisation" | "contournement",
-  "scene_suivante": "id ou null",
-  "horloges_impactees": [{{"nom": "Nom de l'horloge", "segments_ajoutes": 1}}],
-  "ecart_notable": "fait à retenir pour la suite, en une phrase, même si non prévu par le scénario source, ou null"
+  "category": "transition" | "improvisation" | "bypassed",
+  "next_scene": "id or null",
+  "impacted_clocks": [{{"name": "Clock name", "segments_added": 1}}],
+  "notable_deviation": "fact to remember for the future, in one sentence, even if not planned by the source scenario, or null"
 }}
 """
                 try:
@@ -1004,98 +963,93 @@ Réponds UNIQUEMENT en JSON :
                     if extracted_classification:
                         scene_analysis_result = extracted_classification
                 except Exception as e:
-                    print(f"[RPGAgent] Erreur lors de la classification de scène : {e}")
+                    print(f"[RPGAgent] Error during scene classification: {e}")
 
-            # Traitement déterministe de la classification
-            cat = scene_analysis_result.get("categorie", "improvisation")
-            next_scene_id = scene_analysis_result.get("scene_suivante")
-            horloges_impactees = scene_analysis_result.get("horloges_impactees", [])
-            ecart_notable = scene_analysis_result.get("ecart_notable")
+            # Deterministic processing of classification
+            cat = scene_analysis_result.get("category", "improvisation")
+            next_scene_id = scene_analysis_result.get("next_scene")
+            impacted_clocks = scene_analysis_result.get("impacted_clocks", [])
+            notable_deviation = scene_analysis_result.get("notable_deviation")
 
-            if cat not in ["transition", "improvisation", "contournement"]:
+            if cat not in ["transition", "improvisation", "bypassed"]:
                 cat = "improvisation"
 
             if cat == "transition":
                 if next_scene_id and next_scene_id in self._scenes_by_id:
-                    if self.current_scene_id not in self.progression["scenes_resolues"]:
-                        self.progression["scenes_resolues"].append(self.current_scene_id)
+                    if self.current_scene_id not in self.progression["resolved_scenes"]:
+                        self.progression["resolved_scenes"].append(self.current_scene_id)
                     self.current_scene_id = next_scene_id
-                    self.progression["scene_courante"] = next_scene_id
+                    self.progression["current_scene"] = next_scene_id
                     next_scene = self._scenes_by_id[next_scene_id]
-                    self.progression["acte_courant"] = next_scene.get("acte_rattache_id", "Inconnu")
-                    print(f"[RPGAgent] Transition déterministe vers la scène {next_scene_id}.")
+                    self.progression["current_act"] = next_scene.get("act_id", "Inconnu")
+                    print(f"[RPGAgent] Deterministic transition to scene {next_scene_id}.")
                 else:
-                    print(f"[RPGAgent] Transition avortée : ID scène suivante '{next_scene_id}' invalide ou null.")
+                    print(f"[RPGAgent] Aborted transition: next scene ID '{next_scene_id}' is invalid or null.")
                     cat = "improvisation"
-            elif cat == "contournement":
-                if self.current_scene_id not in self.progression["scenes_contournees"]:
-                    self.progression["scenes_contournees"].append(self.current_scene_id)
+            elif cat == "bypassed":
+                if self.current_scene_id not in self.progression["bypassed_scenes"]:
+                    self.progression["bypassed_scenes"].append(self.current_scene_id)
                 if next_scene_id and next_scene_id in self._scenes_by_id:
                     self.current_scene_id = next_scene_id
-                    self.progression["scene_courante"] = next_scene_id
+                    self.progression["current_scene"] = next_scene_id
                     next_scene = self._scenes_by_id[next_scene_id]
-                    self.progression["acte_courant"] = next_scene.get("acte_rattache_id", "Inconnu")
-                    print(f"[RPGAgent] Contournement menant vers la scène {next_scene_id}.")
+                    self.progression["current_act"] = next_scene.get("act_id", "Inconnu")
+                    print(f"[RPGAgent] Scene bypassed, transitioning to scene {next_scene_id}.")
                 else:
-                    print(f"[RPGAgent] Contournement de la scène {self.current_scene_id} sans scène suivante.")
+                    print(f"[RPGAgent] Scene bypassed {self.current_scene_id} without next scene.")
 
-            # Gestion des horloges globales
+            # Clocks management
             clock_consequences_to_inject = []
-            if "horloges" not in self.progression:
-                self.progression["horloges"] = {}
+            if "clocks" not in self.progression:
+                self.progression["clocks"] = {}
 
-            horloges_globales_dict = {h["nom"]: h for h in self.scenario_structure.get("horloges_globales", [])}
+            clocks_meta_dict = {h["name"]: h for h in self.scenario_structure.get("global_clocks", [])}
 
-            # S'assurer de l'initialisation des horloges dans la progression
-            for name, h_meta in horloges_globales_dict.items():
-                if name not in self.progression["horloges"]:
-                    self.progression["horloges"][name] = {"segments": 0, "declenchee": False}
+            for name, h_meta in clocks_meta_dict.items():
+                if name not in self.progression["clocks"]:
+                    self.progression["clocks"][name] = {"segments": 0, "declenchee": False}
 
-            for h_impacted in horloges_impactees:
-                h_name = h_impacted.get("nom")
-                added_segments = h_impacted.get("segments_ajoutes", 0)
-                if h_name and h_name in self.progression["horloges"]:
-                    meta = horloges_globales_dict[h_name]
-                    seuil = meta.get("seuil", 6)
+            for h_impacted in impacted_clocks:
+                h_name = h_impacted.get("name")
+                added_segments = h_impacted.get("segments_added", 0)
+                if h_name and h_name in self.progression["clocks"]:
+                    meta = clocks_meta_dict[h_name]
+                    threshold = meta.get("threshold", 6)
                     consequence = meta.get("consequence", "")
 
-                    current_data = self.progression["horloges"][h_name]
+                    current_data = self.progression["clocks"][h_name]
                     old_segments = current_data.get("segments", 0)
-                    new_segments = min(old_segments + added_segments, seuil)
+                    new_segments = min(old_segments + added_segments, threshold)
                     current_data["segments"] = new_segments
 
-                    # Première fois que le seuil est atteint
-                    if new_segments >= seuil and not current_data.get("declenchee", False):
+                    if new_segments >= threshold and not current_data.get("declenchee", False):
                         current_data["declenchee"] = True
                         clock_consequences_to_inject.append((h_name, consequence))
 
-            # Gérer les écarts notables
-            if ecart_notable and str(ecart_notable).lower() != "null":
-                if "ecarts_notables" not in self.progression:
-                    self.progression["ecarts_notables"] = []
-                self.progression["ecarts_notables"].append(ecart_notable)
+            if notable_deviation and str(notable_deviation).lower() != "null":
+                if "notable_deviations" not in self.progression:
+                    self.progression["notable_deviations"] = []
+                self.progression["notable_deviations"].append(notable_deviation)
             else:
-                ecart_notable = None
+                notable_deviation = None
 
-            # Fusionner les conséquences d'horloges dans les écarts de ce tour
             for h_name, consequence in clock_consequences_to_inject:
-                if "ecarts_notables" not in self.progression:
-                    self.progression["ecarts_notables"] = []
-                self.progression["ecarts_notables"].append(consequence)
-                if ecart_notable:
-                    ecart_notable += f" | {consequence}"
+                if "notable_deviations" not in self.progression:
+                    self.progression["notable_deviations"] = []
+                self.progression["notable_deviations"].append(consequence)
+                if notable_deviation:
+                    notable_deviation += f" | {consequence}"
                 else:
-                    ecart_notable = consequence
+                    notable_deviation = consequence
 
-            # Sauvegarde de self.progression après chaque tour
             try:
                 os.makedirs("Memory", exist_ok=True)
                 with open("Memory/progression.json", "w", encoding="utf-8") as f:
                     json.dump(self.progression, f, indent=4, ensure_ascii=False)
             except Exception as e:
-                print(f"[RPGAgent] Erreur de sauvegarde de progression.json : {e}")
+                print(f"[RPGAgent] Error saving progression.json: {e}")
 
-            # 3. L'Orchestrateur donne ses instructions basées sur le SCÉNARIO et la classification
+            # 3. GM Orchestrator builds instructions based on SCENARIO and classification
             current_scene_dict = self._scenes_by_id.get(self.current_scene_id, {})
             current_context = self.get_current_context()
 
@@ -1104,29 +1058,29 @@ Réponds UNIQUEMENT en JSON :
                 clock_instruction += f"\n\nÉVÉNEMENT DÉCLENCHÉ (horloge '{h_name}') : {consequence} — à intégrer immédiatement dans la narration de ce tour."
 
             decision_instruction = f"""
-ACTION DU JOUEUR : {user_input}
+PLAYER ACTION: {user_input}
 
-RÉSULTAT TECHNIQUE : {"Aucun jet requis" if not roll_info else f"{roll_info} → {roll_result}"}
-ÉTAT MÉCANIQUE : {self.gse.get_state_summary()}
+TECHNICAL RESULT: {"Aucun jet requis" if not roll_info else f"{roll_info} → {roll_result}"}
+MECHANICAL STATE: {self.gse.get_state_summary()}
 {mechanical_context}
 
-CONTEXTE SCÉNARIO (extraits RAG) : {scenario_context}
+SCENARIO CONTEXT (RAG excerpts): {scenario_context}
 
-CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
+SCENARIO CONTEXT STRUCTURED (Lookup):
 {current_context}
 
-SCÈNE COURANTE :
-Id : {self.current_scene_id}
-Titre : {current_scene_dict.get('titre', 'Inconnu')}
-Esprit : {current_scene_dict.get('esprit_de_la_scene', '')}
-Objectif : {current_scene_dict.get('objectif_atteint_si', '')}
-Éléments à préserver : {current_scene_dict.get('elements_a_preserver', [])}
+CURRENT SCENE:
+Id: {self.current_scene_id}
+Title: {current_scene_dict.get('title', 'Unknown')}
+Vibe: {current_scene_dict.get('esprit_de_la_scene', '')}
+Goal: {current_scene_dict.get('objectif_atteint_si', '')}
+Preserved elements: {current_scene_dict.get('elements_a_preserver', [])}
 
-CLASSIFICATION DE L'ACTION DU JOUEUR :
-Catégorie : {cat}
-Fait additionnel (Chronique) : {ecart_notable}{clock_instruction}
+PLAYER ACTION CLASSIFICATION:
+Category: {cat}
+Additional Fact (Chronicle): {notable_deviation}{clock_instruction}
 
-PNJ DISPONIBLES : {npcs_summary}
+NPCs AVAILABLE: {npcs_summary}
 {self._build_structure_instructions()}"""
 
             final_response = self.narrator.generate_response(user_input, self.history.messages, decision_instruction)
@@ -1134,7 +1088,6 @@ PNJ DISPONIBLES : {npcs_summary}
             if roll_info:
                 final_response += f"\n\n---\n*🎲 {roll_info} ({roll_result})*"
 
-            # Mise à jour de la fiche de personnage
             try:
                 new_sheet = self.sheet_manager.update_sheet(self.character_data, user_input, final_response)
                 if new_sheet and isinstance(new_sheet, dict):
@@ -1143,67 +1096,66 @@ PNJ DISPONIBLES : {npcs_summary}
                     with open("Memory/character.json", "w", encoding="utf-8") as f:
                         json.dump(self.character_data, f, indent=4, ensure_ascii=False)
                     self.gse.reload()
-                    print("[RPGAgent] Fiche de personnage mise à jour.")
+                    print("[RPGAgent] Character sheet updated.")
             except Exception as e:
-                print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la fiche : {e}")
+                print(f"[RPGAgent] ⚠ Error updating character sheet: {e}")
 
-            # Mise à jour de la chronique avec l'intégration de ecart_notable
-            self.update_chronicle(user_input, final_response, ecart_notable)
+            self.update_chronicle(user_input, final_response, notable_deviation)
 
             self.history.add_user_message(user_input)
             self.history.add_ai_message(final_response)
             return final_response
 
     def start_adventure(self):
-        """Lance le pipeline de setup puis démarre la narration."""
+        """Launches the world setup pipeline then generates narrative introduction."""
         if not self.setup_world():
             return "Erreur lors de la génération du monde."
 
-        self.log("Génération de l'introduction narrative...")
+        self.log("Generating narrative introduction...")
         intro_start = time.time()
         self.game_state = "ADVENTURE"
 
         pitch = self.scenario_data.get('pitch', 'Une nouvelle aventure commence.')
         situation = "Le héros se tient prêt."
-        scene_initiale_id = self.scenario_structure.get("metadata", {}).get("scene_initiale")
-        if scene_initiale_id in self._scenes_by_id:
-            scene_init = self._scenes_by_id[scene_initiale_id]
-            situation = f"Scène initiale : {scene_init.get('titre')}. Objectif MJ : {scene_init.get('objectif_mj')}."
+        starting_scene_id = self.scenario_structure.get("metadata", {}).get("starting_scene")
+        if starting_scene_id in self._scenes_by_id:
+            scene_init = self._scenes_by_id[starting_scene_id]
+            situation = f"Scène initiale : {scene_init.get('title')}. Objectif MJ : {scene_init.get('gm_objective')}."
 
         setup_context = self.get_scenario_context("intrigue lieux personnages", k=config.RAG_K_SETUP)
         current_context = self.get_current_context()
 
         intro_instruction = f"""
-ACTION DU JOUEUR : L'aventure commence !
+PLAYER ACTION: L'aventure commence !
 
-RÉSULTAT TECHNIQUE : Aucun jet requis
+TECHNICAL RESULT: Aucun jet requis
 
-CONTEXTE SCÉNARIO (extraits RAG) :
-- Pitch : {pitch}
-- Situation initiale : {situation}
-- Détails supplémentaires : {setup_context}
+SCENARIO CONTEXT (RAG excerpts):
+- Pitch: {pitch}
+- Starting situation: {situation}
+- Additional details: {setup_context}
 
-CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
+SCENARIO CONTEXT STRUCTURED (Lookup):
 {current_context}
 {self._build_structure_instructions()}"""
 
         intro_response = self.narrator.generate_response(
             "L'aventure commence !", self.history.messages, intro_instruction
         )
-        self.log(f"✓ Introduction générée en {time.time() - intro_start:.2f}s.")
+        self.log(f"✓ Introduction generated in {time.time() - intro_start:.2f}s.")
 
-        full_response = f"**{self.scenario_data.get('titre', 'Aventure')}**\n\n*{pitch}*\n\n{intro_response}"
+        full_response = f"**{self.scenario_data.get('title', 'Aventure')}**\n\n*{pitch}*\n\n{intro_response}"
 
         self.update_chronicle("L'aventure commence !", full_response)
         self.history.add_ai_message(full_response)
         return full_response
 
-    def update_chronicle(self, user_input, response, ecart_notable=None):
+    def update_chronicle(self, user_input, response, notable_deviation=None):
         old_summary = ""
         if self.chronicle_data and isinstance(self.chronicle_data, dict):
             old_summary = self.chronicle_data.get("summary", "")
 
-        new_summary = self.chronicle_agent.update(old_summary, user_input, response, ecart_notable)
+        new_summary = self.chronicle_agent.update(old_summary, user_input, response, notable_deviation)
         self.chronicle_data = {"summary": new_summary}
 
         os.makedirs("Memory", exist_ok=True)
@@ -1211,7 +1163,7 @@ CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
             json.dump(self.chronicle_data, f, indent=4, ensure_ascii=False)
 
     def load_character(self):
-        """Charge uniquement le personnage et passe en mode SUMMARY."""
+        """Loads only the character and sets game state to SUMMARY."""
         try:
             if os.path.exists("Memory/character.json"):
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
@@ -1219,32 +1171,31 @@ CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
                     self.character_data = self._unwrap_character_data(data)
                 self.gse.reload()
                 self.game_state = "SUMMARY"
-                nom = self.character_data.get('nom') if self.character_data else "Inconnu"
-                print(f"[RPGAgent] Personnage chargé : {nom}")
+                nom = self.character_data.get('name') if self.character_data else "Inconnu"
+                print(f"[RPGAgent] Character loaded: {nom}")
 
             if os.path.exists("Memory/scenario_structure.json"):
                 with open("Memory/scenario_structure.json", "r", encoding="utf-8") as f:
                     self.scenario_structure = json.load(f)
                 self._build_lookups()
-                # Compatibilité pour self.scenario_data
                 self.scenario_data = {
-                    "titre": self.scenario_structure["metadata"]["titre"],
-                    "pitch": self.scenario_structure["metadata"]["pitch_global"],
+                    "title": self.scenario_structure["metadata"]["title"],
+                    "pitch": self.scenario_structure["metadata"]["global_pitch"],
                 }
-                self.npcs_data = self.scenario_structure.get("entites", {}).get("pnj", [])
+                self.npcs_data = self.scenario_structure.get("entities", {}).get("npcs", [])
 
             if os.path.exists("Memory/progression.json"):
                 with open("Memory/progression.json", "r", encoding="utf-8") as f:
                     self.progression = json.load(f)
-                self.current_scene_id = self.progression.get("scene_courante")
+                self.current_scene_id = self.progression.get("current_scene")
 
                 return True
         except Exception as e:
-            print(f"[RPGAgent] Erreur chargement personnage : {e}")
+            print(f"[RPGAgent] Error loading character: {e}")
         return False
 
     def load_game(self):
-        """Charge la sauvegarde complète (PJ + PNJ + Scénario + Chronique)."""
+        """Loads full game save (PJ + PNJ + Scenario + Chronicle)."""
         try:
             if os.path.exists("Memory/character.json"):
                 with open("Memory/character.json", "r", encoding="utf-8") as f:
@@ -1256,17 +1207,16 @@ CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
                 with open("Memory/scenario_structure.json", "r", encoding="utf-8") as f:
                     self.scenario_structure = json.load(f)
                 self._build_lookups()
-                # Compatibilité pour self.scenario_data
                 self.scenario_data = {
-                    "titre": self.scenario_structure["metadata"]["titre"],
-                    "pitch": self.scenario_structure["metadata"]["pitch_global"],
+                    "title": self.scenario_structure["metadata"]["title"],
+                    "pitch": self.scenario_structure["metadata"]["global_pitch"],
                 }
-                self.npcs_data = self.scenario_structure.get("entites", {}).get("pnj", [])
+                self.npcs_data = self.scenario_structure.get("entities", {}).get("npcs", [])
 
             if os.path.exists("Memory/progression.json"):
                 with open("Memory/progression.json", "r", encoding="utf-8") as f:
                     self.progression = json.load(f)
-                self.current_scene_id = self.progression.get("scene_courante")
+                self.current_scene_id = self.progression.get("current_scene")
 
             if os.path.exists("Memory/Chronicle.json"):
                 with open("Memory/Chronicle.json", "r", encoding="utf-8") as f:
@@ -1275,20 +1225,20 @@ CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
             if self.character_data and self.scenario_structure and self.progression:
                 self.game_state = "ADVENTURE"
                 nb_npcs = len(self.npcs_data) if self.npcs_data else 0
-                print(f"[RPGAgent] Partie chargée — {nb_npcs} PNJ disponibles.")
+                print(f"[RPGAgent] Game loaded — {nb_npcs} NPCs available.")
                 return True
             elif self.character_data:
                 self.game_state = "SUMMARY"
-                print(f"[RPGAgent] Personnage chargé (partie incomplète).")
+                print(f"[RPGAgent] Character loaded (incomplete game state).")
                 return True
 
         except Exception as e:
-            print(f"[RPGAgent] Erreur chargement : {e}")
+            print(f"[RPGAgent] Error loading game: {e}")
 
         return False
 
     def clear_history(self):
-        """Réinitialise complètement la partie."""
+        """Resets the game state and conversation history completely."""
         self.history.clear()
         self.game_state = "CREATION"
         self.character_data = None
@@ -1301,60 +1251,54 @@ CONTEXTE SCÉNARIO STRUCTURÉ (Lookup) :
         self.scenario_structure = None
 
         from game_state_engine import GameStateEngine
-        self.gse = GameStateEngine()  # réinitialise l'état en mémoire
+        self.gse = GameStateEngine()
 
         for file in ["character.json", "Chronicle.json", "progression.json"]:
             path = os.path.join("Memory", file)
             if os.path.exists(path):
                 os.remove(path)
-                print(f"[RPGAgent] Supprimé : {path}")
+                print(f"[RPGAgent] Deleted: {path}")
 
     def get_npc(self, npc_id: str) -> dict | None:
-        """Retourne la fiche d'un PNJ par son id, ou None."""
         if not self.npcs_data:
             return None
         return next((n for n in self.npcs_data if n.get("id") == npc_id), None)
 
     def get_npcs_context(self) -> str:
-        """
-        Retourne un résumé des PNJ (SANS leurs secrets) pour le Narrateur.
-        Les secrets restent côté Orchestrateur uniquement.
-        """
+        """Returns a summary of NPCs (WITHOUT secrets) for the Narrator."""
         if not self.npcs_data:
             return "Aucun PNJ disponible."
         lines = []
         for n in self.npcs_data:
             lines.append(
-                f"- {n['nom_complet']} "
-                f"| Attitude: {n.get('attitude_initiale', 'Inconnue')} "
-                f"| Lieu: {n.get('localisation_habituelle', '?')}"
+                f"- {n['full_name']} "
+                f"| Attitude: {n.get('initial_attitude', 'Inconnue')} "
+                f"| Lieu: {n.get('usual_location', '?')}"
             )
         return "\n".join(lines)
 
     def _build_structure_instructions(self) -> str:
-        """Bloc d'instructions de structure narrative, identique entre
-        start_adventure() et chat() (ADVENTURE) - ne contient aucune donnée
-        contextuelle spécifique à l'appelant."""
+        """Mandatory structure instructions for narrative GM choices."""
         return """
-TON RÔLE : Tu es le MJ. Génère des instructions précises pour le Narrateur en tenant compte du contexte fourni ci-dessus.
+YOUR ROLE: You are the GM. Generate precise instructions for the Narrator based on the context provided above.
 
-STRUCTURE OBLIGATOIRE de ta réponse :
+MANDATORY STRUCTURE of your response:
 
-1. CONSÉQUENCE IMMÉDIATE
-   Ce qui se passe concrètement suite à l'action. Si jet réussi : avantage clair.
-   Si jet échoué : complication, ou fausse piste.
-   Ne révèle que ce que le personnage peut percevoir à cet instant.
+1. IMMEDIATE CONSEQUENCE
+   What happens concretely following the action. If roll succeeded: clear advantage.
+   If roll failed: complication or false lead.
+   Reveal only what the character can perceive at this moment.
 
-2. PERCEPTIONS SENSORIELLES
-   Ce que le personnage voit, entend, sent, touche ou ressent physiquement.
-   Sois précis et concret — pas d'atmosphère vague.
+2. SENSORY PERCEPTIONS
+   What the character physically sees, hears, smells, touches, or feels.
+   Be precise and concrete — no vague atmosphere.
 
-3. ÉLÉMENTS INCONNUS OU AMBIGUS
-   Ce que le personnage ne peut pas encore déterminer.
+3. UNKNOWN OR AMBIGUOUS ELEMENTS
+   What the character cannot yet determine.
 
-4. IMPULSION NARRATIVE
-   Donne une direction active au joueur : un détail qui appelle une réaction.
+4. NARRATIVE IMPULSE
+   Give an active direction to the player: a detail that calls for a reaction.
 
-5. POINTS CLÉS POUR LE RÉSUMÉ
-   Le résumé du Narrateur ne doit reprendre que des faits explicitement énoncés dans le texte narratif de cette même réponse - jamais une information supplémentaire, une interprétation, ou un contenu d'indice pas encore découvert par le joueur.
+5. KEY POINTS FOR THE SUMMARY
+   The Narrator's summary must only include facts explicitly stated in the narrative text of this same response - never additional information, interpretation, or clue content not yet discovered by the player.
 """

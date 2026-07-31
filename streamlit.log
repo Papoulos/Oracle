@@ -188,3 +188,59 @@
 [07:38:12] ✨ Setup terminé en 0.00s.
 [07:38:12] ── Setup du monde ──
 [07:38:12] ✗ Erreur lors du setup ou de la validation de la structure : Plusieurs fichiers JSON de scénario trouvés dans /tmp/pytest-of-jules/pytest-4/test_setup_world_json_scenario0 : ['scenario_structure.json', 'another_scenario.json']. Un seul scénario structuré est supporté à la fois.
+[16:41:45] ── World Setup ──
+[16:41:45] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:41:45] ✨ Setup completed in 0.00s.
+[16:41:45] ── World Setup ──
+[16:41:45] Direct loading of structured scenario: scenario_structure.json
+[16:41:45] ✨ Setup completed in 0.00s.
+[16:41:45] ── World Setup ──
+[16:41:45] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-1/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
+[16:42:34] ── World Setup ──
+[16:42:34] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:42:34] ✨ Setup completed in 0.00s.
+[16:42:34] ── World Setup ──
+[16:42:34] Direct loading of structured scenario: scenario_structure.json
+[16:42:34] ✨ Setup completed in 0.00s.
+[16:42:34] ── World Setup ──
+[16:42:34] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-2/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
+[16:44:08] ── World Setup ──
+[16:44:08] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:44:08] ✨ Setup completed in 0.00s.
+[16:44:08] ── World Setup ──
+[16:44:08] Direct loading of structured scenario: scenario_structure.json
+[16:44:08] ✨ Setup completed in 0.00s.
+[16:44:08] ── World Setup ──
+[16:44:08] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-3/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
+[16:45:56] ── World Setup ──
+[16:45:56] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:45:56] ✨ Setup completed in 0.00s.
+[16:45:56] ── World Setup ──
+[16:45:56] Direct loading of structured scenario: scenario_structure.json
+[16:45:56] ✨ Setup completed in 0.00s.
+[16:45:56] ── World Setup ──
+[16:45:56] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-4/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
+[16:47:23] ── World Setup ──
+[16:47:23] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:47:23] ✨ Setup completed in 0.00s.
+[16:47:23] ── World Setup ──
+[16:47:23] Direct loading of structured scenario: scenario_structure.json
+[16:47:23] ✨ Setup completed in 0.00s.
+[16:47:23] ── World Setup ──
+[16:47:23] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-5/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
+[16:48:30] ── World Setup ──
+[16:48:30] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:48:30] ✨ Setup completed in 0.00s.
+[16:48:30] ── World Setup ──
+[16:48:30] Direct loading of structured scenario: scenario_structure.json
+[16:48:30] ✨ Setup completed in 0.00s.
+[16:48:30] ── World Setup ──
+[16:48:30] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-6/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
+[16:50:59] ── World Setup ──
+[16:50:59] Extracting scenario structure via ScenarioExtractorAgent in 5 passes...
+[16:50:59] ✨ Setup completed in 0.00s.
+[16:50:59] ── World Setup ──
+[16:50:59] Direct loading of structured scenario: scenario_structure.json
+[16:50:59] ✨ Setup completed in 0.00s.
+[16:50:59] ── World Setup ──
+[16:50:59] ✗ Error during setup or structure validation: Multiple scenario JSON files found in /tmp/pytest-of-jules/pytest-7/test_setup_world_json_scenario0: ['scenario_structure.json', 'another_scenario.json']. Only one structured scenario is supported at a time.
