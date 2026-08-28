@@ -1,0 +1,48 @@
+2026-07-31 16:50:56,574 === PROMPT [GameplayRulesAgent - discovery_recovery_tiers] ===
+[system] You are an expert in tabletop role-playing game systems.
+Based on the rule excerpts below, identify the RESOURCE RECOVERY MECHANISMS
+(rests, downtime, healing between encounters) specific to THIS system,
+with their EXACT names. Some systems have two tiers (short/long rest), others
+have several different tiers (e.g., recovery at 10 minutes / 1 hour / 10 hours /
+24 hours), others have almost no automatic recovery (slow healing over several days for example).
+Never assume a short/long model by default.
+
+Reply ONLY with:
+```json
+{"tiers": ["exact name of tier 1", "exact name of tier 2"]}
+```
+Empty list if the system has no formalized recovery mechanism.
+[human] CODEX EXCERPTS (Rules):
+Core rules content
+2026-07-31 16:50:56,574 === RAW RESPONSE [GameplayRulesAgent - discovery_recovery_tiers] ===
+{"tiers": ["Natural Healing"]}
+2026-07-31 16:50:56,575 === PROMPT [GameplayRulesAgent - extraction_recovery] ===
+[system] For EACH recovery tier listed, specify its trigger and the resources it restores.
+Use ONLY these three types of effects:
+- "restore_full": the resource returns to its maximum.
+- "restore_percentage": increases by a percentage of the maximum ("value": integer 1-100).
+- "restore_fixed_value": increases by a fixed value ("value": integer). If the rules indicate a dice roll, use a reasonable estimate of its average.
+
+The "resource" field of each effect must be a consistent, lowercase, unaccented technical name reflecting the resource as described in the rules. If a list of already known resources is provided below and is not empty, prioritize those exact names for consistency; otherwise, choose a clear and consistent name from the rules themselves.
+
+ALREADY KNOWN RESOURCES (may be empty - in this case, ignore this section): []
+
+TIERS TO DETAIL: ["Natural Healing"]
+
+Reply ONLY with:
+```json
+{
+  "recovery_tiers": [
+    {
+      "id": "short_identifier_no_spaces",
+      "name": "exact name of the tier",
+      "text_triggers": ["variant 1", "variant 2"],
+      "effects": [{"resource": "exact_resource_name", "action": "restore_full" | "restore_percentage" | "restore_fixed_value", "value": null_or_integer}]
+    }
+  ]
+}
+```
+[human] CODEX EXCERPTS (Rules):
+Core rules content
+2026-07-31 16:50:56,575 === RAW RESPONSE [GameplayRulesAgent - extraction_recovery] ===
+{"recovery_tiers": []}

@@ -3,11 +3,12 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 import config
 import re
 import json
+import logging
 
 def extract_json(text: str, expected_type: type = dict):
     """
-    Extrait un bloc JSON (objet ou tableau) d'un texte de manière robuste.
-    Tente de trouver tous les blocs JSON et retourne le dernier valide (avec réparation si tronqué).
+    Robustly extracts a JSON block (object or array) from a text string.
+    Attempts to find all JSON blocks and returns the last valid one (with repair if truncated).
     """
     if not text:
         return None
@@ -15,16 +16,16 @@ def extract_json(text: str, expected_type: type = dict):
     open_char  = "{" if expected_type == dict else "["
     close_char = "}" if expected_type == dict else "]"
 
-    # Prétraitement : supprimer certains préfixes courants que les LLM ajoutent parfois
-    text = re.sub(r"^(?:JSON|Résultat|Voici le JSON|Output)\s*:\s*", "", text, flags=re.IGNORECASE | re.MULTILINE)
+    # Preprocessing: remove some common prefixes that LLMs sometimes add
+    text = re.sub(r"^(?:JSON|Result|Here is the JSON|Output)\s*:\s*", "", text, flags=re.IGNORECASE | re.MULTILINE)
 
-    # Nettoyer une chaîne candidate et tenter de la charger directement
+    # Clean a candidate string and try to load it directly
     def clean_and_load(s: str):
         s_clean = s.strip()
         s_clean = re.sub(r",\s*([\]}])", r"\1", s_clean)
         return json.loads(s_clean)
 
-    # Tenter de réparer une chaîne tronquée en cherchant les accolades/crochets de droite à gauche
+    # Try to repair a truncated string by looking for braces/brackets from right to left
     def try_repair(s: str):
         indices = [i for i, char in enumerate(s) if char == close_char]
         for idx in reversed(indices):
@@ -36,7 +37,7 @@ def extract_json(text: str, expected_type: type = dict):
                     continue
         return None
 
-    # 1. Extraction via les blocs markdown ```json ... ``` (fermés ou non)
+    # 1. Extraction via markdown blocks ```json ... ``` (closed or not)
     markdown_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)(?:```|$)", text)
     for block in reversed(markdown_blocks):
         block_str = block.strip()
@@ -53,7 +54,7 @@ def extract_json(text: str, expected_type: type = dict):
             if repaired is not None:
                 return repaired
 
-    # 2. Si aucun bloc markdown n'est valide, on cherche dans le texte brut
+    # 2. If no markdown block is valid, search the raw text
     first_open_idx = text.find(open_char)
     if first_open_idx != -1:
         raw_text = text[first_open_idx:]
@@ -72,8 +73,8 @@ def get_llm(model_name, temperature):
             model=model_name,
             base_url=config.LLM_BASE_URL,
             temperature=temperature,
-            num_ctx=16384, # Fenêtre de contexte doublée pour supporter RAG + historique + réponses longues
-            num_predict=2048  # Limite de tokens en sortie pour éviter les troncatures
+            num_ctx=16384, # Doubled context window to support RAG + history + long responses
+            num_predict=2048  # Output token limit to prevent truncation
         )
     else: # openai / llama-cpp
         return ChatOpenAI(
@@ -97,7 +98,7 @@ def get_embeddings():
         )
 
 def get_full_store_text(store, log) -> str:
-    """Récupère et concatène tout le texte indexé dans `store`, trié par page."""
+    """Retrieves and concatenates all indexed text in `store`, sorted by page."""
     try:
         result = store.get(include=["documents", "metadatas"])
         paired = sorted(
@@ -106,17 +107,17 @@ def get_full_store_text(store, log) -> str:
         )
         return "\n\n".join(doc for doc, _ in paired)
     except Exception as e:
-        log(f"⚠ Erreur lors de la récupération du texte complet : {e}")
+        log(f"⚠ Error while retrieving full text: {e}")
         return ""
 
 
 def get_relevant_context(store, queries, log, threshold_chars, k=15) -> str:
-    """Texte source complet si sa taille le permet, sinon RAG par requêtes dédupliqué."""
+    """Full source text if its size permits, otherwise deduplicated similarity-based RAG."""
     full_text = get_full_store_text(store, log)
     if full_text and len(full_text) <= threshold_chars:
-        log(f"Utilisation du texte source complet (taille: {len(full_text)} <= {threshold_chars} car.)")
+        log(f"Using full source text (size: {len(full_text)} <= {threshold_chars} chars)")
         return full_text
-    log(f"Utilisation de requêtes RAG par similarité (taille de full_text: {len(full_text)})")
+    log(f"Using similarity-based RAG queries (full_text size: {len(full_text)})")
     all_docs = []
     for q in queries:
         all_docs.extend(store.similarity_search(q, k=k))
@@ -124,6 +125,17 @@ def get_relevant_context(store, queries, log, threshold_chars, k=15) -> str:
     return "\n\n---\n\n".join(unique_contents.keys())
 
 class BaseAgent:
-    def __init__(self, model=None, temperature=0.7):
+    def __init__(self, model=None, temperature=0.7, verbose=False):
         model_name = model if model else config.LLM_MODEL
         self.llm = get_llm(model_name, temperature)
+        self.verbose = verbose
+
+    def _invoke_logged(self, prompt_template, inputs, label=""):
+        messages = prompt_template.format_messages(**inputs)
+        if self.verbose:
+            rendered = "\n".join(f"[{m.type}] {m.content}" for m in messages)
+            logging.debug(f"=== PROMPT [{self.__class__.__name__}{' - ' + label if label else ''}] ===\n{rendered}")
+        response = self.llm.invoke(messages)
+        if self.verbose:
+            logging.debug(f"=== RAW RESPONSE [{self.__class__.__name__}{' - ' + label if label else ''}] ===\n{response.content}")
+        return response

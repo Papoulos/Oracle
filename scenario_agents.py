@@ -8,12 +8,12 @@ from base_utils import BaseAgent, extract_json, get_full_store_text, get_relevan
 
 class ScenarioExtractorAgent(BaseAgent):
     """
-    Agent unifié pour extraire le scénario complet en 5 passes.
-    Produit : Memory/scenario_structure.json
+    Unified agent to extract the complete scenario structure in 5 passes.
+    Produces: Memory/scenario_structure.json
     """
 
-    def __init__(self, scenario_store):
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+    def __init__(self, scenario_store, verbose=False):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1, verbose=verbose)
         self.scenario_store = scenario_store
 
     def generate(self, log_callback=None) -> dict:
@@ -23,466 +23,476 @@ class ScenarioExtractorAgent(BaseAgent):
             else:
                 print(f"[ScenarioExtractorAgent] {msg}")
 
-        log("Début du pipeline d'extraction du scénario en 5 passes...")
+        log("Starting scenario extraction pipeline in 5 passes...")
         start_time = time.time()
 
-        # Passe 1 : Entités (pnj, lieux)
-        entites = self._extract_entites(log)
+        # Pass 1: Entities (npcs, locations)
+        entities = self._extract_entities(log)
 
-        # Passe 2 : Nœuds scéniques (noeuds_sceniques)
-        noeuds = self._extract_noeuds_sceniques(entites, log)
+        # Pass 2: Scene nodes (scene_nodes)
+        nodes = self._extract_scene_nodes(entities, log)
 
-        # Passe 3 : Macro-structure (macro_structure)
-        macro = self._extract_macro_structure(noeuds, log)
+        # Pass 3: Acts (acts / macro-structure)
+        acts = self._extract_acts(nodes, log)
 
-        # Passe 4 : Horloges globales (horloges_globales)
-        horloges = self._extract_horloges(log)
+        # Pass 4: Global clocks (global_clocks)
+        clocks = self._extract_global_clocks(log)
 
-        # Passe 5 : Métadonnées (metadata)
-        metadata = self._extract_metadata(macro, log)
+        # Pass 5: Metadata (metadata)
+        metadata = self._extract_metadata(acts, log)
 
-        # Consolidation du résultat final
+        # Consolidating the final result
         structure = {
             "metadata": metadata.get("metadata", {}),
-            "macro_structure": macro.get("macro_structure", []),
-            "horloges_globales": horloges.get("horloges_globales", []),
-            "entites": {
-                "pnj": entites.get("pnj", []),
-                "lieux": entites.get("lieux", [])
+            "acts": acts.get("acts", []),
+            "global_clocks": clocks.get("global_clocks", []),
+            "entities": {
+                "npcs": entities.get("npcs", []),
+                "locations": entities.get("locations", [])
             },
-            "noeuds_sceniques": noeuds.get("noeuds_sceniques", [])
+            "scene_nodes": nodes.get("scene_nodes", [])
         }
 
-        # S'assurer que le répertoire Memory existe
+        # Ensure Memory directory exists
         os.makedirs("Memory", exist_ok=True)
         with open("Memory/scenario_structure.json", "w", encoding="utf-8") as f:
             json.dump(structure, f, indent=4, ensure_ascii=False)
 
         total_time = time.time() - start_time
-        log(f"Extraction consolidée terminée avec succès en {total_time:.2f}s.")
+        log(f"Consolidated extraction completed successfully in {total_time:.2f}s.")
         return structure
 
     def _get_context(self, queries, log, k=15) -> str:
-        from base_utils import get_relevant_context
         return get_relevant_context(
             self.scenario_store, queries, log, config.SCENARIO_FULLTEXT_THRESHOLD_CHARS, k=k
         )
 
-    def _extract_entites(self, log) -> dict:
-        log("Passe 1 : Extraction des entités (PNJs et Lieux)...")
+    def _extract_entities(self, log) -> dict:
+        log("Pass 1: Extracting entities (NPCs and Locations)...")
         queries = [
             "personnages importants, personnages nommés, PNJ, main characters, named NPCs, important figures",
             "lieux de l'aventure, villes, pièces, donjons, locations, regions, places of interest, environments"
         ]
-        contexte = self._get_context(queries, log, k=15)
+        context = self._get_context(queries, log, k=15)
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir des extraits de scénario suivants (en français ou en anglais), extrais les personnages non-joueurs (PNJs) et les lieux principaux en FRANÇAIS.
-Ne complète pas et n'invente pas d'éléments absents.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert tabletop role-playing game preparation assistant.
+From the following scenario excerpts (in French or English), extract the non-player characters (NPCs) and main locations in FRENCH.
+Always write descriptions, atmosphere, and motivations in French.
+Do not invent or complete any details not present in the excerpts.
 
-EXTRAITS DU SCÉNARIO :
-{contexte}
-
-Réponds UNIQUEMENT avec un JSON au format suivant :
+Reply ONLY with a JSON in the following format:
 {{
-  "pnj": [
+  "npcs": [
     {{
-      "id": "PNJ_ID_SANS_ACCENT_EN_MAJUSCULES (ex: MAITRE_ELROND)",
-      "nom_complet": "Nom complet et titre",
-      "localisation_habituelle": "LIEU_ID_SANS_ACCENT_EN_MAJUSCULES (ex: FONDCOMBE)",
-      "agenda_et_motivation": "Ce que le PNJ cherche à obtenir",
-      "peurs_et_faiblesses": "Ce qui le fait céder ou fuir",
-      "attitude_initiale": "Comportement initial lors de la rencontre",
-      "stats_et_capacites": "Niveau de menace, PV, attaques clés ou inconnu"
+      "id": "NPC_ID_UPPERCASE_NO_ACCENTS (e.g., MAITRE_ELROND)",
+      "full_name": "Full name and title in French",
+      "usual_location": "LOCATION_ID_UPPERCASE_NO_ACCENTS (e.g., FONDCOMBE)",
+      "agenda_and_motivation": "What the NPC is trying to achieve",
+      "fears_and_weaknesses": "What makes them give up or flee",
+      "initial_attitude": "Initial attitude when met",
+      "stats_and_abilities": "Threat level, HP, key attacks or unknown"
     }}
   ],
-  "lieux": [
+  "locations": [
     {{
-      "id": "LIEU_ID_SANS_ACCENT_EN_MAJUSCULES (ex: FONDCOMBE)",
-      "nom_complet": "Nom complet du lieu",
-      "ambiance_sensorielle": "Vue, ouïe, odeur, atmosphère",
-      "elements_interactifs": "Objets, leviers, conteneurs, éléments du décor"
+      "id": "LOCATION_ID_UPPERCASE_NO_ACCENTS (e.g., FONDCOMBE)",
+      "full_name": "Full name of the location",
+      "sensory_atmosphere": "Sight, sound, smell, atmosphere in French",
+      "interactive_elements": "Objects, levers, containers, scenery features in French"
     }}
   ]
 }}
-"""
-        response = self.llm.invoke(prompt)
+"""),
+            ("human", "SCENARIO EXCERPTS:\n{context}")
+        ])
+
+        response = self._invoke_logged(prompt, {"context": context}, label="extract_entities")
         res = extract_json(response.content, expected_type=dict)
         if not res:
-            res = {"pnj": [], "lieux": []}
+            log(f"⚠ JSON parsing failed for extract_entities. Raw response start: {response.content[:300]!r}")
+            res = {"npcs": [], "locations": []}
         return res
 
-    def _extract_noeuds_sceniques(self, entites, log) -> dict:
-        log("Passe 2 : Extraction des nœuds scéniques...")
+    def _extract_scene_nodes(self, entities, log) -> dict:
+        log("Pass 2: Extracting scene nodes...")
         queries = [
             "déroulement de l'aventure, scènes, chapitres, actes, structure narrative",
             "rencontres, défis, combats, énigmes, pièges, obstacles"
         ]
-        contexte = self._get_context(queries, log, k=15)
+        context = self._get_context(queries, log, k=15)
 
-        pnj_ids = [p["id"] for p in entites.get("pnj", [])]
-        lieu_ids = [l["id"] for l in entites.get("lieux", [])]
+        npc_ids = [p["id"] for p in entities.get("npcs", [])]
+        location_ids = [l["id"] for l in entities.get("locations", [])]
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir des extraits de scénario suivants, extrais la liste de tous les nœuds scéniques (scènes) en FRANÇAIS.
-Ne complète pas et n'invente pas d'éléments absents.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert tabletop role-playing game preparation assistant.
+From the following scenario excerpts, extract the list of all scene nodes in FRENCH.
+Always write titles, descriptions, and objectives in French.
+Do not invent or complete any details not present.
 
-ID DE PNJS VALIDES : {json.dumps(pnj_ids)}
-ID DE LIEUX VALIDES : {json.dumps(lieu_ids)}
+VALID NPC IDs: {npc_ids}
+VALID LOCATION IDs: {location_ids}
 
-CONSIGNES POUR LES CHAMPS :
-- "acte_rattache_id" : ID de l'acte parent auquel appartient la scène (ex: ACTE_1, ACTE_2).
-- "lieu_rattache_id" : ID du lieu rattaché. Utilise obligatoirement un ID parmi les ID DE LIEUX VALIDES ci-dessus si possible.
-- "pnj_presents" : liste d'ID de PNJs présents. Utilise obligatoirement des ID parmi les ID DE PNJS VALIDES ci-dessus.
-- "condition_resolution" : Résultat qui clôt ce nœud, formulé comme un BUT atteint par n'importe quel moyen plausible, indépendamment de la méthode listée dans sorties_logiques.
-- "sorties_logiques" : pour chaque sortie, "destination_scene_id" doit correspondre à l'ID d'une autre scène (ex: SCENE_02_ROUTE).
+FIELDS GUIDELINES:
+- "act_id": ID of the parent act this scene belongs to (e.g., ACTE_1, ACTE_2).
+- "location_id": ID of the associated location. You MUST choose an ID from the VALID LOCATION IDs list above if possible.
+- "present_npcs": list of NPC IDs present. You MUST only use IDs from the VALID NPC IDs list above.
+- "resolution_condition": Condition that closes this node, formulated as a GOAL reached by any plausible means, regardless of the logical exit methods.
+- "logical_exits": for each exit, "destination_scene_id" must correspond to the ID of another scene (e.g., SCENE_02_ROUTE).
 
-EXTRAITS DU SCÉNARIO :
-{contexte}
-
-Réponds UNIQUEMENT avec un JSON au format suivant :
+Reply ONLY with a JSON in the following format:
 {{
-  "noeuds_sceniques": [
+  "scene_nodes": [
     {{
-      "id_scene": "SCENE_NUMERO_NOM (ex: SCENE_01_AUBERGE)",
-      "acte_rattache_id": "ACTE_1",
-      "lieu_rattache_id": "LIEU_NOM",
-      "titre": "Titre de la scène",
-      "pnj_presents": ["PNJ_ID"],
-      "objectif_mj": "Ce que le MJ doit transmettre ou faire ressentir (ambiance, pas condition de sortie)",
-      "condition_resolution": "Résultat qui clôt ce nœud...",
-      "limites_et_regles_locales": "Règles physiques, magiques ou comportementales strictes de ce nœud",
-      "defis_et_rencontres": [
+      "scene_id": "SCENE_NUMBER_NAME (e.g., SCENE_01_AUBERGE)",
+      "act_id": "ACTE_1",
+      "location_id": "LOCATION_ID",
+      "title": "Title of the scene in French",
+      "present_npcs": ["NPC_ID"],
+      "gm_objective": "What the GM must convey or make the player feel in French (vibe, not exit condition)",
+      "resolution_condition": "Goal that closes this node in French...",
+      "local_rules_and_limits": "Physical, magical or behavioral constraints of this node in French",
+      "challenges_and_encounters": [
         {{
           "type": "Combat / Enigme / Piège / Obstacle physique",
-          "description": "Description concrète du défi",
-          "resolution_possible": "Moyens logiques ANTICIPÉS de surmonter le défi"
+          "description": "Concrete description of the challenge in French",
+          "possible_resolution": "Anticipated logical ways of overcoming the challenge in French"
         }}
       ],
-      "sorties_logiques": [
+      "logical_exits": [
         {{
-          "action_ou_direction": "Ce que fait le joueur",
-          "destination_scene_id": "ID_DE_LA_SCENE_DESTINATION"
+          "action_or_direction": "What the player does in French",
+          "destination_scene_id": "ID_OF_THE_DESTINATION_SCENE"
         }}
       ]
     }}
   ]
 }}
-"""
-        response = self.llm.invoke(prompt)
-        res = extract_json(response.content, expected_type=dict)
-        if not res or "noeuds_sceniques" not in res:
-            res = {"noeuds_sceniques": []}
+"""),
+            ("human", "SCENARIO EXCERPTS:\n{context}")
+        ])
 
-        # Validation de Pass 2
+        response = self._invoke_logged(prompt, {
+            "npc_ids": json.dumps(npc_ids),
+            "location_ids": json.dumps(location_ids),
+            "context": context
+        }, label="extract_scene_nodes")
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "scene_nodes" not in res:
+            log(f"⚠ JSON parsing failed for extract_scene_nodes. Raw response start: {response.content[:300]!r}")
+            res = {"scene_nodes": []}
+
+        # Pass 2 Validation
         validated_scenes = []
-        for scene in res.get("noeuds_sceniques", []):
-            scene_id = scene.get("id_scene")
+        for scene in res.get("scene_nodes", []):
+            scene_id = scene.get("scene_id")
             if not scene_id:
                 continue
 
-            # Validation du lieu
-            lieu_id = scene.get("lieu_rattache_id")
-            if lieu_id and lieu_id not in lieu_ids:
-                log(f"[Validation] Scene '{scene_id}' : lieu_rattache_id '{lieu_id}' invalide. Mis à null.")
-                scene["lieu_rattache_id"] = None
+            # Location validation
+            loc_id = scene.get("location_id")
+            if loc_id and loc_id not in location_ids:
+                log(f"[Validation] Scene '{scene_id}': location_id '{loc_id}' invalid. Set to null.")
+                scene["location_id"] = None
 
-            # Validation des PNJs
-            presents = scene.get("pnj_presents", [])
+            # NPC validation
+            presents = scene.get("present_npcs", [])
             valid_presents = []
             for pid in presents:
-                if pid in pnj_ids:
+                if pid in npc_ids:
                     valid_presents.append(pid)
                 else:
-                    log(f"[Validation] Scene '{scene_id}' : pnj_present '{pid}' invalide. Supprimé.")
-            scene["pnj_presents"] = valid_presents
+                    log(f"[Validation] Scene '{scene_id}': present_npc '{pid}' invalid. Removed.")
+            scene["present_npcs"] = valid_presents
 
             validated_scenes.append(scene)
 
-        res["noeuds_sceniques"] = validated_scenes
+        res["scene_nodes"] = validated_scenes
         return res
 
-    def _extract_macro_structure(self, noeuds, log) -> dict:
-        log("Passe 3 : Extraction de la macro-structure...")
+    def _extract_acts(self, nodes, log) -> dict:
+        log("Pass 3: Extracting acts/macro-structure...")
         queries = [
             "structure globale, actes, chapitres majeurs, grandes étapes, main plot points, story structure"
         ]
-        contexte = self._get_context(queries, log, k=15)
+        context = self._get_context(queries, log, k=15)
 
-        scene_ids = [s["id_scene"] for s in noeuds.get("noeuds_sceniques", [])]
+        scene_ids = [s["scene_id"] for s in nodes.get("scene_nodes", [])]
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir des extraits de scénario suivants, structure l'histoire en grands ACTES (macro-structure) en FRANÇAIS.
-Ne complète pas et n'invente pas d'éléments absents.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert tabletop role-playing game preparation assistant.
+From the following scenario excerpts, structure the story into major ACTS in FRENCH.
+Always write titles and conditions in French.
+Do not invent or complete any details not present.
 
-ID DE SCÈNES VALIDES : {json.dumps(scene_ids)}
+VALID SCENE IDs: {scene_ids}
 
-CONSIGNES :
-- Chaque acte possède un "id_acte" unique (ex: ACTE_1, ACTE_2).
-- "scenes_incluses" doit contenir uniquement des ID de scènes parmi la liste des ID DE SCÈNES VALIDES ci-dessus.
+CONSIGNES:
+- Each act has a unique "act_id" (e.g., ACTE_1, ACTE_2).
+- "included_scenes" must ONLY contain scene IDs from the VALID SCENE IDs list above.
 
-EXTRAITS DU SCÉNARIO :
-{contexte}
-
-Réponds UNIQUEMENT avec un JSON au format suivant :
+Reply ONLY with a JSON in the following format:
 {{
-  "macro_structure": [
+  "acts": [
     {{
-      "id_acte": "ACTE_1",
-      "titre": "Titre de la grande étape",
-      "condition_entree": "Événement ou choix qui déclenche cet acte",
-      "condition_validation": "Condition stricte pour valider cet acte et passer au suivant",
-      "scenes_incluses": ["SCENE_01_ID", "SCENE_02_ID"]
+      "act_id": "ACTE_1",
+      "title": "Title of the act in French",
+      "entry_condition": "Event or choice that triggers this act in French",
+      "completion_condition": "Strict condition to complete this act and pass to the next in French",
+      "included_scenes": ["SCENE_01_ID", "SCENE_02_ID"]
     }}
   ]
 }}
-"""
-        response = self.llm.invoke(prompt)
-        res = extract_json(response.content, expected_type=dict)
-        if not res or "macro_structure" not in res:
-            res = {"macro_structure": []}
+"""),
+            ("human", "SCENARIO EXCERPTS:\n{context}")
+        ])
 
-        # Validation de Pass 3
-        validated_actes = []
-        for acte in res.get("macro_structure", []):
-            acte_id = acte.get("id_acte")
-            if not acte_id:
+        response = self._invoke_logged(prompt, {
+            "scene_ids": json.dumps(scene_ids),
+            "context": context
+        }, label="extract_acts")
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "acts" not in res:
+            log(f"⚠ JSON parsing failed for extract_acts. Raw response start: {response.content[:300]!r}")
+            res = {"acts": []}
+
+        # Pass 3 Validation
+        validated_acts = []
+        for act in res.get("acts", []):
+            act_id = act.get("act_id")
+            if not act_id:
                 continue
 
-            # Validation des scènes incluses
-            incluses = acte.get("scenes_incluses", [])
+            # Included scenes validation
+            incluses = act.get("included_scenes", [])
             valid_incluses = []
             for sid in incluses:
                 if sid in scene_ids:
                     valid_incluses.append(sid)
                 else:
-                    log(f"[Validation] Acte '{acte_id}' : scene_incluse '{sid}' invalide. Supprimée.")
-            acte["scenes_incluses"] = valid_incluses
-            validated_actes.append(acte)
+                    log(f"[Validation] Act '{act_id}': orphan included_scene '{sid}' removed.")
+            act["included_scenes"] = valid_incluses
+            validated_acts.append(act)
 
-        res["macro_structure"] = validated_actes
+        res["acts"] = validated_acts
 
-        # Vérification bidirectionnelle et corrections
-        actes_dict = {a["id_acte"]: a for a in validated_actes}
-        for scene in noeuds.get("noeuds_sceniques", []):
-            scene_id = scene.get("id_scene")
-            scene_acte_id = scene.get("acte_rattache_id")
+        # Bidirectional check and correction
+        acts_dict = {a["act_id"]: a for a in validated_acts}
+        for scene in nodes.get("scene_nodes", []):
+            scene_id = scene.get("scene_id")
+            scene_act_id = scene.get("act_id")
 
-            if scene_acte_id in actes_dict:
-                target_acte = actes_dict[scene_acte_id]
-                if scene_id not in target_acte["scenes_incluses"]:
-                    log(f"[Validation] Correction bidirectionnelle : Ajout de la scène '{scene_id}' à 'scenes_incluses' de l'acte '{scene_acte_id}'.")
-                    target_acte["scenes_incluses"].append(scene_id)
+            if scene_act_id in acts_dict:
+                target_act = acts_dict[scene_act_id]
+                if scene_id not in target_act["included_scenes"]:
+                    log(f"[Validation] Bidirectional correction: Adding scene '{scene_id}' to 'included_scenes' of act '{scene_act_id}'.")
+                    target_act["included_scenes"].append(scene_id)
             else:
-                log(f"[Validation] Attention : La scène '{scene_id}' référence un acte_rattache_id '{scene_acte_id}' inexistant.")
+                log(f"[Validation] Warning: Scene '{scene_id}' references non-existent act_id '{scene_act_id}'.")
 
         return res
 
-    def _extract_horloges(self, log) -> dict:
-        log("Passe 4 : Extraction des horloges globales...")
+    def _extract_global_clocks(self, log) -> dict:
+        log("Pass 4: Extracting global clocks...")
         queries = [
             "menaces temporelles, dangers qui progressent, horloges, comptes à rebours, clocks, timers, consequences"
         ]
-        contexte = self._get_context(queries, log, k=10)
+        context = self._get_context(queries, log, k=10)
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir des extraits de scénario suivants, extrais les menaces progressives (horloges ou comptes à rebours globaux) en FRANÇAIS.
-Ne complète pas et n'invente pas d'éléments absents.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert tabletop role-playing game preparation assistant.
+From the following scenario excerpts, extract the progressive threats (clocks or timers) in FRENCH.
+Always write name, trigger, and consequence in French.
+Do not invent or complete any details not present.
 
-CONSIGNES :
-- "seuil" : nombre de segments pour déclencher la conséquence. S'il n'est pas spécifié, mettre 6 par défaut.
+CONSIGNES:
+- "threshold": number of segments to trigger the consequence. If not specified, default to 6.
 
-EXTRAITS DU SCÉNARIO :
-{contexte}
-
-Réponds UNIQUEMENT avec un JSON au format suivant :
+Reply ONLY with a JSON in the following format:
 {{
-  "horloges_globales": [
+  "global_clocks": [
     {{
-      "nom": "Nom de la menace globale ou temporelle",
-      "declencheur": "Action du joueur ou temps qui passe",
-      "consequence": "Impact sur le monde ou fermeture d'accès",
-      "seuil": 6
+      "name": "Name of the global or temporal threat in French",
+      "trigger": "Player action or passing time in French",
+      "consequence": "Impact on the world or locked paths in French",
+      "threshold": 6
     }}
   ]
 }}
-"""
-        response = self.llm.invoke(prompt)
-        res = extract_json(response.content, expected_type=dict)
-        if not res or "horloges_globales" not in res:
-            res = {"horloges_globales": []}
+"""),
+            ("human", "SCENARIO EXCERPTS:\n{context}")
+        ])
 
-        # Validation du seuil
-        for clock in res.get("horloges_globales", []):
-            seuil = clock.get("seuil")
+        response = self._invoke_logged(prompt, {"context": context}, label="extract_global_clocks")
+        res = extract_json(response.content, expected_type=dict)
+        if not res or "global_clocks" not in res:
+            log(f"⚠ JSON parsing failed for extract_global_clocks. Raw response start: {response.content[:300]!r}")
+            res = {"global_clocks": []}
+
+        # Threshold validation
+        for clock in res.get("global_clocks", []):
+            threshold = clock.get("threshold")
             try:
-                clock["seuil"] = int(seuil) if seuil is not None else 6
+                clock["threshold"] = int(threshold) if threshold is not None else 6
             except ValueError:
-                clock["seuil"] = 6
+                clock["threshold"] = 6
 
         return res
 
-    def _extract_metadata(self, macro_structure, log) -> dict:
-        log("Passe 5 : Extraction des métadonnées...")
+    def _extract_metadata(self, acts, log) -> dict:
+        log("Pass 5: Extracting metadata...")
         queries = [
             "titre de l'aventure, adventure title, name of the module",
             "pitch résumé introduction début, synopsis, adventure hook, background, plot summary"
         ]
-        contexte = self._get_context(queries, log, k=10)
+        context = self._get_context(queries, log, k=10)
 
-        # Trouver le premier ID de scène inclus dans le premier acte
-        default_scene_initiale = None
-        if macro_structure.get("macro_structure"):
-            first_act = macro_structure["macro_structure"][0]
-            if first_act.get("scenes_incluses"):
-                default_scene_initiale = first_act["scenes_incluses"][0]
+        # Find first scene of first act
+        default_starting_scene = None
+        if acts.get("acts"):
+            first_act = acts["acts"][0]
+            if first_act.get("included_scenes"):
+                default_starting_scene = first_act["included_scenes"][0]
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir des extraits de scénario suivants, extrais le titre, le pitch de départ et la scène initiale de l'aventure en FRANÇAIS.
-Ne complète pas et n'invente pas d'éléments absents.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert tabletop role-playing game preparation assistant.
+From the following scenario excerpts, extract the title, the starting pitch, and the starting scene of the adventure in FRENCH.
+Always write title and global_pitch in French.
+Do not invent or complete any details not present.
 
-DÉFAUT SCÈNE INITIALE : "{default_scene_initiale}"
+DEFAULT STARTING SCENE: "{default_starting_scene}"
 
-CONSIGNES :
-- "pitch_global" : Résumé de l'intrigue en 2 phrases avec noms propres complets.
-- "scene_initiale" : ID de la scène d'ouverture. Si non spécifié de manière évidente, utilise la valeur par défaut "{default_scene_initiale}".
+CONSIGNES:
+- "global_pitch": Vibe/summary of the adventure in 2 sentences in French with full proper names.
+- "starting_scene": ID of the opening scene. If not explicitly specified, use the default "{default_starting_scene}".
 
-EXTRAITS DU SCÉNARIO :
-{contexte}
-
-Réponds UNIQUEMENT avec un JSON au format suivant :
+Reply ONLY with a JSON in the following format:
 {{
   "metadata": {{
-    "titre": "Nom du scénario",
-    "pitch_global": "Résumé de l'intrigue en 2 phrases avec noms propres complets.",
-    "scene_initiale": "SCENE_NUMERO_NOM"
+    "title": "Name of the scenario in French",
+    "global_pitch": "Vibe/summary of the adventure in 2 sentences in French with full proper names.",
+    "starting_scene": "SCENE_NUMBER_NAME"
   }}
 }}
-"""
-        response = self.llm.invoke(prompt)
+"""),
+            ("human", "SCENARIO EXCERPTS:\n{context}")
+        ])
+
+        response = self._invoke_logged(prompt, {
+            "default_starting_scene": default_starting_scene or "",
+            "context": context
+        }, label="extract_metadata")
         res = extract_json(response.content, expected_type=dict)
         if not res or "metadata" not in res:
+            log(f"⚠ JSON parsing failed for extract_metadata. Raw response start: {response.content[:300]!r}")
             res = {"metadata": {}}
 
-        # Validation de metadata
+        # Metadata validation
         meta = res.get("metadata", {})
-        if not meta.get("titre"):
-            meta["titre"] = "Inconnu"
-        if not meta.get("pitch_global"):
-            meta["pitch_global"] = "Inconnu"
-        if not meta.get("scene_initiale"):
-            meta["scene_initiale"] = default_scene_initiale or "Inconnu"
+        if not meta.get("title"):
+            meta["title"] = "Inconnu"
+        if not meta.get("global_pitch"):
+            meta["global_pitch"] = "Inconnu"
+        if not meta.get("starting_scene"):
+            meta["starting_scene"] = default_starting_scene or "Inconnu"
 
         res["metadata"] = meta
         return res
 
 
 SCHEMA_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Tu es un expert en conception de systèmes de jeu de rôle.
-À partir des extraits de règles fournis, produis un SCHÉMA décrivant les champs
-qu'une fiche de personnage DOIT contenir pour être considérée comme complète
-dans CE système de jeu précis.
+    ("system", """You are an expert in tabletop role-playing game systems design.
+Based on the provided rule excerpts, produce a SCHEMA describing the fields
+a character sheet MUST contain to be considered complete in THIS specific game system.
 
-CONSIGNES CRITIQUES :
-1. N'invente aucun champ absent des règles fournies.
-2. Utilise des clés techniques cohérentes en minuscules sans accents, reflétant le nom donné
-   PAR CE SYSTÈME à chaque ressource (ex: "points_de_vie" si le jeu en a un, mais "vigueur"/
-   "celerite"/"intellect" pour un système à réserves multiples, ou "sante_mentale" si une jauge
-   distincte existe). N'utilise JAMAIS "points_de_vie" par défaut si ce n'est pas le nom réel
-   de la ressource dans ce système.
-3. Un champ de type "object" (bloc de caractéristiques, bloc de ressources...) doit lister
-   ses sous_champs attendus, avec les noms exacts utilisés par CE système (peuvent être
-   très différents d'un système à l'autre : "Force/Dextérité" ou "FOR/DEX/POU", etc.).
-4. Un champ de type "list" doit préciser si une liste vide est acceptable ("non_vide": false)
-   ou non ("non_vide": true).
-5. Inclue toute ressource de vitalité mentionnée par les règles, même s'il y en a plusieurs
-   (ex: points de vie ET santé mentale, ou boîtes de blessure ET stress).
-6. N'inclus PAS de champs purement narratifs (historique, apparence, nom du joueur) sauf
-   si les règles les rendent strictement nécessaires pour jouer.
+CRITICAL INSTRUCTIONS:
+1. Do not invent any field not mentioned in the provided rules.
+2. Use consistent, lowercase, unaccented technical keys reflecting the name given BY THIS SYSTEM to each resource (e.g., "hit_points" if the game has it, but "vigor"/"celerity"/"intellect" for multiple pool systems, or "sanity" if a separate gauge exists). Never use "hit_points" by default if it is not the actual name of the resource in this system.
+3. A field of type "object" (such as attributes, resources...) must list its expected sub_fields with the exact names used by THIS system (which can be very different across systems: "Strength/Dexterity" or "STR/DEX/POW", etc.).
+4. A field of type "list" must specify whether an empty list is acceptable ("non_empty": false) or not ("non_empty": true).
+5. Include any vitality resource mentioned in the rules, even if there are several (e.g., hit points AND sanity, or wound boxes AND stress).
+6. Do NOT include purely narrative fields (backstory, appearance, player name) unless the rules make them strictly necessary to play.
 
-Réponds UNIQUEMENT avec un JSON de cette forme, entouré de balises ```json :
+Reply ONLY with a JSON of this form, enclosed in ```json tags:
 ```json
 {{
-  "champs_requis": [
-    {{"chemin": "nom", "type": "string"}},
-    {{"chemin": "caracteristiques", "type": "object", "sous_champs": ["...noms exacts du système..."]}},
-    {{"chemin": "ressources.<nom_ressource>", "type": "object", "sous_champs": ["actuels", "max"]}},
-    {{"chemin": "equipement", "type": "list", "non_vide": true}}
+  "required_fields": [
+    {{"path": "name", "type": "string"}},
+    {{"path": "statistics", "type": "object", "sub_fields": ["...exact system names..."]}},
+    {{"path": "resources.<resource_name>", "type": "object", "sub_fields": ["current", "max"]}},
+    {{"path": "equipment", "type": "list", "non_empty": true}}
   ]
 }}
 ```"""),
-    ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
+    ("human", "CODEX EXCERPTS (Rules):\n{context}"),
 ])
 
 DISCOVERY_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Tu es un expert en analyse de systèmes de jeu de rôle.
-À partir des extraits de règles ci-dessous, dresse une liste EXHAUSTIVE de toutes les
-étapes et procédures concrètes de création de personnage décrites par CE texte, à la
-MÊME granularité que la source. Si la source énumère des étapes numérotées détaillées
-(ex: 14 étapes distinctes), liste les 14 séparément - NE RÉSUME JAMAIS plusieurs étapes
-numérotées de la source en une seule catégorie générique du type "méthode A" / "méthode B".
-Si le système propose plusieurs méthodes ou voies de création, liste séparément CHAQUE
-étape de CHAQUE méthode.
+    ("system", """You are an expert in analyzing tabletop role-playing game systems.
+Based on the rule excerpts below, produce an EXHAUSTIVE list of all concrete character
+creation steps and procedures described by THIS text, at the SAME level of granularity
+as the source. If the source enumerates detailed numbered steps (e.g., 14 distinct steps),
+list them separately - NEVER group several numbered steps from the source into a single
+generic category like "method A" / "method B".
+If the system offers multiple methods or paths for creation, list each step of each method separately.
 
-N'invente aucune étape absente du texte. N'omets aucune étape présente, même mineure
-(ex: "noter les valeurs d'attaque", "choisir un alignement", "acheter l'équipement" sont
-des étapes à part entière si le texte les mentionne séparément).
+Do not invent any steps not in the text. Do not omit any steps present, even minor ones
+(e.g., "write down attack values", "choose an alignment", "buy equipment" are separate steps if the text mentions them separately).
 
-Utilise EXCLUSIVEMENT le vocabulaire propre à ce système - jamais de synonymes génériques
-type "race/classe" si le système ne les utilise pas.
+Use EXCLUSIVELY the vocabulary unique to this system - never generic synonyms like "race/class" if the system does not use them.
 
-Réponds UNIQUEMENT avec un JSON de cette forme :
+Reply ONLY with JSON in this form:
 ```json
 {{
-  "composantes": ["étape/procédure exacte 1", "étape/procédure exacte 2", "..."]
+  "components": ["exact step/procedure 1", "exact step/procedure 2", "..."]
 }}
 ```"""),
-    ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
+    ("human", "CODEX EXCERPTS (Rules):\n{context}"),
 ])
 
 
 class ManualGeneratorAgent(BaseAgent):
     """
-    Agent one-shot : extrait les étapes de création de personnage du Core RAG.
-    Produit : Memory/creation_manual.json
+    One-shot agent: extracts character creation steps from the Core RAG.
+    Produces: Memory/creation_manual.json
     """
 
-    def __init__(self, core_store):
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+    def __init__(self, core_store, verbose=False):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1, verbose=verbose)
         self.core_store = core_store
         self.prompt = ChatPromptTemplate.from_messages([
-            ("system", """Tu es un expert en conception de systèmes de jeu de rôle.
-Ta mission est de rédiger un MANUEL DE CRÉATION DE PERSONNAGE structuré en FRANÇAIS, basé UNIQUEMENT sur les extraits de règles fournis.
+            ("system", """You are an expert in tabletop role-playing game systems design.
+Your mission is to write a structured CHARACTER CREATION MANUAL in FRENCH, based ONLY on the provided rule excerpts.
 
-Ce manuel servira de guide "maître" à un autre agent IA qui accompagnera le joueur dans sa création.
-Il doit être COMPLET sur toutes les étapes requises par le système de jeu, mais rester PUREMENT STRUCTUREL.
+This manual will serve as a master guide for another AI agent that will accompany the player during character creation.
+It must be COMPLETE on all steps required by the system, but remain PURELY STRUCTURAL.
 
-CONSIGNES CRITIQUES :
-1. Liste TOUTES les étapes de création dans l'ordre logique requis par CE système, à la MÊME granularité que le texte source fourni - si la source énumère des étapes numérotées détaillées, reproduis cette même décomposition fine, ne résume JAMAIS plusieurs étapes numérotées de la source en une seule étape générique. Utilise EXCLUSIVEMENT la terminologie propre à ce système. N'INVENTE JAMAIS un concept absent des règles fournies (ex: ne mentionne pas d'espèce ou de profil traditionnel si le système n'en a pas). En revanche, si un concept existe réellement dans les règles (caractéristiques, points de vie, armure/protection, ou toute autre mécanique), il DOIT être détaillé intégralement et fidèlement - cette consigne d'agnosticisme ne justifie jamais de réduire le niveau de detail sur des mécaniques qui existent réellement dans ce système.
-2. Pour chaque étape, donne une description de la procédure à suivre.
-3. NE LISTE PAS les options spécifiques individuelles de CE système (par exemple pour un système à professions, ne liste pas de métiers précis). Indique simplement qu'il faut faire un choix dans chaque catégorie identifiée, quelle qu'elle soit dans ce système précis.
-4. L'agent final utilisera le RAG pour trouver les listes d'options. Ton rôle est de lui dire QUAND et COMMENT faire les choix.
-5. EXPLICATION DES RÈGLES : Précise pour chaque étape si des limites numériques s'appliquent (ex: "Choisir 2 compétences", "Choisir 1 arme de mêlée et 1 de distance") afin que l'agent puisse les expliquer au joueur.
-6. Indique clairement les méthodes de calcul mentionnées (ex: "Lancer 3d6", "Répartir 15 points").
+CRITICAL INSTRUCTIONS:
+1. List ALL creation steps in the logical order required by THIS system, at the SAME granularity as the provided source text - if the source enumerates detailed numbered steps, reproduce this same fine breakdown, NEVER summarize several numbered steps from the source into a single generic step. Use EXCLUSIVELY the terminology specific to this system. NEVER invent a concept absent from the provided rules (e.g., do not mention traditional races or profiles if the system does not have them). On the other hand, if a concept does exist in the rules (attributes, hit points, armor/protection, or any other mechanics), it MUST be detailed completely and faithfully - this agnosticism guideline never justifies reducing the level of detail on mechanics that actually exist in this system.
+2. For each step, give a description of the procedure in French.
+3. DO NOT list individual specific options of THIS system (e.g., for a system with professions, do not list specific jobs). Simply indicate that a choice must be made in each identified category, whatever it may be in this specific system.
+4. The final agent will use RAG to find lists of options. Your role is to tell it WHEN and HOW to make choices.
+5. EXPLANATION OF RULES: Specify for each step if numerical limits apply (e.g., "Choose 2 skills", "Choose 1 melee weapon and 1 ranged weapon") in French so the agent can explain them to the player.
+6. Clearly indicate any calculation methods mentioned (e.g., "Roll 3d6", "Distribute 15 points").
 
-Réponds UNIQUEMENT avec un bloc JSON entouré de balises ```json.
+Reply ONLY with a JSON block enclosed in ```json tags.
 
-FORMAT JSON ATTENDUE :
+EXPECTED JSON FORMAT:
 ```json
 {{
-  "etapes": [
+  "steps": [
     {{
-      "etape": 1,
-      "nom": "Étape 1",
-      "description": "Description de la procédure"
+      "step": 1,
+      "name": "Step 1 name in French",
+      "description": "Procedure description in French"
     }}
   ],
-  "regles_generales": "Notes globales (ex: importance de vérifier les prérequis avant de choisir l'équipement)"
+  "general_rules": "Global notes in French (e.g., importance of checking prerequisites before choosing equipment)"
 }}
 ```"""),
-            ("human", "EXTRAITS DU CODEX (Règles) :\n{context}"),
+            ("human", "CODEX EXCERPTS (Rules):\n{context}"),
         ])
-        self.chain = self.prompt | self.llm
 
     def generate(self, log_callback=None) -> dict:
         def log(msg):
@@ -491,16 +501,16 @@ FORMAT JSON ATTENDUE :
             else:
                 print(f"[ManualGeneratorAgent] {msg}")
 
-        log("Extraction des étapes de création de personnage...")
+        log("Extracting character creation steps...")
         start_time = time.time()
 
         full_core_text = get_full_store_text(self.core_store, log)
 
         if full_core_text and len(full_core_text) <= config.CORE_FULLTEXT_THRESHOLD_CHARS:
-            log("Texte source du Core complet, utilisation directe (pas de découverte nécessaire).")
-            contexte_deduplique = full_core_text
+            log("Core source text fits in context, direct use (no discovery needed).")
+            deduplicated_context = full_core_text
         else:
-            log("Core trop volumineux pour tenir en contexte - découverte des composantes du système...")
+            log("Core too large for context - discovering system components...")
             discovery_context = get_relevant_context(
                 self.core_store,
                 [
@@ -510,99 +520,94 @@ FORMAT JSON ATTENDUE :
                 log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
             )
 
-            composantes = []
+            components = []
             if discovery_context.strip():
                 try:
-                    discovery_chain = DISCOVERY_PROMPT | self.llm
-                    discovery_response = discovery_chain.invoke({"context": discovery_context})
+                    discovery_response = self._invoke_logged(DISCOVERY_PROMPT, {"context": discovery_context}, label="discovery_manual")
                     discovery_result = extract_json(discovery_response.content, expected_type=dict)
-                    composantes = discovery_result.get("composantes", []) if discovery_result else []
+                    components = discovery_result.get("components", []) if discovery_result else []
                 except Exception as e:
-                    log(f"⚠ Erreur lors de la découverte des composantes : {e}")
+                    log(f"⚠ Error during components discovery: {e}")
 
-            if composantes:
-                log(f"Composantes découvertes : {composantes}")
-                queries = [f"{c}, création de personnage" for c in composantes]
-                if len(composantes) < config.MIN_COMPOSANTES_DECOUVERTES:
-                    log(f"⚠ Seulement {len(composantes)} composante(s) découverte(s) - ajout de requêtes génériques de secours en complément.")
+            if components:
+                log(f"Discovered components: {components}")
+                queries = [f"{c}, création de personnage" for c in components]
+                if len(components) < config.MIN_COMPOSANTES_DECOUVERTES:
+                    log(f"⚠ Only {len(components)} component(s) discovered - adding fallback generic queries for completeness.")
                     queries += [
                         "étapes numérotées de création de personnage, procédure complète",
                         "caractéristiques, points de vie, équipement, capacités de classe",
                     ]
             else:
-                log("⚠ Aucune composante découverte - repli sur des requêtes génériques.")
+                log("⚠ No components discovered - falling back to generic queries.")
                 queries = [
                     "création de personnage, caractéristiques, capacités spéciales",
                     "équipement, ressources de départ, progression du personnage",
                 ]
 
-            contexte_deduplique = get_relevant_context(
+            deduplicated_context = get_relevant_context(
                 self.core_store, queries, log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
             )
 
         rag_time = time.time() - start_time
-        log(f"Récupération du contexte terminée en {rag_time:.2f}s.")
+        log(f"Context retrieval completed in {rag_time:.2f}s.")
 
-        if not contexte_deduplique.strip():
-            log("⚠ Aucun extrait trouvé dans le Core RAG. Le manuel sera vide.")
+        if not deduplicated_context.strip():
+            log("⚠ No excerpts found in Core RAG. Manual will be empty.")
             return {}
 
         llm_start = time.time()
         try:
-            response = self.chain.invoke({"context": contexte_deduplique})
+            response = self._invoke_logged(self.prompt, {"context": deduplicated_context}, label="generate_manual")
             content = response.content
         except Exception as e:
-            log(f"✗ Erreur lors de l'appel LLM : {e}")
+            log(f"✗ Error during LLM call for manual generation: {e}")
             return {}
         llm_time = time.time() - llm_start
         manual = extract_json(content, expected_type=dict)
-        log(f"LLM terminé en {llm_time:.2f}s.")
+        log(f"LLM finished in {llm_time:.2f}s.")
 
         if not manual:
-            log("✗ Échec de l'extraction JSON du manuel.")
-            print(f"[ManualGeneratorAgent] DEBUG: Réponse brute du LLM (len={len(content)}) :\n{repr(content)}")
+            log(f"⚠ JSON parsing failed for generate_manual. Raw response start: {content[:300]!r}")
             return {}
 
         os.makedirs("Memory", exist_ok=True)
         with open("Memory/creation_manual.json", "w", encoding="utf-8") as f:
             json.dump(manual, f, indent=4, ensure_ascii=False)
 
-        log("✓ Manuel de création généré dans Memory/creation_manual.json.")
+        log("✓ Character creation manual generated in Memory/creation_manual.json.")
 
-        schema_chain = SCHEMA_PROMPT | self.llm
+        schema_response = None
         try:
-            schema_response = schema_chain.invoke({"context": contexte_deduplique})
+            schema_response = self._invoke_logged(SCHEMA_PROMPT, {"context": deduplicated_context}, label="generate_schema")
             schema = extract_json(schema_response.content, expected_type=dict)
         except Exception as e:
-            log(f"✗ Erreur lors de la génération du schéma de fiche : {e}")
+            log(f"✗ Error during character sheet schema generation: {e}")
             schema = None
 
-        if not schema or not schema.get("champs_requis"):
-            log("✗ ERREUR : le schéma de fiche généré est vide ou invalide. Le fichier sera "
-                "quand même sauvegardé pour inspection, mais la validation le traitera comme "
-                "non-fiable et ne permettra AUCUNE transition automatique vers SUMMARY tant "
-                "qu'un schéma valide n'aura pas été régénéré ou corrigé manuellement.")
-            schema = schema or {"champs_requis": []}
+        if not schema or not schema.get("required_fields"):
+            if schema_response:
+                log(f"⚠ JSON parsing failed for generate_schema. Raw response start: {schema_response.content[:300]!r}")
+            schema = schema or {"required_fields": []}
 
         with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
             json.dump(schema, f, indent=4, ensure_ascii=False)
-        log("✓ Schéma de fiche de personnage généré dans Memory/character_schema.json.")
+        log("✓ Character sheet schema generated in Memory/character_schema.json.")
 
-        if len(manual.get("etapes", [])) < 4:
-            log(f"⚠ Le manuel généré ne contient que {len(manual.get('etapes', []))} étape(s) "
-                f"- possible perte de détail, vérifier Memory/creation_manual.json manuellement.")
+        if len(manual.get("steps", [])) < 4:
+            log(f"⚠ The generated manual only contains {len(manual.get('steps', []))} step(s) - possible detail loss, check Memory/creation_manual.json manually.")
 
         return manual
 
 
 class SceneGraphAgent(BaseAgent):
     """
-    Agent un par un / one-shot : extrait les scènes, la structure de l'intrigue et génère un graphe de scènes.
-    Produit : Memory/scenes.json
+    Scene Graph Agent: extracts scenes, plot structure, and generates a scene graph.
+    Produces: Memory/scenes.json
     """
 
-    def __init__(self, scenario_store):
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+    def __init__(self, scenario_store, verbose=False):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1, verbose=verbose)
         self.scenario_store = scenario_store
 
     def generate(self, scenario_summary: dict, log_callback=None) -> dict:
@@ -612,7 +617,7 @@ class SceneGraphAgent(BaseAgent):
             else:
                 print(f"[SceneGraphAgent] {msg}")
 
-        log("Extraction des scènes et de la structure du scénario...")
+        log("Extracting scenes and scenario structure...")
         start_time = time.time()
 
         queries = [
@@ -627,67 +632,60 @@ class SceneGraphAgent(BaseAgent):
             all_docs.extend(docs)
 
         unique_contents = {doc.page_content: doc for doc in all_docs}
-        contexte_deduplique = "\n\n---\n\n".join(unique_contents.keys())
+        deduplicated_context = "\n\n---\n\n".join(unique_contents.keys())
         rag_time = time.time() - start_time
-        log(f"RAG terminé en {rag_time:.2f}s ({len(unique_contents)} extraits).")
+        log(f"RAG completed in {rag_time:.2f}s ({len(unique_contents)} excerpts).")
 
-        if not contexte_deduplique.strip():
-            log("⚠ Aucun extrait trouvé dans le scénario pour extraire les scènes.")
+        if not deduplicated_context.strip():
+            log("⚠ No excerpt found in scenario to extract scenes.")
             return {}
 
-        prompt = f"""Tu es un assistant de préparation de jeu de rôle expert.
-À partir de ces extraits de scénario (qui peuvent être en français ou en anglais), produis une structure de scènes logique en FRANÇAIS.
-Ne complète pas et n'invente pas d'éléments absents de ces extraits.
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", """You are an expert tabletop role-playing game preparation assistant.
+Based on these scenario excerpts (which may be in French or English), produce a logical scene structure in FRENCH.
+Always write titles, atmosphere, and objectives in French.
+Do not invent or complete any details not present in the excerpts.
 
-CONSIGNES POUR LE CONTENU :
-1. Identifie la scène initiale et les scènes majeures de l'aventure.
-2. Initialise TOUS les statuts à "a_venir", SAUF pour la scène pointée par "scene_initiale" qui commence avec le statut "en_cours".
-3. L'esprit de la scène doit être résumé en une phrase.
-4. "elements_a_preserver" contient les faits ou informations qui doivent rester vrais même si la scène se déroule autrement que prévu.
-5. "reactions_anticipees" contient des réactions probables des PNJs/de l'environnement, sous forme d'aide-mémoire indicatif.
-6. "objectif_atteint_si" doit être formulé en termes de résultat (ex: "le joueur obtient X"), jamais en termes de méthode/action littérale.
-
-EXTRAITS DU SCÉNARIO :
-{contexte_deduplique}
-
-Réponds UNIQUEMENT avec un JSON valide suivant EXACTEMENT ce schéma :
+Reply ONLY with a valid JSON exactly following this schema:
 {{
   "scene_initiale": "1.1",
   "scenes": [
     {{
       "id": "1.1",
-      "titre": "string",
-      "lieu": "string",
-      "pnjs": ["id_pnj"],
-      "esprit_de_la_scene": "ce que cette scène doit apporter à l'intrigue, en une phrase",
-      "elements_a_preserver": ["fait ou info qui doit rester vrai même si la scène se déroule autrement que prévu"],
+      "titre": "string in French",
+      "lieu": "string in French",
+      "pnjs": ["npc_id"],
+      "esprit_de_la_scene": "what this scene must bring to the plot, in one sentence in French",
+      "elements_a_preserver": ["facts or info that must remain true even if the scene unfolds differently, in French"],
       "reactions_anticipees": [
-        {{"action_probable": "string", "consequence": "string"}}
+        {{"action_probable": "string in French", "consequence": "string in French"}}
       ],
-      "objectif_atteint_si": "condition formulée comme un BUT, pas une action littérale",
+      "objectif_atteint_si": "condition formulated as a GOAL in French, not a literal action",
       "statut": "a_venir"
     }}
   ]
 }}
-"""
+"""),
+            ("human", "SCENARIO EXCERPTS:\n{context}")
+        ])
 
         llm_start = time.time()
-        response = self.llm.invoke(prompt)
+        response = self._invoke_logged(prompt, {"context": deduplicated_context}, label="generate_scenegraph")
         llm_time = time.time() - llm_start
         scenes_data = extract_json(response.content, expected_type=dict)
-        log(f"LLM terminé en {llm_time:.2f}s.")
+        log(f"LLM completed in {llm_time:.2f}s.")
 
         if not scenes_data:
-            log("✗ Échec de l'extraction JSON du graphe de scènes.")
+            log(f"⚠ JSON parsing failed for generate_scenegraph. Raw response start: {response.content[:300]!r}")
             return {}
 
-        # Validation minimale
+        # Minimal validation
         if "scene_initiale" not in scenes_data:
             scenes_data["scene_initiale"] = "1.1"
         if "scenes" not in scenes_data or not isinstance(scenes_data["scenes"], list):
             scenes_data["scenes"] = []
 
-        # S'assurer que le statut de la scène initiale est en_cours et les autres a_venir
+        # Ensure starting scene has status 'en_cours' and others 'a_venir'
         initial_id = scenes_data["scene_initiale"]
         for scene in scenes_data["scenes"]:
             if scene.get("id") == initial_id:
@@ -699,98 +697,92 @@ Réponds UNIQUEMENT avec un JSON valide suivant EXACTEMENT ce schéma :
         with open("Memory/scenes.json", "w", encoding="utf-8") as f:
             json.dump(scenes_data, f, indent=4, ensure_ascii=False)
 
-        log(f"✓ Graphe de scènes généré ({len(scenes_data['scenes'])} scènes) dans Memory/scenes.json.")
+        log(f"✓ Scene graph generated ({len(scenes_data['scenes'])} scenes) in Memory/scenes.json.")
         return scenes_data
 
 
 DISCOVERY_RECOVERY_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Tu es un expert en systèmes de jeu de rôle.
-À partir des extraits de règles ci-dessous, identifie les MÉCANISMES DE RÉCUPÉRATION
-DE RESSOURCES (repos, downtime, guérison entre les rencontres) propres à CE système,
-avec leurs noms EXACTS. Certains systèmes ont deux paliers (repos long/court), d'autres
-plusieurs paliers différents (ex: récupération à 10 minutes / 1 heure / 10 heures /
-24 heures), d'autres quasiment aucune récupération automatique (guérison lente sur
-plusieurs jours par exemple). Ne suppose jamais un modèle "long/court" par défaut.
+    ("system", """You are an expert in tabletop role-playing game systems.
+Based on the rule excerpts below, identify the RESOURCE RECOVERY MECHANISMS
+(rests, downtime, healing between encounters) specific to THIS system,
+with their EXACT names. Some systems have two tiers (short/long rest), others
+have several different tiers (e.g., recovery at 10 minutes / 1 hour / 10 hours /
+24 hours), others have almost no automatic recovery (slow healing over several days for example).
+Never assume a short/long model by default.
 
-Réponds UNIQUEMENT avec :
+Reply ONLY with:
 ```json
-{{"paliers": ["nom exact du palier 1", "nom exact du palier 2"]}}
+{{"tiers": ["exact name of tier 1", "exact name of tier 2"]}}
 ```
-Liste vide si le système n'a pas de mécanisme de récupération formalisé."""),
-    ("human", "EXTRAITS DU CODEX :\n{context}"),
+Empty list if the system has no formalized recovery mechanism."""),
+    ("human", "CODEX EXCERPTS (Rules):\n{context}"),
 ])
 
 EXTRACTION_RECOVERY_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Pour CHAQUE palier de récupération listé, précise son déclencheur et
-les ressources qu'il restaure. Utilise UNIQUEMENT ces trois types d'effet :
-- "restaurer_complet" : la ressource revient à son maximum.
-- "restaurer_pourcentage" : remonte d'un pourcentage du maximum ("valeur": entier 1-100).
-- "restaurer_valeur_fixe" : remonte d'une valeur fixe ("valeur": entier). Si les règles
-  indiquent un jet de dés, utilise une estimation raisonnable de sa moyenne.
+    ("system", """For EACH recovery tier listed, specify its trigger and the resources it restores.
+Use ONLY these three types of effects:
+- "restore_full": the resource returns to its maximum.
+- "restore_percentage": increases by a percentage of the maximum ("value": integer 1-100).
+- "restore_fixed_value": increases by a fixed value ("value": integer). If the rules indicate a dice roll, use a reasonable estimate of its average.
 
-Le champ "ressource" de chaque effet DOIT correspondre EXACTEMENT à l'un des chemins
-suivants (issus du schéma de personnage déjà généré pour ce système) : {ressources_connues}
-Si aucune ressource connue ne correspond à ce que décrivent les règles, ignore cet effet
-plutôt que d'inventer un nom de ressource.
+The "resource" field of each effect must be a consistent, lowercase, unaccented technical name reflecting the resource as described in the rules. If a list of already known resources is provided below and is not empty, prioritize those exact names for consistency; otherwise, choose a clear and consistent name from the rules themselves.
 
-PALIERS À DÉTAILLER : {paliers}
+ALREADY KNOWN RESOURCES (may be empty - in this case, ignore this section): {known_resources}
 
-Réponds UNIQUEMENT avec :
+TIERS TO DETAIL: {tiers}
+
+Reply ONLY with:
 ```json
 {{
-  "paliers_repos": [
+  "recovery_tiers": [
     {{
-      "id": "identifiant_court_sans_espaces",
-      "nom": "nom exact du palier",
-      "declencheurs_texte": ["variante 1", "variante 2"],
-      "effets": [{{"ressource": "chemin_exact_connu", "action": "restaurer_complet", "valeur": null}}]
+      "id": "short_identifier_no_spaces",
+      "name": "exact name of the tier",
+      "text_triggers": ["variant 1", "variant 2"],
+      "effects": [{{"resource": "exact_resource_name", "action": "restore_full" | "restore_percentage" | "restore_fixed_value", "value": null_or_integer}}]
     }}
   ]
 }}
 ```"""),
-    ("human", "EXTRAITS DU CODEX :\n{context}"),
+    ("human", "CODEX EXCERPTS (Rules):\n{context}"),
 ])
 
 DISCOVERY_ACTIONS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Identifie les ACTIONS COURANTES qu'un personnage peut entreprendre en
-jeu (combat, discrétion, persuasion, perception, etc.) et qui nécessitent une résolution
-par les règles (jet de dé, comparaison à un seuil). Utilise les noms EXACTS de ce système.
+    ("system", """Identify the COMMON ACTIONS a character can undertake in the game (combat, stealth, persuasion, perception, etc.) and which require resolution by the rules (dice roll, comparison to a threshold). Use the EXACT names of this system.
 
-Réponds UNIQUEMENT avec :
+Reply ONLY with:
 ```json
-{{"actions": ["nom exact action 1", "nom exact action 2"]}}
+{{"actions": ["exact name of action 1", "exact name of action 2"]}}
 ```"""),
-    ("human", "EXTRAITS DU CODEX :\n{context}"),
+    ("human", "CODEX EXCERPTS (Rules):\n{context}"),
 ])
 
 EXTRACTION_ACTIONS_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Pour CHAQUE action listée, précise comment elle se résout dans ce
-système : quel jet, quelle caractéristique/compétence, contre quoi, et les conséquences
-de succès/échec.
+    ("system", """For EACH action listed, specify how it is resolved in this system: which roll, which attribute/skill, against what, and the consequences of success/failure.
 
-ACTIONS À DÉTAILLER : {actions}
+ACTIONS TO DETAIL: {actions}
 
-Réponds UNIQUEMENT avec :
+Reply ONLY with:
 ```json
 {{
-  "actions_courantes": [
+  "common_actions": [
     {{
-      "nom": "nom exact de l'action",
-      "declencheurs": ["variante 1", "variante 2"],
-      "resolution": "description de la mécanique de résolution",
-      "en_cas_de_succes": "...",
-      "en_cas_d_echec": "..."
+      "name": "exact name of the action",
+      "triggers": ["variant 1", "variant 2"],
+      "resolution": "description of the resolution mechanics",
+      "on_success": "description of success consequences",
+      "on_failure": "description of failure consequences"
     }}
   ]
 }}
 ```"""),
-    ("human", "EXTRAITS DU CODEX :\n{context}"),
+    ("human", "CODEX EXCERPTS (Rules):\n{context}"),
 ])
 
 
 class GameplayRulesAgent(BaseAgent):
-    def __init__(self, core_store):
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1)
+    def __init__(self, core_store, verbose=False):
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1, verbose=verbose)
         self.core_store = core_store
 
     def _load_character_schema(self) -> dict:
@@ -801,105 +793,117 @@ class GameplayRulesAgent(BaseAgent):
                     return json.load(f)
             except Exception:
                 pass
-        return {"champs_requis": []}
+        return {"required_fields": []}
 
     def generate_recovery_rules(self, log_callback=None) -> dict:
         def log(msg):
-            (log_callback or print)(f"[GameplayRules] {msg}")
+            if log_callback:
+                log_callback(f"[GameplayRules] {msg}")
+            else:
+                print(f"[GameplayRulesAgent] {msg}")
 
         character_schema = self._load_character_schema()
 
         full_core = get_full_store_text(self.core_store, log)
         if full_core and len(full_core) <= config.CORE_FULLTEXT_THRESHOLD_CHARS:
-            context_decouverte = full_core
+            discovery_context = full_core
         else:
-            context_decouverte = get_relevant_context(
+            discovery_context = get_relevant_context(
                 self.core_store,
                 ["repos, récupération, guérison entre les rencontres, downtime, recovery, healing"],
                 log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
             )
 
-        paliers = []
-        if context_decouverte.strip():
+        tiers = []
+        if discovery_context.strip():
             try:
-                resp = (DISCOVERY_RECOVERY_PROMPT | self.llm).invoke({"context": context_decouverte})
+                resp = self._invoke_logged(DISCOVERY_RECOVERY_PROMPT, {"context": discovery_context}, label="discovery_recovery_tiers")
                 result = extract_json(resp.content, expected_type=dict)
-                paliers = result.get("paliers", []) if result else []
+                tiers = result.get("tiers", []) if result else []
             except Exception as e:
-                log(f"⚠ Erreur découverte paliers de récupération : {e}")
+                log(f"⚠ Error discovering recovery tiers: {e}")
 
-        if not paliers:
-            log("Aucun palier de récupération détecté - le système n'en a peut-être pas (ex: guérison lente).")
-            recovery_rules = {"paliers_repos": []}
+        if not tiers:
+            log("No recovery tiers detected - the system might not have formalized recovery (e.g., slow natural healing).")
+            recovery_rules = {"recovery_tiers": []}
         else:
-            log(f"Paliers découverts : {paliers}")
-            queries = [f"{p}, récupération, repos" for p in paliers]
+            log(f"Discovered recovery tiers: {tiers}")
+            queries = [f"{p}, récupération, repos" for p in tiers]
             context_extraction = get_relevant_context(
                 self.core_store, queries, log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
             )
-            ressources_connues = [
-                f["chemin"] for f in character_schema.get("champs_requis", [])
-                if f["chemin"].startswith("ressources.")
+            known_resources = [
+                f["path"] for f in character_schema.get("required_fields", [])
+                if f["path"].startswith("resources.")
             ]
             try:
-                resp = (EXTRACTION_RECOVERY_PROMPT | self.llm).invoke({
-                    "paliers": json.dumps(paliers, ensure_ascii=False),
-                    "ressources_connues": json.dumps(ressources_connues, ensure_ascii=False),
+                resp = self._invoke_logged(EXTRACTION_RECOVERY_PROMPT, {
+                    "tiers": json.dumps(tiers, ensure_ascii=False),
+                    "known_resources": json.dumps(known_resources, ensure_ascii=False),
                     "context": context_extraction,
-                })
-                recovery_rules = extract_json(resp.content, expected_type=dict) or {"paliers_repos": []}
+                }, label="extraction_recovery")
+                recovery_rules = extract_json(resp.content, expected_type=dict)
+                if not recovery_rules:
+                    log(f"⚠ JSON parsing failed for extraction_recovery. Raw response start: {resp.content[:300]!r}")
+                    recovery_rules = {"recovery_tiers": []}
             except Exception as e:
-                log(f"⚠ Erreur extraction des règles de récupération : {e}")
-                recovery_rules = {"paliers_repos": []}
+                log(f"⚠ Error extracting recovery rules: {e}")
+                recovery_rules = {"recovery_tiers": []}
 
         with open("Memory/recovery_rules.json", "w", encoding="utf-8") as f:
             json.dump(recovery_rules, f, indent=4, ensure_ascii=False)
-        log(f"✓ {len(recovery_rules.get('paliers_repos', []))} palier(s) de récupération sauvegardé(s).")
+        log(f"✓ {len(recovery_rules.get('recovery_tiers', []))} recovery tier(s) saved.")
         return recovery_rules
 
     def generate_action_catalog(self, log_callback=None) -> dict:
         def log(msg):
-            (log_callback or print)(f"[GameplayRules] {msg}")
+            if log_callback:
+                log_callback(f"[GameplayRules] {msg}")
+            else:
+                print(f"[GameplayRulesAgent] {msg}")
 
         full_core = get_full_store_text(self.core_store, log)
         if full_core and len(full_core) <= config.CORE_FULLTEXT_THRESHOLD_CHARS:
-            context_decouverte = full_core
+            discovery_context = full_core
         else:
-            context_decouverte = get_relevant_context(
+            discovery_context = get_relevant_context(
                 self.core_store,
                 ["actions de combat, tests de compétence, résolution d'action, combat actions, skill checks"],
                 log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
             )
 
         actions = []
-        if context_decouverte.strip():
+        if discovery_context.strip():
             try:
-                resp = (DISCOVERY_ACTIONS_PROMPT | self.llm).invoke({"context": context_decouverte})
+                resp = self._invoke_logged(DISCOVERY_ACTIONS_PROMPT, {"context": discovery_context}, label="discovery_actions")
                 result = extract_json(resp.content, expected_type=dict)
                 actions = result.get("actions", []) if result else []
             except Exception as e:
-                log(f"⚠ Erreur découverte des actions courantes : {e}")
+                log(f"⚠ Error discovering common actions: {e}")
 
         if not actions:
-            log("⚠ Aucune action courante détectée - le catalogue restera vide, le RAG sera utilisé systématiquement.")
-            action_catalog = {"actions_courantes": []}
+            log("⚠ No common actions detected - the catalog will remain empty, RAG will be used systematically.")
+            action_catalog = {"common_actions": []}
         else:
-            log(f"Actions découvertes : {actions}")
+            log(f"Discovered actions: {actions}")
             queries = [f"{a}, résolution, jet de dé" for a in actions]
             context_extraction = get_relevant_context(
                 self.core_store, queries, log, config.CORE_FULLTEXT_THRESHOLD_CHARS, k=config.RAG_K_CREATION
             )
             try:
-                resp = (EXTRACTION_ACTIONS_PROMPT | self.llm).invoke({
+                resp = self._invoke_logged(EXTRACTION_ACTIONS_PROMPT, {
                     "actions": json.dumps(actions, ensure_ascii=False),
                     "context": context_extraction,
-                })
-                action_catalog = extract_json(resp.content, expected_type=dict) or {"actions_courantes": []}
+                }, label="extraction_actions")
+                action_catalog = extract_json(resp.content, expected_type=dict)
+                if not action_catalog:
+                    log(f"⚠ JSON parsing failed for extraction_actions. Raw response start: {resp.content[:300]!r}")
+                    action_catalog = {"common_actions": []}
             except Exception as e:
-                log(f"⚠ Erreur extraction du catalogue d'actions : {e}")
-                action_catalog = {"actions_courantes": []}
+                log(f"⚠ Error extracting action catalog: {e}")
+                action_catalog = {"common_actions": []}
 
         with open("Memory/action_catalog.json", "w", encoding="utf-8") as f:
             json.dump(action_catalog, f, indent=4, ensure_ascii=False)
-        log(f"✓ {len(action_catalog.get('actions_courantes', []))} action(s) courante(s) sauvegardée(s).")
+        log(f"✓ {len(action_catalog.get('common_actions', []))} common action(s) saved.")
         return action_catalog

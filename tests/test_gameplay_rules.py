@@ -1,26 +1,27 @@
 import os
 import json
 import pytest
+import logging
 from unittest import mock
 from game_state_engine import GameStateEngine
 from agent import RPGAgent
-from scenario_agents import GameplayRulesAgent
+from scenario_agents import GameplayRulesAgent, EXTRACTION_RECOVERY_PROMPT
 
 @pytest.fixture
 def temp_character_file(tmp_path):
     char_file = tmp_path / "character.json"
     data = {
-        "nom": "Test Hero",
-        "niveau": 1,
+        "name": "Test Hero",
+        "level": 1,
         "xp": 0,
-        "xp_prochain_niveau": 1000,
+        "next_level_xp": 1000,
         "pv": 10,
-        "ressources": {
-            "points_de_vie": {"actuels": 4, "max": 10},
-            "sorts_par_jour": {
-                "niveau_1": {"restants": 0, "max": 2}
+        "resources": {
+            "hit_points": {"current": 4, "max": 10},
+            "spells_per_day": {
+                "level_1": {"current": 0, "max": 2}
             },
-            "points_de_rage": {"restants": 1, "max": 2}
+            "points_de_rage": {"current": 1, "max": 2}
         }
     }
     char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -38,22 +39,22 @@ def mock_recovery_rules_file():
             pass
 
     rules = {
-        "paliers_repos": [
+        "recovery_tiers": [
             {
                 "id": "repos_long",
-                "nom": "Repos Long",
-                "declencheurs_texte": ["dormir dans un lit", "bivouac sécurisé"],
-                "effets": [
-                    {"ressource": "ressources.points_de_vie", "action": "restaurer_complet", "valeur": None},
-                    {"ressource": "ressources.sorts_par_jour", "action": "restaurer_complet", "valeur": None}
+                "name": "Repos Long",
+                "text_triggers": ["dormir dans un lit", "bivouac sécurisé"],
+                "effects": [
+                    {"resource": "resources.hit_points", "action": "restore_full", "value": None},
+                    {"resource": "resources.spells_per_day", "action": "restore_full", "value": None}
                 ]
             },
             {
                 "id": "repos_court",
-                "nom": "Repos Court",
-                "declencheurs_texte": ["récupération de 10 minutes", "petite pause"],
-                "effets": [
-                    {"ressource": "ressources.points_de_vie", "action": "restaurer_pourcentage", "valeur": 25}
+                "name": "Repos Court",
+                "text_triggers": ["récupération de 10 minutes", "petite pause"],
+                "effects": [
+                    {"resource": "resources.hit_points", "action": "restore_percentage", "value": 25}
                 ]
             }
         ]
@@ -83,13 +84,13 @@ def mock_action_catalog_file():
             pass
 
     catalog = {
-        "actions_courantes": [
+        "common_actions": [
             {
-                "nom": "Attaquer",
-                "declencheurs": ["attaque", "frapper"],
+                "name": "Attaquer",
+                "triggers": ["attaque", "frapper"],
                 "resolution": "Jet de combat",
-                "en_cas_de_succes": "Ennemi blessé",
-                "en_cas_d_echec": "Rien"
+                "on_success": "Ennemi blessé",
+                "on_failure": "Rien"
             }
         ]
     }
@@ -108,22 +109,19 @@ def mock_action_catalog_file():
 
 def test_gse_rest_repos_long_dynamic(temp_character_file, mock_recovery_rules_file):
     gse = GameStateEngine(temp_character_file)
-    # verify initial conditions
     hp, hp_max = gse.get_hp()
     assert hp == 4
-    assert gse.get_resource("sorts_par_jour", level=1)[0] == 0
+    assert gse.get_resource("spells_per_day", level=1)[0] == 0
 
-    # Call rest with mock long rest
     res = gse.rest("repos_long")
     assert res.success is True
     assert gse.get_hp()[0] == 10
-    assert gse.get_resource("sorts_par_jour", level=1)[0] == 2
+    assert gse.get_resource("spells_per_day", level=1)[0] == 2
     assert gse.state["pv"] == 10
 
 
 def test_gse_rest_repos_court_dynamic(temp_character_file, mock_recovery_rules_file):
     gse = GameStateEngine(temp_character_file)
-    # verify initial conditions: 4 hp, max is 10. 25% of 10 is 2. So 4 + 2 = 6 hp.
     res = gse.rest("repos_court")
     assert res.success is True
     assert gse.get_hp()[0] == 6
@@ -134,12 +132,11 @@ def test_gse_rest_palier_inexistant(temp_character_file, mock_recovery_rules_fil
     gse = GameStateEngine(temp_character_file)
     res = gse.rest("palier_inexistant")
     assert res.success is False
-    assert "inconnu" in res.message
+    assert "Unknown" in res.message or "inconnu" in res.message
 
 
 def test_gse_detect_action_type_dynamic(temp_character_file, mock_recovery_rules_file):
     gse = GameStateEngine(temp_character_file)
-    # Terms non-D&D listed in mock_recovery_rules_file for "repos_court"
     assert gse.detect_action_type("Je prends une petite pause") == "rest:repos_court"
     assert gse.detect_action_type("Je décide de dormir dans un lit") == "rest:repos_long"
 
@@ -152,49 +149,49 @@ def test_agent_chat_covered_by_catalog(mock_action_catalog_file):
         agent.npcs_data = []
         agent.current_scene_id = "SCENE_01"
         agent.scenario_structure = {
-            "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-            "entites": {"pnj": [], "lieux": []},
-            "macro_structure": [
-                {"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}
+            "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+            "entities": {"npcs": [], "locations": []},
+            "acts": [
+                {"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}
             ],
-            "noeuds_sceniques": [
+            "scene_nodes": [
                 {
-                    "id_scene": "SCENE_01",
-                    "acte_rattache_id": "ACTE_1",
-                    "titre": "Scène 1",
-                    "objectif_mj": "...",
-                    "condition_resolution": "Le PJ avance",
-                    "sorties_logiques": []
+                    "scene_id": "SCENE_01",
+                    "act_id": "ACTE_1",
+                    "title": "Scène 1",
+                    "gm_objective": "...",
+                    "resolution_condition": "Le PJ avance",
+                    "logical_exits": []
                 }
             ],
-            "horloges_globales": []
+            "global_clocks": []
         }
         agent._build_lookups()
         agent.progression = {
-            "acte_courant": "ACTE_1",
-            "scene_courante": "SCENE_01",
-            "scenes_resolues": [],
-            "scenes_contournees": [],
-            "horloges": {},
-            "ecarts_notables": []
+            "current_act": "ACTE_1",
+            "current_scene": "SCENE_01",
+            "resolved_scenes": [],
+            "bypassed_scenes": [],
+            "clocks": {},
+            "notable_deviations": []
         }
         agent.character_data = {
-            "nom": "Hero",
-            "niveau": 1,
+            "name": "Hero",
+            "level": 1,
             "xp": 0,
-            "ressources": {"points_de_vie": {"actuels": 10, "max": 10}}
+            "resources": {"hit_points": {"current": 10, "max": 10}}
         }
 
         # Mock prompt-aware LLM invoke
         def invoke_mock(prompt, **kwargs):
             p_str = str(prompt)
-            if "Tu es un arbitre de JDR. Analyse l'action du joueur" in p_str:
-                return mock.Mock(content=json.dumps({"consomme": False}))
-            elif "Analyse l'action du joueur par rapport à la scène courante" in p_str:
-                return mock.Mock(content=json.dumps({"categorie": "improvisation", "scene_suivante": None}))
-            elif "CATALOGUE D'ACTIONS COURANTES DE CE SYSTÈME" in p_str:
+            if "RPG referee. Analyze the player's action" in p_str:
+                return mock.Mock(content=json.dumps({"consumes": False}))
+            elif "Analyze the player's action relative to the current scene" in p_str:
+                return mock.Mock(content=json.dumps({"category": "improvisation", "next_scene": None}))
+            elif "COMMON ACTIONS CATALOG FOR THIS SYSTEM" in p_str:
                 return mock.Mock(content=json.dumps({
-                    "couvert_par_catalogue": True,
+                    "covered_by_catalog": True,
                     "need_roll": True,
                     "stat": "combat",
                     "bonus": 2,
@@ -214,7 +211,6 @@ def test_agent_chat_covered_by_catalog(mock_action_catalog_file):
 
         response = agent.chat("J'attaque le gobelin")
 
-        # Verify we didn't search the core rules store via similarity search
         mock_get_core.assert_not_called()
         assert "Jet de combat" in response
         assert "12" in response
@@ -228,49 +224,49 @@ def test_agent_chat_not_covered_by_catalog(mock_action_catalog_file):
         agent.npcs_data = []
         agent.current_scene_id = "SCENE_01"
         agent.scenario_structure = {
-            "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-            "entites": {"pnj": [], "lieux": []},
-            "macro_structure": [
-                {"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}
+            "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+            "entities": {"npcs": [], "locations": []},
+            "acts": [
+                {"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}
             ],
-            "noeuds_sceniques": [
+            "scene_nodes": [
                 {
-                    "id_scene": "SCENE_01",
-                    "acte_rattache_id": "ACTE_1",
-                    "titre": "Scène 1",
-                    "objectif_mj": "...",
-                    "condition_resolution": "Le PJ avance",
-                    "sorties_logiques": []
+                    "scene_id": "SCENE_01",
+                    "act_id": "ACTE_1",
+                    "title": "Scène 1",
+                    "gm_objective": "...",
+                    "resolution_condition": "Le PJ avance",
+                    "logical_exits": []
                 }
             ],
-            "horloges_globales": []
+            "global_clocks": []
         }
         agent._build_lookups()
         agent.progression = {
-            "acte_courant": "ACTE_1",
-            "scene_courante": "SCENE_01",
-            "scenes_resolues": [],
-            "scenes_contournees": [],
-            "horloges": {},
-            "ecarts_notables": []
+            "current_act": "ACTE_1",
+            "current_scene": "SCENE_01",
+            "resolved_scenes": [],
+            "bypassed_scenes": [],
+            "clocks": {},
+            "notable_deviations": []
         }
         agent.character_data = {
-            "nom": "Hero",
-            "niveau": 1,
+            "name": "Hero",
+            "level": 1,
             "xp": 0,
-            "ressources": {"points_de_vie": {"actuels": 10, "max": 10}}
+            "resources": {"hit_points": {"current": 10, "max": 10}}
         }
 
         # Mock prompt-aware LLM invoke
         def invoke_mock(prompt, **kwargs):
             p_str = str(prompt)
-            if "Tu es un arbitre de JDR. Analyse l'action du joueur" in p_str:
-                return mock.Mock(content=json.dumps({"consomme": False}))
-            elif "Analyse l'action du joueur par rapport à la scène courante" in p_str:
-                return mock.Mock(content=json.dumps({"categorie": "improvisation", "scene_suivante": None}))
-            elif "CATALOGUE D'ACTIONS COURANTES DE CE SYSTÈME" in p_str:
-                return mock.Mock(content=json.dumps({"couvert_par_catalogue": False}))
-            elif "Basé sur les RÈGLES du CODEX suivantes" in p_str:
+            if "RPG referee. Analyze the player's action" in p_str:
+                return mock.Mock(content=json.dumps({"consumes": False}))
+            elif "Analyze the player's action relative to the current scene" in p_str:
+                return mock.Mock(content=json.dumps({"category": "improvisation", "next_scene": None}))
+            elif "COMMON ACTIONS CATALOG FOR THIS SYSTEM" in p_str:
+                return mock.Mock(content=json.dumps({"covered_by_catalog": False}))
+            elif "Based on the following CODEX RULES" in p_str:
                 return mock.Mock(content=json.dumps({
                     "need_roll": True,
                     "stat": "crochetage",
@@ -291,14 +287,12 @@ def test_agent_chat_not_covered_by_catalog(mock_action_catalog_file):
 
         response = agent.chat("Je crochette la porte")
 
-        # Core RAG context search SHOULD be called
         mock_get_core.assert_called_once_with("Je crochette la porte", k=mock.ANY)
         assert "Jet de crochetage" in response
         assert "15" in response
 
 
 def test_agent_chat_empty_catalog():
-    # Empty or missing catalog
     if os.path.exists("Memory/action_catalog.json"):
         os.remove("Memory/action_catalog.json")
 
@@ -309,47 +303,47 @@ def test_agent_chat_empty_catalog():
         agent.npcs_data = []
         agent.current_scene_id = "SCENE_01"
         agent.scenario_structure = {
-            "metadata": {"titre": "La Quête", "pitch_global": "...", "scene_initiale": "SCENE_01"},
-            "entites": {"pnj": [], "lieux": []},
-            "macro_structure": [
-                {"id_acte": "ACTE_1", "titre": "Acte 1", "scenes_incluses": ["SCENE_01"]}
+            "metadata": {"title": "La Quête", "global_pitch": "...", "starting_scene": "SCENE_01"},
+            "entities": {"npcs": [], "locations": []},
+            "acts": [
+                {"act_id": "ACTE_1", "title": "Acte 1", "included_scenes": ["SCENE_01"]}
             ],
-            "noeuds_sceniques": [
+            "scene_nodes": [
                 {
-                    "id_scene": "SCENE_01",
-                    "acte_rattache_id": "ACTE_1",
-                    "titre": "Scène 1",
-                    "objectif_mj": "...",
-                    "condition_resolution": "Le PJ avance",
-                    "sorties_logiques": []
+                    "scene_id": "SCENE_01",
+                    "act_id": "ACTE_1",
+                    "title": "Scène 1",
+                    "gm_objective": "...",
+                    "resolution_condition": "Le PJ avance",
+                    "logical_exits": []
                 }
             ],
-            "horloges_globales": []
+            "global_clocks": []
         }
         agent._build_lookups()
         agent.progression = {
-            "acte_courant": "ACTE_1",
-            "scene_courante": "SCENE_01",
-            "scenes_resolues": [],
-            "scenes_contournees": [],
-            "horloges": {},
-            "ecarts_notables": []
+            "current_act": "ACTE_1",
+            "current_scene": "SCENE_01",
+            "resolved_scenes": [],
+            "bypassed_scenes": [],
+            "clocks": {},
+            "notable_deviations": []
         }
         agent.character_data = {
-            "nom": "Hero",
-            "niveau": 1,
+            "name": "Hero",
+            "level": 1,
             "xp": 0,
-            "ressources": {"points_de_vie": {"actuels": 10, "max": 10}}
+            "resources": {"hit_points": {"current": 10, "max": 10}}
         }
 
         # Mock prompt-aware LLM invoke
         def invoke_mock(prompt, **kwargs):
             p_str = str(prompt)
-            if "Tu es un arbitre de JDR. Analyse l'action du joueur" in p_str:
-                return mock.Mock(content=json.dumps({"consomme": False}))
-            elif "Analyse l'action du joueur par rapport à la scène courante" in p_str:
-                return mock.Mock(content=json.dumps({"categorie": "improvisation", "scene_suivante": None}))
-            elif "Basé sur les RÈGLES du CODEX suivantes" in p_str:
+            if "RPG referee. Analyze the player's action" in p_str:
+                return mock.Mock(content=json.dumps({"consumes": False}))
+            elif "Analyze the player's action relative to the current scene" in p_str:
+                return mock.Mock(content=json.dumps({"category": "improvisation", "next_scene": None}))
+            elif "Based on the following CODEX RULES" in p_str:
                 return mock.Mock(content=json.dumps({
                     "need_roll": True,
                     "stat": "athlétisme",
@@ -370,8 +364,148 @@ def test_agent_chat_empty_catalog():
 
         response = agent.chat("Je grimpe sur la falaise")
 
-        # Direct fallback to RAG
         mock_get_core.assert_called_once_with("Je grimpe sur la falaise", k=mock.ANY)
-        # LLM called for: check resources, scene classification, and core rules prompt
         assert agent.llm.invoke.call_count == 3
         assert "Jet de athlétisme" in response
+
+
+# --- NEW DIAGNOSTIC & MIGRATION TESTS ---
+
+def test_recovery_rules_empty_schema_saving():
+    """
+    Test that EXTRACTION_RECOVERY_PROMPT/generate_recovery_rules with an empty character_schema.json
+    still saves the discovered tiers with consistent resource names (no systematic rejection).
+    """
+    mock_store = mock.Mock()
+    mock_store.get.return_value = {
+        "documents": ["Healing rules info..."],
+        "metadatas": [{"page": 1}]
+    }
+    mock_store.similarity_search.return_value = [
+        mock.Mock(page_content="Règles de repos.")
+    ]
+
+    agent = GameplayRulesAgent(mock_store)
+    agent._load_character_schema = mock.Mock(return_value={"required_fields": []})
+
+    # The first LLM invoke is for discovery -> returns ["Natural Healing"]
+    # The second is for extraction -> returns structured recovery rules JSON
+    with mock.patch.object(agent.llm.__class__, "invoke", side_effect=[
+        mock.Mock(content='{"tiers": ["Natural Healing"]}'),
+        mock.Mock(content=json.dumps({
+            "recovery_tiers": [
+                {
+                    "id": "natural_healing",
+                    "name": "Natural Healing",
+                    "text_triggers": ["night of sleep"],
+                    "effects": [{"resource": "resources.hit_points", "action": "restore_full", "value": None}]
+                }
+            ]
+        }))
+    ]):
+        rules = agent.generate_recovery_rules()
+
+    assert len(rules.get("recovery_tiers", [])) == 1
+    assert rules["recovery_tiers"][0]["id"] == "natural_healing"
+    assert rules["recovery_tiers"][0]["effects"][0]["resource"] == "resources.hit_points"
+
+
+def test_indexer_log_option_not_passed():
+    """
+    --log not passed -> no indexer_debug.log file is created.
+    """
+    log_file = "indexer_debug.log"
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    # Mock indexer run without --log
+    from indexer import main
+    with mock.patch("sys.argv", ["indexer.py", "--clear"]):
+        with mock.patch("indexer.index_directory"):
+            with mock.patch("indexer.ManualGeneratorAgent") as mock_gen:
+                with mock.patch("indexer.GameplayRulesAgent") as mock_gameplay:
+                    with mock.patch("chromadb.PersistentClient"):
+                        main()
+
+    assert not os.path.exists(log_file)
+
+
+def test_indexer_log_option_passed():
+    """
+    --log passed -> indexer_debug.log contains at least one PROMPT and RAW RESPONSE entry.
+    """
+    log_file = "indexer_debug.log"
+    if os.path.exists(log_file):
+        os.remove(log_file)
+
+    mock_store = mock.Mock()
+    mock_store.get.return_value = {
+        "documents": ["Core rules content"],
+        "metadatas": [{"page": 1}]
+    }
+    mock_store.similarity_search.return_value = [
+        mock.Mock(page_content="Core rules RAG content")
+    ]
+
+    agent = GameplayRulesAgent(mock_store, verbose=True)
+
+    # Clear existing handlers to allow basicConfig to write during tests
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    # Set up basic config for the file log
+    logging.basicConfig(
+        filename=log_file,
+        filemode="w",
+        level=logging.DEBUG,
+        format="%(asctime)s %(message)s",
+        encoding="utf-8"
+    )
+    logging.root.setLevel(logging.DEBUG)
+
+    with mock.patch.object(agent.llm.__class__, "invoke", side_effect=[
+        mock.Mock(content='{"tiers": ["Natural Healing"]}'),
+        mock.Mock(content='{"recovery_tiers": []}')
+    ]):
+        agent.generate_recovery_rules()
+
+    # Reset root logger so it closes the file and we can read it
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    assert os.path.exists(log_file)
+    with open(log_file, "r", encoding="utf-8") as f:
+        log_content = f.read()
+
+    assert "PROMPT" in log_content
+    assert "RAW RESPONSE" in log_content
+
+
+def test_extract_json_failed_warning():
+    """
+    A failed extract_json (LLM returns non-JSON) triggers warning logging even without --log.
+    """
+    mock_store = mock.Mock()
+    mock_store.get.return_value = {
+        "documents": ["Core rules content"],
+        "metadatas": [{"page": 1}]
+    }
+    mock_store.similarity_search.return_value = [
+        mock.Mock(page_content="Core rules RAG")
+    ]
+
+    agent = GameplayRulesAgent(mock_store, verbose=False)
+
+    log_messages = []
+    def custom_log(msg):
+        log_messages.append(msg)
+
+    # First invoke returns valid tiers list, second invoke returns invalid non-JSON to trigger extraction json warning
+    with mock.patch.object(agent.llm.__class__, "invoke", side_effect=[
+        mock.Mock(content='{"tiers": ["Natural Healing"]}'),
+        mock.Mock(content="Definitely NOT JSON!")
+    ]):
+        agent.generate_recovery_rules(log_callback=custom_log)
+
+    assert any("JSON parsing failed" in msg for msg in log_messages)
+    assert any("Definitely NOT JSON!" in msg for msg in log_messages)
