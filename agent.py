@@ -146,13 +146,11 @@ class SheetManagerAgent(BaseAgent):
             Ton rôle est de mettre à jour la fiche JSON du personnage pour les aspects NARRATIFS uniquement (inventaire, relations, notes, descriptions).
             Tu reçois la fiche actuelle, l'action du joueur, la réponse du narrateur et les règles pertinentes.
 
-            ⚠️ RÈGLE CRITIQUE : Tu ne dois JAMAIS modifier les Points de Vie (PV), l'XP, le niveau, les sorts ou les ressources (rage, etc.). Ces éléments sont gérés de façon déterministe par le GameStateEngine.
+            ⚠️ RÈGLE CRITIQUE : Tu ne dois JAMAIS modifier les Points de Vie (PV), l'XP, le niveau, les sorts ou les ressources (rage, magie, etc.). Ces éléments sont gérés de façon déterministe par le GameStateEngine.
 
             CONSIGNES :
-            - Mets à jour les Points de Vie (PV) si le personnage a été blessé ou soigné.
-            - RESSOUCES ET SORTS : Mets à jour les 'restants' dans la section 'ressources' si une capacité a été utilisée ou si le personnage a pris un REPOS (rétablissement des ressources).
-            - Ajoute ou retire des objets de l'inventaire si nécessaire.
-            - Mets à jour l'expérience (XP) ou le niveau si mentionné, en suivant les tables de progression du CODEX.
+            - Concentre-toi UNIQUEMENT sur les aspects narratifs : ajoute ou retire des objets de l'inventaire si nécessaire.
+            - Mets à jour les relations avec les PNJ ou ajoute des notes d'histoire si la narration le justifie.
             - Ne modifie pas les statistiques de base (Force, etc.) sauf si un événement permanent l'exige.
             - Assure-toi que le JSON est valide et complet.
             - Réponds UNIQUEMENT avec le bloc JSON entouré de ```json and ```.
@@ -1134,24 +1132,37 @@ PNJ DISPONIBLES : {npcs_summary}
             if roll_info:
                 final_response += f"\n\n---\n*🎲 {roll_info} ({roll_result})*"
 
-            # Mise à jour de la fiche de personnage
-            try:
-                new_sheet = self.sheet_manager.update_sheet(self.character_data, user_input, final_response)
-                if new_sheet and isinstance(new_sheet, dict):
-                    self.character_data = self._unwrap_character_data(new_sheet)
-                    os.makedirs("Memory", exist_ok=True)
-                    with open("Memory/character.json", "w", encoding="utf-8") as f:
-                        json.dump(self.character_data, f, indent=4, ensure_ascii=False)
-                    self.gse.reload()
-                    print("[RPGAgent] Fiche de personnage mise à jour.")
-            except Exception as e:
-                print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la fiche : {e}")
-
-            # Mise à jour de la chronique avec l'intégration de ecart_notable
-            self.update_chronicle(user_input, final_response, ecart_notable)
-
             self.history.add_user_message(user_input)
             self.history.add_ai_message(final_response)
+
+            # Tâches d'arrière-plan (Chronicle & Fiche) pour réduire la latence
+            import threading
+            def background_tasks(c_data, u_in, f_resp, e_notable):
+                # Mise à jour de la fiche de personnage
+                try:
+                    new_sheet = self.sheet_manager.update_sheet(c_data, u_in, f_resp)
+                    if new_sheet and isinstance(new_sheet, dict):
+                        self.character_data = self._unwrap_character_data(new_sheet)
+                        os.makedirs("Memory", exist_ok=True)
+                        with open("Memory/character.json", "w", encoding="utf-8") as f:
+                            json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+                        self.gse.reload()
+                        print("[RPGAgent] Fiche de personnage mise à jour en arrière-plan.")
+                except Exception as e:
+                    print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la fiche en arrière-plan : {e}")
+
+                # Mise à jour de la chronique avec l'intégration de ecart_notable
+                try:
+                    self.update_chronicle(u_in, f_resp, e_notable)
+                except Exception as e:
+                    print(f"[RPGAgent] ⚠ Erreur lors de la mise à jour de la chronique en arrière-plan : {e}")
+
+            threading.Thread(
+                target=background_tasks,
+                args=(self.character_data.copy() if isinstance(self.character_data, dict) else self.character_data, user_input, final_response, ecart_notable),
+                daemon=True
+            ).start()
+
             return final_response
 
     def start_adventure(self):

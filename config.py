@@ -49,7 +49,7 @@ SCENARIO_COLLECTION_NAME = os.getenv("SCENARIO_COLLECTION_NAME")
 
 # --- RAG ---
 RAG_SEARCH_K = int(os.getenv("RAG_SEARCH_K")) if os.getenv("RAG_SEARCH_K") else None
-RAG_K_ADVENTURE = int(os.getenv("RAG_K_ADVENTURE", 5))
+RAG_K_ADVENTURE = int(os.getenv("RAG_K_ADVENTURE", 3))
 RAG_K_SETUP = int(os.getenv("RAG_K_SETUP", 8))
 RAG_K_CREATION = int(os.getenv("RAG_K_CREATION", 8))
 SCENARIO_FULLTEXT_THRESHOLD_CHARS = int(os.getenv("SCENARIO_FULLTEXT_THRESHOLD_CHARS", 40000))
