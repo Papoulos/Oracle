@@ -26,8 +26,9 @@ def get_embeddings():
             api_key="sk-no-key-required"
         )
 
-def index_directory(source_dir, collection_name, client, embeddings):
-    print(f"Indexing PDFs from {source_dir} into collection '{collection_name}'...")
+def index_directory(source_dir, collection_name, client, embeddings, index_json=False):
+    msg = f"Indexing PDFs and JSONs from {source_dir}" if index_json else f"Indexing PDFs from {source_dir}"
+    print(f"{msg} into collection '{collection_name}'...")
 
     if not os.path.exists(source_dir):
         print(f"Warning: Directory {source_dir} does not exist.")
@@ -35,15 +36,30 @@ def index_directory(source_dir, collection_name, client, embeddings):
 
     documents = []
     for file in os.listdir(source_dir):
+        file_path = os.path.join(source_dir, file)
         if file.endswith(".pdf"):
-            loader = PyPDFLoader(os.path.join(source_dir, file))
+            loader = PyPDFLoader(file_path)
             documents.extend(loader.load())
+        elif file.endswith(".json") and index_json:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                    # Dump JSON as string to treat it as text
+                    text_content = json.dumps(data, indent=2, ensure_ascii=False)
+
+                    # Provide metadata
+                    metadata = {"source": file_path}
+                    documents.append(Document(page_content=text_content, metadata=metadata))
+            except Exception as e:
+                print(f"Error loading JSON file {file_path}: {e}")
 
     if not documents:
-        print(f"No PDF file found in {source_dir}.")
+        msg = "No PDF or JSON file found" if index_json else "No PDF file found"
+        print(f"{msg} in {source_dir}.")
         return
 
-    print(f"Loaded {len(documents)} pages from {source_dir}.")
+    print(f"Loaded {len(documents)} documents from {source_dir}.")
 
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=1000,
@@ -179,7 +195,7 @@ def main():
 
     # Scenario indexing
     if index_all or args.scenario or args.reset:
-        index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings)
+        index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings, index_json=True)
 
     # Character creation manual generation
     if index_all or args.pj or args.reset:
