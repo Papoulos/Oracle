@@ -44,6 +44,7 @@ SERVER_ADDRESS = os.getenv("SERVER_ADDRESS")
 SERVER_PORT = int(os.getenv("SERVER_PORT")) if os.getenv("SERVER_PORT") else None
 
 # --- Other Parameters ---
+SYSTEM_PACK = os.getenv("SYSTEM_PACK")
 CHROMA_PATH = os.getenv("CHROMA_PATH")
 CORE_DATA_PATH = os.getenv("CORE_DATA_PATH")
 SCENARIO_DATA_PATH = os.getenv("SCENARIO_DATA_PATH")

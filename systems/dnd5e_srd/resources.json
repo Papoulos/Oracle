@@ -9,8 +9,8 @@
       "name": "Points de vie",
       "kind": "health",
       "min_value": 0,
-      "current_path": "pv.current",
-      "max_path": "pv.max",
+      "current_path": "resources.hit_points.current",
+      "max_path": "resources.hit_points.max",
       "recovery": [
         {"trigger": "long_rest", "mode": "full"}
       ]
@@ -20,7 +20,7 @@
     {
       "id": "spell_slots",
       "name": "Emplacements de sorts",
-      "path": "emplacements_de_sorts",
+      "path": "resources.spells_per_day",
       "recovery": [
         {"trigger": "long_rest", "mode": "full"}
       ]

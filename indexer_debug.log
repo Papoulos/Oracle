@@ -1,4 +1,4 @@
-2026-10-01 12:18:13,247 === PROMPT [GameplayRulesAgent - discovery_recovery_tiers] ===
+2026-10-01 14:47:00,128 === PROMPT [GameplayRulesAgent - discovery_recovery_tiers] ===
 [system] You are an expert in tabletop role-playing game systems.
 Based on the rule excerpts below, identify the RESOURCE RECOVERY MECHANISMS
 (rests, downtime, healing between encounters) specific to THIS system,
@@ -14,9 +14,9 @@ Reply ONLY with:
 Empty list if the system has no formalized recovery mechanism.
 [human] CODEX EXCERPTS (Rules):
 Core rules content
-2026-10-01 12:18:13,247 === RAW RESPONSE [GameplayRulesAgent - discovery_recovery_tiers] ===
+2026-10-01 14:47:00,128 === RAW RESPONSE [GameplayRulesAgent - discovery_recovery_tiers] ===
 {"tiers": ["Natural Healing"]}
-2026-10-01 12:18:13,248 === PROMPT [GameplayRulesAgent - extraction_recovery] ===
+2026-10-01 14:47:00,129 === PROMPT [GameplayRulesAgent - extraction_recovery] ===
 [system] For EACH recovery tier listed, specify its trigger and the resources it restores.
 Use ONLY these three types of effects:
 - "restore_full": the resource returns to its maximum.
@@ -44,5 +44,5 @@ Reply ONLY with:
 ```
 [human] CODEX EXCERPTS (Rules):
 Core rules content
-2026-10-01 12:18:13,248 === RAW RESPONSE [GameplayRulesAgent - extraction_recovery] ===
+2026-10-01 14:47:00,129 === RAW RESPONSE [GameplayRulesAgent - extraction_recovery] ===
 {"recovery_tiers": []}

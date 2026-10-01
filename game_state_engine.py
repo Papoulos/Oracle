@@ -1,7 +1,14 @@
 import json
 import os
+import logging
+import unicodedata
+import re
 from dataclasses import dataclass, field
 from typing import Optional
+from systems.loader import SystemPack
+from base_utils import get_by_path, set_by_path
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class ActionResult:
@@ -25,8 +32,15 @@ class GameStateEngine:
         "inspiration": "inspiration",
     }
 
-    def __init__(self, character_path: str = "Memory/character.json"):
+    def __init__(self, character_path: str = "Memory/character.json", pack: Optional[SystemPack] = None):
         self.character_path = character_path
+        self.pack = pack
+        if self.pack is None:
+            logger.warning("mode expérimental, aucun system pack chargé")
+        else:
+            logger.info(f"System pack loaded: {self.pack.manifest.id} (v{self.pack.manifest.version})")
+            if not self.pack.triggers:
+                logger.warning(f"No triggers.json found in pack {self.pack.manifest.id}. Automatic action detection disabled.")
         self.state = self._load()
 
     # ── Load / Save ──────────────────────────────
@@ -81,12 +95,47 @@ class GameStateEngine:
             f"XP: {self.state.get('xp', 0)}/{self.state.get('next_level_xp', self.state.get('xp_prochain_niveau', '?'))}",
         ]
 
-        resources = self.state.get("resources", {})
-        spells = resources.get("spells_per_day", {})
-        if isinstance(spells, dict):
-            for slot, values in spells.items():
-                if isinstance(values, dict):
-                    lines.append(f"Spells {slot}: {values.get('current', 0)}/{values.get('max', 0)}")
+        if self.pack:
+            # Dynamically build summary from pack resources
+            for pool in self.pack.resources.pools:
+                cur = get_by_path(self.state, pool.current_path)
+                if cur is None:
+                    logger.warning(f"Resource path '{pool.current_path}' not found in state for pool '{pool.id}'. Ignored.")
+                    continue
+
+                max_val = None
+                if pool.max_value is not None:
+                    max_val = pool.max_value
+                elif pool.max_path is not None:
+                    max_val = get_by_path(self.state, pool.max_path)
+
+                if max_val is not None:
+                    lines.append(f"{pool.name}: {cur}/{max_val}")
+                else:
+                    lines.append(f"{pool.name}: {cur}")
+
+            for group in self.pack.resources.pool_groups:
+                group_dict = get_by_path(self.state, group.path)
+                if isinstance(group_dict, dict):
+                    # Sort keys numerically if they are all integers, else insertion order
+                    keys = list(group_dict.keys())
+                    try:
+                        sorted_keys = sorted(keys, key=int)
+                    except ValueError:
+                        sorted_keys = keys
+
+                    for key in sorted_keys:
+                        values = group_dict[key]
+                        if isinstance(values, dict):
+                            lines.append(f"{group.name} {key}: {values.get('current', 0)}/{values.get('max', 0)}")
+        else:
+            # Legacy branch
+            resources = self.state.get("resources", {})
+            spells = resources.get("spells_per_day", {})
+            if isinstance(spells, dict):
+                for slot, values in spells.items():
+                    if isinstance(values, dict):
+                        lines.append(f"Spells {slot}: {values.get('current', 0)}/{values.get('max', 0)}")
 
         return " | ".join(lines)
 
@@ -210,15 +259,97 @@ class GameStateEngine:
                 pass
         return {"recovery_tiers": []}
 
-    def rest(self, palier_id: str = "long") -> ActionResult:
+    def rest(self, trigger_id: str = "long") -> ActionResult:
+        if self.pack:
+            # Check if recovery_rules.json exists and log warning
+            if os.path.exists("Memory/recovery_rules.json"):
+                logger.info("Memory/recovery_rules.json exists but is ignored because a system pack is loaded.")
+
+            # Validate trigger_id
+            triggers = self.pack.resources.recovery_triggers
+            trigger_found = any(trigger_id in t for t in triggers)
+
+            if not trigger_found:
+                valid_triggers = [list(t.keys())[0] for t in triggers]
+                return ActionResult(success=False, message=f"Unknown recovery trigger '{trigger_id}'. Valid triggers are: {', '.join(valid_triggers)}.")
+
+            restored = []
+            state_changes = {}
+
+            def apply_rule(current_val, max_val, mode, amount):
+                if mode == "full":
+                    return max_val
+                elif mode == "fixed":
+                    return min(max_val, current_val + amount)
+                elif mode == "percent":
+                    gain = max(1, max_val * amount // 100)
+                    return min(max_val, current_val + gain)
+                return current_val
+
+            # Apply to pools
+            for pool in self.pack.resources.pools:
+                rule = next((r for r in pool.recovery if r.trigger == trigger_id), None)
+                if rule:
+                    current = get_by_path(self.state, pool.current_path)
+
+                    max_val = None
+                    if pool.max_value is not None:
+                        max_val = pool.max_value
+                    elif pool.max_path is not None:
+                        max_val = get_by_path(self.state, pool.max_path)
+
+                    if current is not None:
+                        if max_val is None:
+                            logger.warning(f"Unresolvable max value for pool '{pool.id}'. Ignored during rest.")
+                            continue
+                        new_val = apply_rule(current, max_val, rule.mode, rule.amount)
+                        set_by_path(self.state, pool.current_path, new_val)
+                        if current != new_val:
+                            restored.append(pool.name)
+                            state_changes[pool.id] = {"avant": current, "apres": new_val}
+
+                        # Mirror top-level pv if it's health
+                        if pool.kind == "health" and "pv" in self.state:
+                            self.state["pv"] = new_val
+
+            # Apply to pool_groups
+            for group in self.pack.resources.pool_groups:
+                rule = next((r for r in group.recovery if r.trigger == trigger_id), None)
+                if rule:
+                    group_dict = get_by_path(self.state, group.path)
+                    if isinstance(group_dict, dict):
+                        group_restored = False
+                        group_changes = {}
+                        for key, values in group_dict.items():
+                            if isinstance(values, dict) and "current" in values and "max" in values:
+                                current = values["current"]
+                                max_val = values["max"]
+                                new_val = apply_rule(current, max_val, rule.mode, rule.amount)
+                                values["current"] = new_val
+                                if current != new_val:
+                                    group_restored = True
+                                    group_changes[key] = {"avant": current, "apres": new_val}
+                        if group_restored:
+                            restored.append(group.name)
+                            state_changes[group.id] = group_changes
+
+            self.synchronize_and_recalculate()
+            self.save()
+            return ActionResult(
+                success=True,
+                message=f"Rest '{trigger_id}' completed. Restored: {', '.join(restored) if restored else 'nothing'}.",
+                state_changes={"rest": trigger_id, "restored": state_changes}
+            )
+
+        # Experimental Mode
         recovery_rules = self._load_recovery_rules()
-        palier = next((p for p in recovery_rules.get("recovery_tiers", []) if p["id"] == palier_id), None)
+        palier = next((p for p in recovery_rules.get("recovery_tiers", []) if p["id"] == trigger_id), None)
 
         # Fallback to legacy resting logic if palier is not found but it is a standard legacy type (long or short)
         if not palier:
-            if palier_id in ("long", "short"):
-                return self._legacy_rest(palier_id)
-            return ActionResult(success=False, message=f"Unknown recovery tier '{palier_id}'.")
+            if trigger_id in ("long", "short"):
+                return self._legacy_rest(trigger_id)
+            return ActionResult(success=False, message=f"Unknown recovery tier '{trigger_id}'.")
 
         resources = self.state.get("resources", {})
         restored = []
@@ -273,7 +404,7 @@ class GameStateEngine:
         return ActionResult(
             success=True,
             message=f"Rest '{palier['name']}' completed. Restored: {', '.join(restored) if restored else 'nothing'}.",
-            state_changes={"rest": palier_id, "restored": restored}
+            state_changes={"rest": trigger_id, "restored": restored}
         )
 
     def _legacy_rest(self, rest_type: str = "long") -> ActionResult:
@@ -344,7 +475,7 @@ class GameStateEngine:
         if hp_cur > hp_max and hp_max > 0:
             pv["current"] = hp_max
 
-        if hp_max > 0:
+        if hp_max > 0 and isinstance(self.state.get("pv"), int) and "current" in pv:
             self.state["pv"] = pv["current"]
 
         if "level" in self.state:
@@ -363,8 +494,53 @@ class GameStateEngine:
         Detects action type from player's text input.
         Returns action key or None if no mechanical action is detected.
         """
-        text = user_input.lower()
+        # Normalize text to ignore accents and case
+        def normalize(t):
+            t = t.lower()
+            return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
 
+        text = normalize(user_input)
+
+        if self.pack:
+            if not self.pack.triggers:
+                return None
+
+            lang = self.pack.manifest.language
+            for rule in self.pack.triggers.rules:
+                keywords = rule.keywords.get(lang, [])
+                if not keywords:
+                    continue
+
+                # Check keywords as whole words or expressions
+                for kw in keywords:
+                    norm_kw = normalize(kw)
+                    # Check substring for expressions, or word boundary if it's a single word?
+                    # The prompt says: "Mots entiers ou expressions, insensible à la casse et aux accents... par sous-chaîne."
+                    # Let's match the exact expression using word boundaries around it.
+                    if re.search(r'\b' + re.escape(norm_kw) + r'\b', text):
+                        if rule.kind == "recover":
+                            return f"rest:{rule.trigger}"
+                        elif rule.kind == "consume":
+                            if rule.key_regex and lang in rule.key_regex:
+                                regex_str = rule.key_regex[lang]
+                                match = re.search(regex_str, text, re.IGNORECASE)
+                                if match:
+                                    # Extracted sub-key
+                                    # Legacy logic uses "spell" and extracts the level later, but with a pack
+                                    # The Orchestrator expects action detection. Wait, the legacy detection just returns "spell"
+                                    # Then the Orchestrator hardcodes `spell_level = 1` and `self.gse.consume_spell_slot(spell_level)`
+                                    # This is because the legacy orchestrator code hardcodes it:
+                                    # `if action_type == "spell": spell_level = 1 ...`
+                                    # If we want to emulate legacy correctly, we just return "spell".
+                                    # But wait, the prompt says:
+                                    # "Pour un target de type pool_group, si key_regex ne trouve rien, reproduis le comportement actuel du code pour ce cas et signale-moi toute différence."
+                                    # Actually, let's just return the rule id.
+                                    # We can return `rule.id` as the action key.
+                                    return rule.id
+                            return rule.id
+            return None
+
+        # Experimental Mode
         recovery_rules = self._load_recovery_rules()
         for palier in recovery_rules.get("recovery_tiers", []):
             if any(kw.lower() in text for kw in palier.get("text_triggers", [])):

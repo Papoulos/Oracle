@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "se_soigner",
+      "kind": "recover",
+      "trigger": "soins",
+      "keywords": {"fr": ["pansement", "soigner", "bandages", "soin"]}
+    },
+    {
+      "id": "dormir",
+      "kind": "recover",
+      "trigger": "repos",
+      "keywords": {"fr": ["dors", "nuit", "sommeil", "repos"]}
+    }
+  ]
+}

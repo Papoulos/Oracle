@@ -1,0 +1,8 @@
+{
+  "family": "PbtA2d6",
+  "tiers": [
+    {"id": "miss", "max": 6, "outcome": "FAILURE", "label": "Échec"},
+    {"id": "weak", "min": 7, "max": 9, "outcome": "PARTIAL_SUCCESS", "label": "Réussite partielle"},
+    {"id": "strong", "min": 10, "outcome": "SUCCESS", "label": "Réussite totale"}
+  ]
+}

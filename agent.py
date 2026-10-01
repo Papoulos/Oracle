@@ -353,7 +353,12 @@ class RPGAgent(BaseAgent):
         self.scenario_extractor_agent = ScenarioExtractorAgent(self.scenario_store, verbose=verbose)
 
         from game_state_engine import GameStateEngine
-        self.gse = GameStateEngine()
+        from systems.loader import load_pack
+        pack = None
+        pack_id = os.getenv("SYSTEM_PACK")
+        if pack_id:
+            pack = load_pack(pack_id)
+        self.gse = GameStateEngine(pack=pack)
 
         # Scenario data & progression
         self.scenario_structure = None
@@ -1251,7 +1256,12 @@ SCENARIO CONTEXT STRUCTURED (Lookup):
         self.scenario_structure = None
 
         from game_state_engine import GameStateEngine
-        self.gse = GameStateEngine()
+        from systems.loader import load_pack
+        pack = None
+        pack_id = os.getenv("SYSTEM_PACK")
+        if pack_id:
+            pack = load_pack(pack_id)
+        self.gse = GameStateEngine(pack=pack)
 
         for file in ["character.json", "Chronicle.json", "progression.json"]:
             path = os.path.join("Memory", file)

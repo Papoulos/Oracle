@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "cast_spell",
+      "kind": "consume",
+      "target": "spell_slots",
+      "amount": 1,
+      "key_regex": {"fr": "niveau\\s*(\\d)", "en": "level\\s*(\\d)"},
+      "keywords": {"fr": ["lance", "incante", "magie", "sort", "spell"], "en": ["cast", "spell", "magic"]}
+    },
+    {
+      "id": "long_rest_request",
+      "kind": "recover",
+      "trigger": "long_rest",
+      "keywords": {"fr": ["repos long", "dors", "camp", "bivouac", "nuit"], "en": ["long rest", "sleep", "camp", "night"]}
+    },
+    {
+      "id": "short_rest_request",
+      "kind": "recover",
+      "trigger": "short_rest",
+      "keywords": {"fr": ["repos court", "pause", "souffle"], "en": ["short rest", "pause", "catch breath"]}
+    }
+  ]
+}
