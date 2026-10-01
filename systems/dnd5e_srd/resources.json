@@ -1,0 +1,29 @@
+{
+  "recovery_triggers": [
+    {"long_rest": "Repos long"},
+    {"short_rest": "Repos court"}
+  ],
+  "pools": [
+    {
+      "id": "hp",
+      "name": "Points de vie",
+      "kind": "health",
+      "min_value": 0,
+      "current_path": "pv.current",
+      "max_path": "pv.max",
+      "recovery": [
+        {"trigger": "long_rest", "mode": "full"}
+      ]
+    }
+  ],
+  "pool_groups": [
+    {
+      "id": "spell_slots",
+      "name": "Emplacements de sorts",
+      "path": "emplacements_de_sorts",
+      "recovery": [
+        {"trigger": "long_rest", "mode": "full"}
+      ]
+    }
+  ]
+}

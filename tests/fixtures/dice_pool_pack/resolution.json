@@ -1,0 +1,8 @@
+{
+  "family": "DicePoolSuccess",
+  "default_pool_size": 1,
+  "dice_faces": 10,
+  "success_threshold": 8,
+  "botch_rule": true,
+  "botch_threshold": 1
+}
