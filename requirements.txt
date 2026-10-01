@@ -15,3 +15,5 @@ filelock==3.31.1
 pytest==9.1.1
 tenacity==9.1.4
 chromadb==1.5.9
+langchain-anthropic
+langchain-google-genai

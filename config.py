@@ -14,6 +14,11 @@ EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL")
 
+# --- API Keys Configuration ---
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
 # --- Agent-Specific Configuration ---
 CHARACTER_MODEL = os.getenv("CHARACTER_MODEL")
 CHARACTER_TEMP = float(os.getenv("CHARACTER_TEMP")) if os.getenv("CHARACTER_TEMP") else None

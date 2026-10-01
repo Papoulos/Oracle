@@ -1,5 +1,7 @@
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+from langchain_anthropic import ChatAnthropic
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
 import config
 import re
 import json
@@ -68,6 +70,8 @@ def extract_json(text: str, expected_type: type = dict):
     return None
 
 def get_llm(model_name, temperature):
+    # Ensure model_name is a string even if config values are None
+    model_name = str(model_name) if model_name is not None else "default-model"
     if config.LLM_PROVIDER == "ollama":
         return ChatOllama(
             model=model_name,
@@ -76,25 +80,43 @@ def get_llm(model_name, temperature):
             num_ctx=16384, # Doubled context window to support RAG + history + long responses
             num_predict=2048  # Output token limit to prevent truncation
         )
+    elif config.LLM_PROVIDER == "anthropic":
+        return ChatAnthropic(
+            model_name=model_name,
+            temperature=temperature,
+            anthropic_api_key=config.ANTHROPIC_API_KEY
+        )
+    elif config.LLM_PROVIDER == "gemini":
+        return ChatGoogleGenerativeAI(
+            model=model_name,
+            temperature=temperature,
+            google_api_key=config.GEMINI_API_KEY
+        )
     else: # openai / llama-cpp
         return ChatOpenAI(
             model=model_name,
             base_url=config.LLM_BASE_URL,
             temperature=temperature,
-            api_key="sk-no-key-required"
+            api_key=config.OPENAI_API_KEY if config.OPENAI_API_KEY else "sk-no-key-required"
         )
 
 def get_embeddings():
+    model_name = str(config.EMBEDDING_MODEL) if config.EMBEDDING_MODEL is not None else "default-embedding-model"
     if config.EMBEDDING_PROVIDER == "ollama":
         return OllamaEmbeddings(
-            model=config.EMBEDDING_MODEL,
+            model=model_name,
             base_url=config.EMBEDDING_BASE_URL
+        )
+    elif config.EMBEDDING_PROVIDER == "gemini":
+        return GoogleGenerativeAIEmbeddings(
+            model=model_name,
+            google_api_key=config.GEMINI_API_KEY
         )
     else: # openai / llama-cpp
         return OpenAIEmbeddings(
-            model=config.EMBEDDING_MODEL,
+            model=model_name,
             base_url=config.EMBEDDING_BASE_URL,
-            api_key="sk-no-key-required"
+            api_key=config.OPENAI_API_KEY if config.OPENAI_API_KEY else "sk-no-key-required"
         )
 
 def get_full_store_text(store, log) -> str:
