@@ -140,6 +140,10 @@ def test_gse_pack_dnd5e_srd(temp_character_file_pack, caplog):
     assert "Points de vie: 10/10" in summary
     assert "Emplacements de sorts level_1: 2/2" in summary
 
+    # Assert specific exact string for D&D 5e SRD
+    expected_summary = "Level: 1 | XP: 0/1000 | Points de vie: 10/10 | Emplacements de sorts level_1: 2/2"
+    assert summary == expected_summary
+
     # Detect action using triggers.json
     assert gse_pack.detect_action_type("Je lance une boule de feu.") == "cast_spell"
     assert gse_pack.detect_action_type("Je fais un repos long.") == "rest:long_rest"
@@ -147,22 +151,28 @@ def test_gse_pack_dnd5e_srd(temp_character_file_pack, caplog):
     # Faux positif test
     assert gse_pack.detect_action_type("Ceci est une relance.") is None
 
-    # Rest test
-    # apply_damage uses self.get_hp() which reads resources.hit_points
-    # We should use our pack-based HP if we want to test pack rest properly.
-    # However, get_hp is legacy.
-    # Let's set it manually in state to match the pack's path "pv.current"
+    # Test Rest (mode pack)
     gse_pack.state["resources"]["hit_points"]["current"] = 5
     gse_pack.state["resources"]["spells_per_day"]["level_1"]["current"] = 1
+    gse_pack.state["pv"] = 5
 
     res = gse_pack.rest("long_rest")
     assert res.success is True
     assert gse_pack.state["resources"]["hit_points"]["current"] == 10
     assert gse_pack.state["resources"]["spells_per_day"]["level_1"]["current"] == 2
+    assert gse_pack.state["pv"] == 10
 
+    # Test short_rest (ne modifie rien pour l'instant dans dnd5e_srd)
     res_short = gse_pack.rest("short_rest")
     assert res_short.success is True
-    # no recovery logic in short_rest for dnd5e in resources.json yet.
+    assert gse_pack.state["resources"]["hit_points"]["current"] == 10
+
+    # Test inconnu
+    res_unknown = gse_pack.rest("inconnu")
+    assert res_unknown.success is False
+    assert "inconnu" in res_unknown.message
+    assert "long_rest" in res_unknown.message
+    assert "short_rest" in res_unknown.message
 
 def test_gse_pack_pbta(tmp_path):
     char_file = tmp_path / "character_pbta.json"
@@ -185,6 +195,15 @@ def test_gse_pack_pbta(tmp_path):
     res = gse.rest("soins")
     assert res.success is True
     assert gse.state["blessures"] == 3
+
+    # Test consume_pool
+    res_consume = gse.consume_pool("stress", amount=1)
+    assert res_consume.success is True
+    assert gse.state["stress"] == 0
+
+    res_consume_fail = gse.consume_pool("stress", amount=1)
+    assert res_consume_fail.success is False
+    assert "Not enough" in res_consume_fail.message
 
     res_repos = gse.rest("repos")
     assert res_repos.success is True
