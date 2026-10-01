@@ -306,8 +306,12 @@ Adjust settings and models individually per agent:
 
 | Variable | Description |
 | :--- | :--- |
-| `LLM_PROVIDER` | `ollama` or `openai` (or any compatible OpenAI endpoints) |
+| `LLM_PROVIDER` | `ollama`, `openai`, `anthropic`, or `gemini` (Google) |
+| `EMBEDDING_PROVIDER` | `ollama`, `openai`, or `gemini` |
 | `LLM_MODEL` | Default fallback model name |
+| `OPENAI_API_KEY` | OpenAI API key (required if using `openai` provider) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (required if using `anthropic` provider) |
+| `GEMINI_API_KEY` | Google Gemini API key (required if using `gemini` provider) |
 | `CHARACTER_MODEL` | Specialized rules model for character creation |
 | `NARRATOR_MODEL` | Creative model for immersive narrative prose |
 | `ORCHESTRATOR_MODEL` | High-reasoning model for MJ state logic |
