@@ -47,42 +47,58 @@ The system uses specialized agents, each with dedicated prompts, LLM configurati
     *   Dynamically scans the Core vector store using rule-agnostic queries (e.g. searching for descriptors, playbooks, aspects, attributes instead of assuming generic D&D classes/races).
     *   Generates a structural creation handbook (`Memory/creation_manual.json`) and a rules-specific schema (`Memory/character_schema.json`) to validate completed character sheets.
 
-### 7. Gameplay Rules Agent (`GameplayRulesAgent`)
-*   **Role**: Extraction of gameplay and recovery rules (one-shot).
-*   **Key Functions**:
-    *   Discovers ruleset-specific recovery steps and builds a dynamic recovery ruleset (`Memory/recovery_rules.json`).
-    *   Identifies common player actions and rules-based resolution mechanics to compile a structured action catalog (`Memory/action_catalog.json`).
-
-### 8. Setup Agent (`ScenarioExtractorAgent`)
+### 7. Setup Agent (`ScenarioExtractorAgent`)
 *   **Role**: Unified scenario compiler.
 *   **Key Functions**:
     *   Processes PDF adventure modules via a 5-pass sequential extraction (Entities, Scene Nodes, Macro-structure, Global Clocks, and Metadata).
     *   Generates the deterministic reference file `Memory/scenario_structure.json`.
 
-### 9. Scene Graph Agent (`SceneGraphAgent`)
+### 8. Scene Graph Agent (`SceneGraphAgent`)
 *   **Role**: Scene mapper.
 *   **Key Functions**:
     *   Extracts logical scene nodes and formats scene links, logical outputs, objectives, and anticipated NPC reactions into `Memory/scenes.json`.
 
 ---
 
-## ⚡ Two-Tiered Action Resolution (RAG-Bypass)
+## 🎲 Deterministic System Packs (Pure Python Resolution)
 
-To optimize ruleset resolution and eliminate repetitive, expensive RAG similarity search operations on identical actions (e.g. attacking, hiding, persuading), RPG Oracle leverages a **two-tiered lookup model**:
+To completely eliminate LLM hallucinations during gameplay, RPG Oracle uses **System Packs** for mechanical resolution. Instead of dynamically extracting mechanics from PDFs using LLMs, the system relies on structured, strictly validated configuration files (JSON/YAML) and a pure Python resolution engine.
 
-```mermaid
-graph TD
-    A[Player Action] --> B{Action Catalog Loaded?}
-    B -->|Yes| C{Action covered by catalog?}
-    C -->|Yes (RAG Bypassed)| D[Apply Catalog-based Mechanical Resolution Prompt]
-    C -->|No| E[RAG Search on Core Rules Codex]
-    B -->|No| E
-    E --> F[Apply Standard Codex-based Mechanical Resolution Prompt]
+### Core Families
+The engine supports multiple generalized rule "Families", configuring how dice are rolled and successes are evaluated. Currently supported families:
+*   **`D20VsTarget`**: Roll a d20 + modifiers against a difficulty target (e.g., D&D 5e). Supports advantage/disadvantage and criticals.
+*   **`PbtA2d6`**: Roll 2d6 + modifiers against defined tiers (e.g., Powered by the Apocalypse: 6-, 7-9, 10+).
+*   **`StepTargetD20`**: Roll a d20 against a target calculated from a difficulty modified by step adjustments (e.g., Cypher System).
+*   **`DicePoolSuccess`**: Roll a pool of dice, count results above a threshold as successes. Supports botches.
+
+### Creating a System Pack
+You can bootstrap a new system pack automatically using the built-in CLI template generator.
+
+```bash
+# Generate a boilerplate for a D20VsTarget game
+python -m systems.new my_d20_game --family D20VsTarget
+
+# Generate a boilerplate for a PbtA game
+python -m systems.new my_pbta_game --family PbtA2d6
 ```
 
-1. **Pre-extracted Catalog**: The `GameplayRulesAgent` scans the Core rules on indexing and extracts common, ruleset-defined player actions and their specific resolution procedures (roll, key attributes, success/failure consequences) into `Memory/action_catalog.json`.
-2. **First Tier (Direct Match)**: When a player declares an action in `ADVENTURE` mode, the Orchestrator first evaluates it against the cached action catalog using a high-efficiency context prompt. If matched, it resolves the mechanical roll and consequences immediately.
-3. **Second Tier (Codex Fallback)**: If the action is not found in the catalog (`"couvert_par_catalogue": false`), the system falls back to a targeted similarity search (RAG) on the complete rules Codex to dynamically extract the resolution method.
+This creates a new folder `systems/<id>/` containing three required files:
+1.  `manifest.yaml`: Metadata (name, language, version).
+2.  `resolution.json`: The specific parameters for your chosen dice family.
+3.  `resources.json`: Definitions of pools (like HP, spells) and recovery triggers.
+
+Fields that require your input are pre-filled with the literal string `"TODO"`.
+
+### Validation & CI
+You must fill out the `"TODO"` fields to complete your pack. To verify that your pack is structurally sound (including advanced checks like missing tiers or overlaps in PbtA), use the validation CLI:
+
+```bash
+# Validate your custom pack
+python -m systems.validate systems/my_d20_game
+
+# Use --strict to treat "TODO" fields and warnings as failures
+python -m systems.validate systems/my_d20_game --strict
+```
 
 ---
 

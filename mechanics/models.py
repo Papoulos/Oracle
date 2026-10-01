@@ -19,6 +19,17 @@ class Manifest(BaseModel):
     family: str
     source_pdfs: list[str]
 
+    @classmethod
+    def template(cls, pack_id: str, family: str) -> "Manifest":
+        return cls(
+            id=pack_id,
+            name="TODO",
+            version="1.0.0",
+            language="fr",
+            family=family,
+            source_pdfs=["TODO"]
+        )
+
 
 # --- Resolution Config Models ---
 
@@ -38,10 +49,32 @@ class D20VsTargetConfig(BaseModel):
     critical_success_on: int = 20
     critical_failure_on: int = 1
 
+    @classmethod
+    def template(cls) -> "D20VsTargetConfig":
+        return cls(
+            family="D20VsTarget",
+            advantage_enabled=True,
+            advantage_dice=2,
+            adv_dis_cancel=True,
+            critical_success_on=20,
+            critical_failure_on=1
+        )
+
 
 class PbtA2d6Config(BaseModel):
     family: Literal["PbtA2d6"]
     tiers: list[TierDef]
+
+    @classmethod
+    def template(cls) -> "PbtA2d6Config":
+        return cls(
+            family="PbtA2d6",
+            tiers=[
+                TierDef(id="miss", max=6, outcome=Outcome.FAILURE, label="TODO"),
+                TierDef(id="weak", min=7, max=9, outcome=Outcome.PARTIAL_SUCCESS, label="TODO"),
+                TierDef(id="strong", min=10, outcome=Outcome.SUCCESS, label="TODO")
+            ]
+        )
 
 
 class StepTargetD20Config(BaseModel):
@@ -52,6 +85,16 @@ class StepTargetD20Config(BaseModel):
     auto_success_at: int
     max_total_reduction: int | None = None
 
+    @classmethod
+    def template(cls) -> "StepTargetD20Config":
+        return cls(
+            family="StepTargetD20",
+            multiplier=3,
+            min_difficulty=0,
+            max_difficulty=10,
+            auto_success_at=0
+        )
+
 
 class DicePoolSuccessConfig(BaseModel):
     family: Literal["DicePoolSuccess"]
@@ -61,6 +104,25 @@ class DicePoolSuccessConfig(BaseModel):
     botch_rule: bool = False
     botch_threshold: int | None = None
 
+    @classmethod
+    def template(cls) -> "DicePoolSuccessConfig":
+        return cls(
+            family="DicePoolSuccess",
+            default_pool_size=1,
+            dice_faces=6,
+            success_threshold=5,
+            botch_rule=True,
+            botch_threshold=1
+        )
+
+
+FAMILIES = {
+    "D20VsTarget": D20VsTargetConfig,
+    "PbtA2d6": PbtA2d6Config,
+    "StepTargetD20": StepTargetD20Config,
+    "DicePoolSuccess": DicePoolSuccessConfig,
+}
+
 
 ResolutionConfig = Annotated[
     Union[D20VsTargetConfig, PbtA2d6Config, StepTargetD20Config, DicePoolSuccessConfig],
@@ -69,6 +131,10 @@ ResolutionConfig = Annotated[
 
 
 # --- Resources Config Models ---
+
+class RecoveryTrigger(BaseModel):
+    id: str
+    name: str
 
 class RecoveryRule(BaseModel):
     trigger: str
@@ -107,9 +173,48 @@ class PoolGroupDef(BaseModel):
 
 
 class ResourcesConfig(BaseModel):
-    recovery_triggers: list[dict[str, str]]
+    recovery_triggers: list[RecoveryTrigger]
     pools: list[PoolDef]
     pool_groups: list[PoolGroupDef]
+
+    def model_post_init(self, __context):
+        # Validate that all triggers in recovery rules exist in recovery_triggers
+        valid_trigger_ids = {t.id for t in self.recovery_triggers}
+
+        for pool in self.pools:
+            for rule in pool.recovery:
+                if rule.trigger not in valid_trigger_ids:
+                    raise ValueError(f"RecoveryRule trigger '{rule.trigger}' in pool '{pool.id}' is not defined in recovery_triggers.")
+
+        for group in self.pool_groups:
+            for rule in group.recovery:
+                if rule.trigger not in valid_trigger_ids:
+                    raise ValueError(f"RecoveryRule trigger '{rule.trigger}' in pool group '{group.id}' is not defined in recovery_triggers.")
+
+    @classmethod
+    def template(cls) -> "ResourcesConfig":
+        return cls(
+            recovery_triggers=[RecoveryTrigger(id="TODO", name="TODO")],
+            pools=[
+                PoolDef(
+                    id="hp",
+                    name="TODO",
+                    kind="health",
+                    min_value=0,
+                    current_path="TODO",
+                    max_path="TODO",
+                    recovery=[RecoveryRule(trigger="TODO", mode="full")]
+                )
+            ],
+            pool_groups=[
+                PoolGroupDef(
+                    id="spells",
+                    name="TODO",
+                    path="TODO",
+                    recovery=[RecoveryRule(trigger="TODO", mode="full")]
+                )
+            ]
+        )
 
 
 # --- Triggers Config Models ---
