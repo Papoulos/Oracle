@@ -328,19 +328,19 @@ class RPGAgent(BaseAgent):
     def __init__(self, verbose=False):
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.ORCHESTRATOR_TEMP, verbose=verbose)
         self.embeddings = get_embeddings()
-        self.client = chromadb.PersistentClient(path=config.CHROMA_PATH)
+        self.client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
 
         # Core Rules collection
         self.core_store = Chroma(
             client=self.client,
-            collection_name=config.CORE_COLLECTION_NAME,
+            collection_name=config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core",
             embedding_function=self.embeddings
         )
 
         # Scenario collection
         self.scenario_store = Chroma(
             client=self.client,
-            collection_name=config.SCENARIO_COLLECTION_NAME,
+            collection_name=config.SCENARIO_COLLECTION_NAME if config.SCENARIO_COLLECTION_NAME else "default_scenario",
             embedding_function=self.embeddings
         )
 

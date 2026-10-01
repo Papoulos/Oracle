@@ -14,17 +14,9 @@ import config
 from scenario_agents import ManualGeneratorAgent, GameplayRulesAgent
 
 def get_embeddings():
-    if config.EMBEDDING_PROVIDER == "ollama":
-        return OllamaEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.EMBEDDING_BASE_URL
-        )
-    else: # openai / llama-cpp
-        return OpenAIEmbeddings(
-            model=config.EMBEDDING_MODEL,
-            base_url=config.EMBEDDING_BASE_URL,
-            api_key="sk-no-key-required"
-        )
+    # Use base_utils get_embeddings
+    from base_utils import get_embeddings as utils_get_embeddings
+    return utils_get_embeddings()
 
 def index_directory(source_dir, collection_name, client, embeddings, index_json=False):
     msg = f"Indexing PDFs and JSONs from {source_dir}" if index_json else f"Indexing PDFs from {source_dir}"
@@ -152,18 +144,20 @@ def main():
 
     if args.reset:
         print("Complete reset requested...")
-        if os.path.exists(config.CHROMA_PATH):
-            print(f"Deleting DB at {config.CHROMA_PATH}...")
-            shutil.rmtree(config.CHROMA_PATH)
+        chroma_path = config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db"
+        if os.path.exists(chroma_path):
+            print(f"Deleting DB at {chroma_path}...")
+            shutil.rmtree(chroma_path)
         if os.path.exists("Memory"):
             print("Deleting Memory folder...")
             shutil.rmtree("Memory")
         os.makedirs("Memory", exist_ok=True)
 
     if args.clear and not args.reset:
-        if os.path.exists(config.CHROMA_PATH):
-            print(f"Deleting existing DB at {config.CHROMA_PATH}...")
-            shutil.rmtree(config.CHROMA_PATH)
+        chroma_path = config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db"
+        if os.path.exists(chroma_path):
+            print(f"Deleting existing DB at {chroma_path}...")
+            shutil.rmtree(chroma_path)
         else:
             print("No database to delete.")
 
@@ -183,19 +177,24 @@ def main():
     verbose = args.log
 
     embeddings = get_embeddings()
-    client = chromadb.PersistentClient(path=config.CHROMA_PATH)
+    client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
 
     # Create directories if needed
-    os.makedirs(config.CORE_DATA_PATH, exist_ok=True)
-    os.makedirs(config.SCENARIO_DATA_PATH, exist_ok=True)
+    core_data_path = config.CORE_DATA_PATH if config.CORE_DATA_PATH else "./data/core"
+    scenario_data_path = config.SCENARIO_DATA_PATH if config.SCENARIO_DATA_PATH else "./data/scenario"
+    core_coll_name = config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core"
+    scenario_coll_name = config.SCENARIO_COLLECTION_NAME if config.SCENARIO_COLLECTION_NAME else "default_scenario"
+
+    os.makedirs(core_data_path, exist_ok=True)
+    os.makedirs(scenario_data_path, exist_ok=True)
 
     # Core indexing
     if index_all or args.core or args.reset:
-        index_directory(config.CORE_DATA_PATH, config.CORE_COLLECTION_NAME, client, embeddings)
+        index_directory(core_data_path, core_coll_name, client, embeddings)
 
     # Scenario indexing
     if index_all or args.scenario or args.reset:
-        index_directory(config.SCENARIO_DATA_PATH, config.SCENARIO_COLLECTION_NAME, client, embeddings, index_json=True)
+        index_directory(scenario_data_path, scenario_coll_name, client, embeddings, index_json=True)
 
     # Character creation manual generation
     if index_all or args.pj or args.reset:
