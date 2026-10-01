@@ -1,0 +1,7 @@
+id: dnd5e_srd
+name: Dungeons & Dragons 5e (SRD)
+version: 1.0.0
+language: fr
+family: D20VsTarget
+source_pdfs:
+  - dnd5e_srd.pdf

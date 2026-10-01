@@ -1,0 +1,7 @@
+{
+  "family": "StepTargetD20",
+  "multiplier": 3,
+  "min_difficulty": 0,
+  "max_difficulty": 10,
+  "auto_success_at": 0
+}
