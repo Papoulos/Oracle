@@ -140,6 +140,7 @@ To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle sep
 *   **Resting Mechanics**: Supports both ruleset-agnostic dynamic resting and standard/legacy fallbacks:
     *   *Dynamic Recovery (Agnostic)*: Loads recovery tiers and triggers from `Memory/recovery_rules.json` and updates stats/resources dynamically based on the rule definition (e.g., full recovery, percentage recovery, flat recovery).
     *   *Standard Fallbacks*: Restores 100% of all resource pools and HP on a legacy `long` rest, and 25% HP on a legacy `short` rest if no custom recovery rules are present.
+*   **System Packs**: Full mechanical decoupling. The Engine now natively supports "System Packs" (`systems/<id>/`) containing `manifest.yaml`, `resolution.json`, `resources.json`, and the new `triggers.json`. Setting `SYSTEM_PACK=id` in your `.env` forces the engine to dynamically pull its health pools, spell groups, resting rules, and localized action keywords directly from the pack. The legacy "experimental mode" (with hardcoded strings and fallback recovery rules) is kept for backwards compatibility but triggers a warning if no pack is loaded.
 *   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
 
 ---
@@ -325,6 +326,7 @@ Adjust settings and models individually per agent:
 | `LLM_PROVIDER` | `ollama`, `openai`, `anthropic`, or `gemini` (Google) |
 | `EMBEDDING_PROVIDER` | `ollama`, `openai`, or `gemini` |
 | `LLM_MODEL` | Default fallback model name |
+| `SYSTEM_PACK` | The id of the system pack to load from the `systems/` directory. If missing or empty, defaults to legacy experimental mode. |
 | `OPENAI_API_KEY` | OpenAI API key (required if using `openai` provider) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (required if using `anthropic` provider) |
 | `GEMINI_API_KEY` | Google Gemini API key (required if using `gemini` provider) |

@@ -1,0 +1,32 @@
+{
+  "recovery_triggers": [
+    {"soins": "Soins basiques"},
+    {"repos": "Nuit de sommeil"}
+  ],
+  "pools": [
+    {
+      "id": "blessures",
+      "name": "Jauge de Blessures",
+      "kind": "health",
+      "min_value": 0,
+      "max_value": 5,
+      "current_path": "blessures",
+      "recovery": [
+        {"trigger": "soins", "mode": "fixed", "amount": 1},
+        {"trigger": "repos", "mode": "full"}
+      ]
+    },
+    {
+      "id": "stress",
+      "name": "Jauge de Stress",
+      "kind": "track",
+      "min_value": 0,
+      "max_value": 3,
+      "current_path": "stress",
+      "recovery": [
+        {"trigger": "repos", "mode": "full"}
+      ]
+    }
+  ],
+  "pool_groups": []
+}

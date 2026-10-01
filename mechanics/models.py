@@ -217,6 +217,30 @@ class ResourcesConfig(BaseModel):
         )
 
 
+# --- Triggers Config Models ---
+
+class TriggerRule(BaseModel):
+    id: str
+    kind: Literal["consume", "recover"]
+    target: str | None = None
+    trigger: str | None = None
+    amount: int | None = None
+    key_regex: dict[str, str] | None = None
+    key_default: str | None = None
+    keywords: dict[str, list[str]]
+
+    def model_post_init(self, __context):
+        if self.kind == "consume" and self.target is None:
+            raise ValueError("target must be provided when kind is 'consume'")
+        if self.kind == "recover" and self.trigger is None:
+            raise ValueError("trigger must be provided when kind is 'recover'")
+
+
+class TriggersConfig(BaseModel):
+    version: int
+    rules: list[TriggerRule]
+
+
 # --- Resolution Request/Result ---
 
 class ResolutionRequest(BaseModel):

@@ -5,7 +5,7 @@ from systems.validate import validate_pack
 FIXTURES_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 def test_validate_valid_pbta():
-    pack_path = os.path.join(FIXTURES_DIR, "pbta_pack")
+    pack_path = os.path.join(FIXTURES_DIR, "pbta_minimal")
     issues = validate_pack(pack_path)
 
     assert len(issues) == 0, f"Expected no issues, got: {issues}"

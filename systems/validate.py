@@ -4,9 +4,10 @@ import yaml
 import sys
 import argparse
 from typing import Literal, Any
+import re
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
-from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, PbtA2d6Config
+from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, PbtA2d6Config, TriggersConfig
 
 
 class Issue(BaseModel):
@@ -108,6 +109,7 @@ def validate_pack(pack_path: str) -> list[Issue]:
              issues.append(Issue(severity="error", file="resolution.json", path=resolution_path, message=str(e)))
 
     # 3. Resources Config
+    resources = None
     if not os.path.isfile(resources_path):
         issues.append(Issue(severity="error", file="resources.json", path=resources_path, message="Missing resources.json"))
     else:
@@ -123,6 +125,67 @@ def validate_pack(pack_path: str) -> list[Issue]:
             issues.append(Issue(severity="error", file="resources.json", path=resources_path, message=f"Invalid JSON: {e}"))
         except Exception as e:
             issues.append(Issue(severity="error", file="resources.json", path=resources_path, message=str(e)))
+
+    # 4. Triggers Config (Optional)
+    triggers_path = os.path.join(pack_path, "triggers.json")
+    if os.path.isfile(triggers_path):
+        try:
+            with open(triggers_path, "r", encoding="utf-8") as f:
+                triggers_data = json.load(f)
+
+            triggers = TriggersConfig.model_validate(triggers_data)
+
+            # Additional checks for triggers
+            if resources:
+                pool_ids = {p.id for p in resources.pools}
+                group_ids = {g.id for g in resources.pool_groups}
+                all_targets = pool_ids.union(group_ids)
+
+                recovery_triggers = set()
+                for r in resources.recovery_triggers:
+                    recovery_triggers.update(r.keys())
+
+                rule_ids = set()
+                for rule in triggers.rules:
+                    # check unique id
+                    if rule.id in rule_ids:
+                        issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Duplicate rule id: {rule.id}"))
+                    rule_ids.add(rule.id)
+
+                    # check target
+                    if rule.kind == "consume" and rule.target not in all_targets:
+                        issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Target '{rule.target}' not found in resources.json pools or pool_groups"))
+
+                    # check trigger
+                    if rule.kind == "recover" and rule.trigger not in recovery_triggers:
+                         issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Trigger '{rule.trigger}' not found in resources.json recovery_triggers"))
+
+                    # check regex compilable
+                    if rule.key_regex:
+                        for lang, regex_str in rule.key_regex.items():
+                            try:
+                                re.compile(regex_str)
+                            except re.error as e:
+                                issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}.key_regex.{lang}", message=f"Invalid regex: {e}"))
+
+                    # check keywords not empty
+                    for lang, words in rule.keywords.items():
+                        if not words:
+                            issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}.keywords.{lang}", message="Keywords list cannot be empty"))
+
+                    # check if manifest language is supported in keywords
+                    if 'manifest' in locals() and manifest:
+                        if manifest.language not in rule.keywords:
+                            issues.append(Issue(severity="warning", file="triggers.json", path=f"rules.{rule.id}", message=f"Rule does not have keywords for manifest language '{manifest.language}'"))
+
+
+        except ValidationError as e:
+            issues.append(Issue(severity="error", file="triggers.json", path=triggers_path, message=str(e)))
+        except json.JSONDecodeError as e:
+            issues.append(Issue(severity="error", file="triggers.json", path=triggers_path, message=f"Invalid JSON: {e}"))
+        except Exception as e:
+            issues.append(Issue(severity="error", file="triggers.json", path=triggers_path, message=str(e)))
+
 
     return issues
 

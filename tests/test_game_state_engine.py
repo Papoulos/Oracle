@@ -23,6 +23,27 @@ def temp_character_file(tmp_path):
     char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     return str(char_file)
 
+@pytest.fixture
+def temp_character_file_pack(tmp_path):
+    char_file = tmp_path / "character.json"
+    data = {
+        "name": "Test Hero",
+        "level": 1,
+        "xp": 0,
+        "next_level_xp": 1000,
+        "resources": {
+            "hit_points": {
+                "current": 10,
+                "max": 10
+            },
+            "spells_per_day": {
+                "level_1": {"current": 2, "max": 2}
+            }
+        }
+    }
+    char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return str(char_file)
+
 def test_gse_load_save(temp_character_file):
     gse = GameStateEngine(temp_character_file)
     assert gse.state["name"] == "Test Hero"
@@ -99,3 +120,77 @@ def test_gse_apply_orchestrator_decision(temp_character_file):
     res = gse.apply_orchestrator_decision({"action": "xp", "amount": 100})
     assert gse.state["xp"] == 100
     assert res.success is True
+
+from systems.loader import load_pack
+
+def test_gse_pack_dnd5e_srd(temp_character_file_pack, caplog):
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        gse = GameStateEngine(temp_character_file_pack)
+        assert "mode expérimental, aucun system pack chargé" in caplog.text
+
+    pack = load_pack("dnd5e_srd")
+
+    with caplog.at_level(logging.INFO):
+        gse_pack = GameStateEngine(temp_character_file_pack, pack=pack)
+        assert "System pack loaded: dnd5e_srd" in caplog.text
+
+    summary = gse_pack.get_state_summary()
+    assert "Points de vie: 10/10" in summary
+    assert "Emplacements de sorts level_1: 2/2" in summary
+
+    # Detect action using triggers.json
+    assert gse_pack.detect_action_type("Je lance une boule de feu.") == "cast_spell"
+    assert gse_pack.detect_action_type("Je fais un repos long.") == "rest:long_rest"
+
+    # Faux positif test
+    assert gse_pack.detect_action_type("Ceci est une relance.") is None
+
+    # Rest test
+    # apply_damage uses self.get_hp() which reads resources.hit_points
+    # We should use our pack-based HP if we want to test pack rest properly.
+    # However, get_hp is legacy.
+    # Let's set it manually in state to match the pack's path "pv.current"
+    gse_pack.state["resources"]["hit_points"]["current"] = 5
+    gse_pack.state["resources"]["spells_per_day"]["level_1"]["current"] = 1
+
+    res = gse_pack.rest("long_rest")
+    assert res.success is True
+    assert gse_pack.state["resources"]["hit_points"]["current"] == 10
+    assert gse_pack.state["resources"]["spells_per_day"]["level_1"]["current"] == 2
+
+    res_short = gse_pack.rest("short_rest")
+    assert res_short.success is True
+    # no recovery logic in short_rest for dnd5e in resources.json yet.
+
+def test_gse_pack_pbta(tmp_path):
+    char_file = tmp_path / "character_pbta.json"
+    data = {
+        "blessures": 2,
+        "stress": 1
+    }
+    char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    pack = load_pack("pbta_minimal", base_dir="tests/fixtures")
+    gse = GameStateEngine(str(char_file), pack=pack)
+
+    summary = gse.get_state_summary()
+    assert "Jauge de Blessures: 2/5" in summary
+    assert "Jauge de Stress: 1/3" in summary
+
+    assert gse.detect_action_type("Je prends le temps de dormir.") is None # dormir n'y est pas, seulement dors
+    assert gse.detect_action_type("Je dors.") == "rest:repos"
+
+    res = gse.rest("soins")
+    assert res.success is True
+    assert gse.state["blessures"] == 3
+
+    res_repos = gse.rest("repos")
+    assert res_repos.success is True
+    assert gse.state["blessures"] == 5
+    assert gse.state["stress"] == 3
+
+    # Invalid trigger
+    res_invalid = gse.rest("long_rest")
+    assert res_invalid.success is False
