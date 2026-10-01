@@ -1,7 +1,7 @@
 {
   "recovery_triggers": [
-    {"soins": "Soins basiques"},
-    {"repos": "Nuit de sommeil"}
+    {"id": "soins", "name": "Soins basiques"},
+    {"id": "repos", "name": "Nuit de sommeil"}
   ],
   "pools": [
     {

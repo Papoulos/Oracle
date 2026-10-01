@@ -141,9 +141,7 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 group_ids = {g.id for g in resources.pool_groups}
                 all_targets = pool_ids.union(group_ids)
 
-                recovery_triggers = set()
-                for r in resources.recovery_triggers:
-                    recovery_triggers.update(r.keys())
+                recovery_triggers = {t.id for t in resources.recovery_triggers}
 
                 rule_ids = set()
                 for rule in triggers.rules:

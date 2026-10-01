@@ -18,6 +18,16 @@ class ActionResult:
     blocked_reason: Optional[str] = None  # if success=False
 
 
+@dataclass
+class DetectedAction:
+    rule_id: str
+    kind: str
+    target: Optional[str] = None
+    key: Optional[str] = None
+    amount: int = 1
+    trigger: Optional[str] = None
+
+
 class GameStateEngine:
     """
     Central Game State Engine — Pure Python, zero LLM.
@@ -90,10 +100,12 @@ class GameStateEngine:
 
         hp_cur, hp_max = self.get_hp()
         lines = [
-            f"HP: {hp_cur}/{hp_max}",
             f"Level: {self.state.get('level', '?')}",
             f"XP: {self.state.get('xp', 0)}/{self.state.get('next_level_xp', self.state.get('xp_prochain_niveau', '?'))}",
         ]
+
+        if not self.pack:
+            lines.insert(0, f"HP: {hp_cur}/{hp_max}")
 
         if self.pack:
             # Dynamically build summary from pack resources
@@ -117,12 +129,13 @@ class GameStateEngine:
             for group in self.pack.resources.pool_groups:
                 group_dict = get_by_path(self.state, group.path)
                 if isinstance(group_dict, dict):
-                    # Sort keys numerically if they are all integers, else insertion order
                     keys = list(group_dict.keys())
-                    try:
-                        sorted_keys = sorted(keys, key=int)
-                    except ValueError:
-                        sorted_keys = keys
+
+                    def natural_sort_key(s):
+                        import re
+                        return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+
+                    sorted_keys = sorted(keys, key=natural_sort_key)
 
                     for key in sorted_keys:
                         values = group_dict[key]
@@ -221,6 +234,54 @@ class GameStateEngine:
             state_changes={"spells_per_day": {slot_key: {"avant": current, "apres": current - 1}}}
         )
 
+    def consume_pool(self, target_id: str, key: Optional[str] = None, amount: int = 1) -> ActionResult:
+        """Consumes from a pool or pool_group configured in the system pack."""
+        if not self.pack:
+            return ActionResult(success=False, message="consume_pool requires a system pack.", blocked_reason="no_pack")
+
+        pool = next((p for p in self.pack.resources.pools if p.id == target_id), None)
+        group = next((g for g in self.pack.resources.pool_groups if g.id == target_id), None)
+
+        if not pool and not group:
+            return ActionResult(success=False, message=f"Target '{target_id}' not found in resources.", blocked_reason="unknown_target")
+
+        if pool:
+            current = get_by_path(self.state, pool.current_path)
+            if current is None or current < amount:
+                return ActionResult(success=False, message=f"Not enough {pool.name}.", blocked_reason="insufficient_resources")
+
+            new_val = current - amount
+            set_by_path(self.state, pool.current_path, new_val)
+            self.save()
+            return ActionResult(
+                success=True,
+                message=f"Consumed {amount} from {pool.name} ({new_val} remaining).",
+                state_changes={pool.id: {"avant": current, "apres": new_val}}
+            )
+
+        if group:
+            if not key:
+                return ActionResult(success=False, message=f"Missing key for pool_group '{group.name}'.", blocked_reason="missing_key")
+
+            group_dict = get_by_path(self.state, group.path)
+            if not group_dict or key not in group_dict:
+                return ActionResult(success=False, message=f"Pool '{key}' not found in '{group.name}'.", blocked_reason="unknown_pool")
+
+            current = group_dict[key].get("current")
+            if current is None or current < amount:
+                return ActionResult(success=False, message=f"Not enough in {group.name} [{key}].", blocked_reason="insufficient_resources")
+
+            new_val = current - amount
+            group_dict[key]["current"] = new_val
+            # On resauvegarde le dictionnaire complet bien que ce soit par référence
+            set_by_path(self.state, group.path, group_dict)
+            self.save()
+            return ActionResult(
+                success=True,
+                message=f"Consumed {amount} from {group.name} [{key}] ({new_val} remaining).",
+                state_changes={group.id: {key: {"avant": current, "apres": new_val}}}
+            )
+
     def consume_resource(self, resource_key: str, amount: int = 1) -> ActionResult:
         """Consumes a generic resource."""
         check = self.can_use_resource(resource_key)
@@ -267,10 +328,10 @@ class GameStateEngine:
 
             # Validate trigger_id
             triggers = self.pack.resources.recovery_triggers
-            trigger_found = any(trigger_id in t for t in triggers)
+            trigger_found = any(t.id == trigger_id for t in triggers)
 
             if not trigger_found:
-                valid_triggers = [list(t.keys())[0] for t in triggers]
+                valid_triggers = [t.id for t in triggers]
                 return ActionResult(success=False, message=f"Unknown recovery trigger '{trigger_id}'. Valid triggers are: {', '.join(valid_triggers)}.")
 
             restored = []
@@ -489,58 +550,64 @@ class GameStateEngine:
 
     # ── Automatic Detection from Text ─────────────────
 
-    def detect_action_type(self, user_input: str) -> Optional[str]:
+    def detect_action(self, user_input: str) -> Optional[DetectedAction]:
         """
-        Detects action type from player's text input.
-        Returns action key or None if no mechanical action is detected.
+        Detects an action based on triggers and returns a DetectedAction dataclass
+        containing the rule id, extracted keys, and target.
         """
-        # Normalize text to ignore accents and case
         def normalize(t):
             t = t.lower()
             return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
 
         text = normalize(user_input)
 
+        if not self.pack or not self.pack.triggers:
+            return None
+
+        lang = self.pack.manifest.language
+        for rule in self.pack.triggers.rules:
+            keywords = rule.keywords.get(lang, [])
+            if not keywords:
+                continue
+
+            for kw in keywords:
+                norm_kw = normalize(kw)
+                if re.search(r'\b' + re.escape(norm_kw) + r'\b', text):
+                    extracted_key = None
+                    if rule.kind == "consume" and rule.key_regex and lang in rule.key_regex:
+                        match = re.search(rule.key_regex[lang], text, re.IGNORECASE)
+                        if match and match.groups():
+                            extracted_key = match.group(1)
+
+                    return DetectedAction(
+                        rule_id=rule.id,
+                        kind=rule.kind,
+                        target=getattr(rule, "target", None),
+                        key=extracted_key,
+                        amount=getattr(rule, "amount", 1),
+                        trigger=getattr(rule, "trigger", None)
+                    )
+        return None
+
+    def detect_action_type(self, user_input: str) -> Optional[str]:
+        """
+        Detects action type from player's text input.
+        Returns action key or None if no mechanical action is detected.
+        """
         if self.pack:
-            if not self.pack.triggers:
-                return None
-
-            lang = self.pack.manifest.language
-            for rule in self.pack.triggers.rules:
-                keywords = rule.keywords.get(lang, [])
-                if not keywords:
-                    continue
-
-                # Check keywords as whole words or expressions
-                for kw in keywords:
-                    norm_kw = normalize(kw)
-                    # Check substring for expressions, or word boundary if it's a single word?
-                    # The prompt says: "Mots entiers ou expressions, insensible à la casse et aux accents... par sous-chaîne."
-                    # Let's match the exact expression using word boundaries around it.
-                    if re.search(r'\b' + re.escape(norm_kw) + r'\b', text):
-                        if rule.kind == "recover":
-                            return f"rest:{rule.trigger}"
-                        elif rule.kind == "consume":
-                            if rule.key_regex and lang in rule.key_regex:
-                                regex_str = rule.key_regex[lang]
-                                match = re.search(regex_str, text, re.IGNORECASE)
-                                if match:
-                                    # Extracted sub-key
-                                    # Legacy logic uses "spell" and extracts the level later, but with a pack
-                                    # The Orchestrator expects action detection. Wait, the legacy detection just returns "spell"
-                                    # Then the Orchestrator hardcodes `spell_level = 1` and `self.gse.consume_spell_slot(spell_level)`
-                                    # This is because the legacy orchestrator code hardcodes it:
-                                    # `if action_type == "spell": spell_level = 1 ...`
-                                    # If we want to emulate legacy correctly, we just return "spell".
-                                    # But wait, the prompt says:
-                                    # "Pour un target de type pool_group, si key_regex ne trouve rien, reproduis le comportement actuel du code pour ce cas et signale-moi toute différence."
-                                    # Actually, let's just return the rule id.
-                                    # We can return `rule.id` as the action key.
-                                    return rule.id
-                            return rule.id
+            action = self.detect_action(user_input)
+            if action:
+                if action.kind == "recover":
+                    return f"rest:{action.trigger}"
+                return action.rule_id
             return None
 
         # Experimental Mode
+        def normalize(t):
+            t = t.lower()
+            return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
+
+        text = normalize(user_input)
         recovery_rules = self._load_recovery_rules()
         for palier in recovery_rules.get("recovery_tiers", []):
             if any(kw.lower() in text for kw in palier.get("text_triggers", [])):
