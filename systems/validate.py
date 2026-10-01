@@ -16,6 +16,19 @@ class Issue(BaseModel):
     message: str
 
 
+def check_for_todos(data: Any, file_name: str, path: str, issues: list[Issue]):
+    """Recursively checks for the literal string 'TODO' in the data."""
+    if isinstance(data, str):
+        if data == "TODO":
+            issues.append(Issue(severity="warning", file=file_name, path=path, message="Field contains 'TODO'"))
+    elif isinstance(data, dict):
+        for key, value in data.items():
+            check_for_todos(value, file_name, f"{path}.{key}" if path else key, issues)
+    elif isinstance(data, list):
+        for i, item in enumerate(data):
+            check_for_todos(item, file_name, f"{path}[{i}]", issues)
+
+
 def validate_pack(pack_path: str) -> list[Issue]:
     issues: list[Issue] = []
 
@@ -36,6 +49,7 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 manifest_data = yaml.safe_load(f)
 
             manifest = Manifest.model_validate(manifest_data)
+            check_for_todos(manifest_data, "manifest.yaml", "", issues)
         except Exception as e:
             issues.append(Issue(severity="error", file="manifest.yaml", path=manifest_path, message=str(e)))
 
@@ -49,6 +63,7 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 resolution_data = json.load(f)
 
             resolution = config_adapter.validate_python(resolution_data)
+            check_for_todos(resolution_data, "resolution.json", "", issues)
 
             # Additional logic checks
             if isinstance(resolution, PbtA2d6Config):
@@ -101,6 +116,7 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 resources_data = json.load(f)
 
             resources = ResourcesConfig.model_validate(resources_data)
+            check_for_todos(resources_data, "resources.json", "", issues)
         except ValidationError as e:
             issues.append(Issue(severity="error", file="resources.json", path=resources_path, message=str(e)))
         except json.JSONDecodeError as e:

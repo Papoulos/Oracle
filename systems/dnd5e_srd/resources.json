@@ -1,7 +1,7 @@
 {
   "recovery_triggers": [
-    {"long_rest": "Repos long"},
-    {"short_rest": "Repos court"}
+    {"id": "long_rest", "name": "Repos long"},
+    {"id": "short_rest", "name": "Repos court"}
   ],
   "pools": [
     {
