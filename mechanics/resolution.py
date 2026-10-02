@@ -59,12 +59,14 @@ def _resolve_d20_vs_target(
     total = best_roll + request.modifier + request.roll_bonus
     flags = []
 
-    target = request.difficulty if request.difficulty is not None else 10 # Default to 10 if none
+    if request.difficulty is None:
+        raise ValueError("Difficulty is required for D20VsTarget resolution.")
+    target = request.difficulty
 
-    if best_roll >= config.critical_success_on:
+    if request.critical_applies and best_roll >= config.critical_success_on:
         flags.append("critical_success")
         outcome = Outcome.CRITICAL_SUCCESS
-    elif best_roll <= config.critical_failure_on:
+    elif request.critical_applies and best_roll <= config.critical_failure_on:
         flags.append("critical_failure")
         outcome = Outcome.CRITICAL_FAILURE
     else:
@@ -73,7 +75,7 @@ def _resolve_d20_vs_target(
         else:
             outcome = Outcome.FAILURE
 
-    margin = total - target if request.difficulty is not None else None
+    margin = total - target
 
     return ResolutionResult(
         rolled=rolled,
@@ -121,7 +123,9 @@ def _resolve_step_target_d20(
     request: ResolutionRequest,
     rng: random.Random
 ) -> ResolutionResult:
-    difficulty_initial = request.difficulty if request.difficulty is not None else config.max_difficulty
+    if request.difficulty is None:
+        raise ValueError("Difficulty is required for StepTargetD20 resolution.")
+    difficulty_initial = request.difficulty
 
     total_reduction = sum(request.step_adjustments.values())
     if config.max_total_reduction is not None:
@@ -168,8 +172,7 @@ def _resolve_dice_pool_success(
     request: ResolutionRequest,
     rng: random.Random
 ) -> ResolutionResult:
-    # Use modifier as pool size, fallback to config.default_pool_size
-    pool_size = request.modifier if request.modifier > 0 else config.default_pool_size
+    pool_size = request.pool_size if request.pool_size is not None else config.default_pool_size
 
     rolled = [rng.randint(1, config.dice_faces) for _ in range(pool_size)]
 
@@ -177,13 +180,25 @@ def _resolve_dice_pool_success(
     botches = sum(1 for r in rolled if r <= config.botch_threshold) if config.botch_rule and config.botch_threshold else 0
 
     flags = []
-    if config.botch_rule and botches > successes:
-        outcome = Outcome.CRITICAL_FAILURE
-        flags.append("botch")
-    elif successes > 0:
-        outcome = Outcome.SUCCESS
+    if config.botch_rule:
+        botch_triggered = False
+        if config.botch_condition == "more_botches_than_successes":
+            botch_triggered = botches > successes
+        elif config.botch_condition == "any_botch":
+            botch_triggered = botches > 0
+
+        if botch_triggered:
+            outcome = Outcome.CRITICAL_FAILURE
+            flags.append("botch")
+        elif successes > 0:
+            outcome = Outcome.SUCCESS
+        else:
+            outcome = Outcome.FAILURE
     else:
-        outcome = Outcome.FAILURE
+        if successes > 0:
+            outcome = Outcome.SUCCESS
+        else:
+            outcome = Outcome.FAILURE
 
     # Difficulty could represent required successes
     required_successes = request.difficulty if request.difficulty is not None else 1

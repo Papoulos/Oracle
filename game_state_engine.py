@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 from systems.loader import SystemPack
-from base_utils import get_by_path, set_by_path
+from mechanics.paths import get_by_path, set_by_path
 
 logger = logging.getLogger(__name__)
 
@@ -579,11 +579,15 @@ class GameStateEngine:
                         if match and match.groups():
                             extracted_key = match.group(1)
 
+                    final_key = extracted_key or rule.key_default
+                    if final_key is not None and rule.key_template is not None:
+                        final_key = rule.key_template.format(key=final_key)
+
                     return DetectedAction(
                         rule_id=rule.id,
                         kind=rule.kind,
                         target=getattr(rule, "target", None),
-                        key=extracted_key,
+                        key=final_key,
                         amount=getattr(rule, "amount", 1),
                         trigger=getattr(rule, "trigger", None)
                     )

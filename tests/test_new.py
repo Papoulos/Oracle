@@ -25,7 +25,7 @@ def test_new_pack_generation(family, temp_systems_dir, monkeypatch):
     # Actually `systems.new` hardcodes `os.path.join("systems", pack_id)`.
     # Let's mock `os.path.join` or run it from a patched CWD.
 
-    pack_id = f"test_pack_{family}"
+    pack_id = f"test_pack_{family.lower()}"
 
     # We patch the CWD so that 'systems/' is created inside the temp dir
     monkeypatch.chdir(temp_systems_dir)
@@ -90,3 +90,13 @@ def test_new_pack_refuses_overwrite(temp_systems_dir, monkeypatch):
     result2 = subprocess.run(["python3", "-m", "systems.new", pack_id, "--family", family], capture_output=True, text=True, env=env)
     assert result2.returncode == 1
     assert "existe déjà" in result2.stderr
+
+def test_new_pack_invalid_id(temp_systems_dir, monkeypatch):
+    monkeypatch.chdir(temp_systems_dir)
+    env = os.environ.copy()
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env["PYTHONPATH"] = f"{project_root}:{env.get('PYTHONPATH', '')}"
+
+    result = subprocess.run(["python3", "-m", "systems.new", "Invalid-Name!", "--family", "D20VsTarget"], capture_output=True, text=True, env=env)
+    assert result.returncode == 1
+    assert "invalide" in result.stderr

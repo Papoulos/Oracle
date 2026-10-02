@@ -3,7 +3,6 @@ import json
 import yaml
 from dataclasses import dataclass
 from typing import Optional
-from dotenv import load_dotenv
 
 from pydantic import TypeAdapter
 from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, TriggersConfig
@@ -26,7 +25,9 @@ class SystemPack:
     triggers: Optional[TriggersConfig]
 
 
-def load_pack(pack_id: str, base_dir: str = "systems") -> SystemPack:
+def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
+    if base_dir is None:
+        base_dir = os.path.join(os.path.dirname(__file__), "..", "systems")
     """
     Loads a System Pack from the given base directory.
     Validates it first, raises PackInvalidError if validation fails.

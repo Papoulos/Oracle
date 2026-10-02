@@ -45,7 +45,6 @@ class D20VsTargetConfig(BaseModel):
     family: Literal["D20VsTarget"]
     advantage_enabled: bool = False
     advantage_dice: int = 2
-    adv_dis_cancel: bool = True
     critical_success_on: int = 20
     critical_failure_on: int = 1
 
@@ -55,7 +54,6 @@ class D20VsTargetConfig(BaseModel):
             family="D20VsTarget",
             advantage_enabled=True,
             advantage_dice=2,
-            adv_dis_cancel=True,
             critical_success_on=20,
             critical_failure_on=1
         )
@@ -103,6 +101,7 @@ class DicePoolSuccessConfig(BaseModel):
     success_threshold: int
     botch_rule: bool = False
     botch_threshold: int | None = None
+    botch_condition: Literal["more_botches_than_successes", "any_botch"] = "more_botches_than_successes"
 
     @classmethod
     def template(cls) -> "DicePoolSuccessConfig":
@@ -112,7 +111,8 @@ class DicePoolSuccessConfig(BaseModel):
             dice_faces=6,
             success_threshold=5,
             botch_rule=True,
-            botch_threshold=1
+            botch_threshold=1,
+            botch_condition="more_botches_than_successes"
         )
 
 
@@ -227,6 +227,7 @@ class TriggerRule(BaseModel):
     amount: int | None = None
     key_regex: dict[str, str] | None = None
     key_default: str | None = None
+    key_template: str | None = None
     keywords: dict[str, list[str]]
 
     def model_post_init(self, __context):
@@ -234,6 +235,8 @@ class TriggerRule(BaseModel):
             raise ValueError("target must be provided when kind is 'consume'")
         if self.kind == "recover" and self.trigger is None:
             raise ValueError("trigger must be provided when kind is 'recover'")
+        if self.key_template is not None and "{key}" not in self.key_template:
+            raise ValueError("key_template must contain '{key}' if provided")
 
 
 class TriggersConfig(BaseModel):
@@ -249,6 +252,8 @@ class ResolutionRequest(BaseModel):
     advantage: Literal["none", "advantage", "disadvantage"] = "none"
     step_adjustments: dict[str, int] = Field(default_factory=dict)
     roll_bonus: int = 0
+    critical_applies: bool = True
+    pool_size: int | None = None
 
 
 class ResolutionResult(BaseModel):
