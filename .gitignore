@@ -11,3 +11,6 @@ data/intrigue/*.pdf
 memory.json
 indexer_debug.log
 streamlit.log
+
+data/core/*.pdf
+data/scenario/*.pdf
