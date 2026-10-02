@@ -9,7 +9,7 @@ from mechanics.models import FAMILIES, Manifest, ResourcesConfig
 
 
 def generate_new_pack(pack_id: str, family_name: str) -> None:
-    if not re.match(r"^[a-z0-9_]+$", pack_id):
+    if not re.fullmatch(r"[a-z0-9_]+", pack_id):
         print(f"Erreur : pack_id invalide '{pack_id}'. Il doit respecter l'expression régulière ^[a-z0-9_]+$", file=sys.stderr)
         sys.exit(1)
 

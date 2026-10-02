@@ -14,3 +14,9 @@ def test_load_pack_base_dir(monkeypatch, tmp_path):
 def test_load_pack_not_found():
     with pytest.raises(PackNotFoundError):
         load_pack("does_not_exist")
+
+def test_load_pack_invalid_id():
+    with pytest.raises(ValueError, match="Invalid pack_id"):
+        load_pack("abc\n")
+    with pytest.raises(ValueError, match="Invalid pack_id"):
+        load_pack("../x")

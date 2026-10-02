@@ -261,7 +261,7 @@ class GameStateEngine:
 
         if group:
             if not key:
-                return ActionResult(success=False, message=f"Missing key for pool_group '{group.name}'.", blocked_reason="missing_key")
+                return ActionResult(success=False, message=f"Missing key for pool_group '{group.name}' (e.g. Please specify the level).", blocked_reason="missing_key")
 
             group_dict = get_by_path(self.state, group.path)
             if not group_dict or key not in group_dict:

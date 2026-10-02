@@ -7,19 +7,20 @@
       "target": "spell_slots",
       "amount": 1,
       "key_regex": {"fr": "niveau\\s*(\\d)", "en": "level\\s*(\\d)"},
-      "keywords": {"fr": ["je lance", "lance un sort", "incante"], "en": ["cast", "spell", "magic"]}
+      "key_template": "level_{key}",
+      "keywords": {"fr": ["je lance", "lance un sort", "incante"], "en": ["cast a spell", "I cast"]}
     },
     {
       "id": "long_rest_request",
       "kind": "recover",
       "trigger": "long_rest",
-      "keywords": {"fr": ["repos long", "je dors", "je campe"], "en": ["long rest", "sleep", "camp", "night"]}
+      "keywords": {"fr": ["repos long", "je dors", "je campe"], "en": ["long rest", "I sleep", "go to sleep"]}
     },
     {
       "id": "short_rest_request",
       "kind": "recover",
       "trigger": "short_rest",
-      "keywords": {"fr": ["repos court", "souffle"], "en": ["short rest", "pause", "catch breath"]}
+      "keywords": {"fr": ["repos court", "reprends mon souffle"], "en": ["short rest", "take a breather"]}
     }
   ]
 }

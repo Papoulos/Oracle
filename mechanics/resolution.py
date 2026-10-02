@@ -186,6 +186,8 @@ def _resolve_dice_pool_success(
             botch_triggered = botches > successes
         elif config.botch_condition == "any_botch":
             botch_triggered = botches > 0
+        elif config.botch_condition == "no_success_and_botch":
+            botch_triggered = successes == 0 and botches > 0
 
         if botch_triggered:
             outcome = Outcome.CRITICAL_FAILURE

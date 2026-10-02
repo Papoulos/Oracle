@@ -233,6 +233,7 @@ def test_trigger_false_positives():
     assert gse.detect_action_type("Il sort de la pièce") is None
     assert gse.detect_action_type("la nuit tombe") is None
     assert gse.detect_action_type("le camp ennemi") is None
+    assert gse.detect_action_type("le dragon crache son souffle") is None
 
 def test_detect_action_with_key_template(tmp_path, monkeypatch):
     import json
@@ -253,13 +254,8 @@ def test_detect_action_with_key_template(tmp_path, monkeypatch):
     }
     char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
 
-    # Load normal pack and inject our custom rule
+    # Load normal pack without modification
     pack = load_pack("dnd5e_srd")
-
-    # Let's add a key_template to cast_spell manually
-    for rule in pack.triggers.rules:
-        if rule.id == "cast_spell":
-            rule.key_template = "level_{key}"
 
     gse = GameStateEngine(str(char_file), pack=pack)
 
@@ -275,3 +271,12 @@ def test_detect_action_with_key_template(tmp_path, monkeypatch):
 
     # Check that current went from 2 to 1
     assert gse.state["resources"]["spells_per_day"]["level_2"]["current"] == 1
+
+    # Cas sans niveau
+    action_no_level = gse.detect_action("je lance un sort")
+    assert action_no_level is not None
+    assert action_no_level.key is None
+
+    res_no_level = gse.consume_pool(action_no_level.target, key=action_no_level.key, amount=action_no_level.amount)
+    assert res_no_level.success is False
+    assert "Missing key for pool_group" in res_no_level.message
