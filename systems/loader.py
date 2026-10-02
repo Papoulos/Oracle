@@ -26,13 +26,18 @@ class SystemPack:
 
 
 def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
-    if base_dir is None:
-        base_dir = os.path.join(os.path.dirname(__file__), "..", "systems")
     """
     Loads a System Pack from the given base directory.
     Validates it first, raises PackInvalidError if validation fails.
     Raises PackNotFoundError if pack directory doesn't exist.
     """
+    import re
+    if not re.fullmatch(r"[a-z0-9_]+", pack_id):
+        raise ValueError(f"Invalid pack_id '{pack_id}'. Must match ^[a-z0-9_]+$")
+
+    if base_dir is None:
+        base_dir = os.path.join(os.path.dirname(__file__), "..", "systems")
+
     pack_dir = os.path.join(base_dir, pack_id)
     if not os.path.exists(pack_dir) or not os.path.isdir(pack_dir):
         raise PackNotFoundError(f"Pack '{pack_id}' not found at {pack_dir}")

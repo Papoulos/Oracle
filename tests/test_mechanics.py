@@ -202,6 +202,14 @@ def test_dice_pool_botch_conditions():
         botch_threshold=1,
         botch_condition="any_botch"
     )
+    config_no_success = DicePoolSuccessConfig(
+        family="DicePoolSuccess",
+        dice_faces=10,
+        success_threshold=8,
+        botch_rule=True,
+        botch_threshold=1,
+        botch_condition="no_success_and_botch"
+    )
 
     class MockRNG:
         def __init__(self, rolls):
@@ -218,6 +226,24 @@ def test_dice_pool_botch_conditions():
     # any_botch: botches(1) > 0 is True -> CRITICAL_FAILURE
     res2 = resolve(config_any_botch, request, MockRNG([8, 1]))
     assert res2.outcome == Outcome.CRITICAL_FAILURE
+
+    # no_success_and_botch: 1 success, 1 botch -> SUCCESS (car au moins 1 succès)
+    res3 = resolve(config_no_success, request, MockRNG([8, 1]))
+    assert res3.outcome == Outcome.SUCCESS
+
+    # no_success_and_botch: 0 success, 1 botch -> CRITICAL_FAILURE
+    res4 = resolve(config_no_success, request, MockRNG([7, 1]))
+    assert res4.outcome == Outcome.CRITICAL_FAILURE
+
+def test_dice_pool_botch_validation():
+    with pytest.raises(ValueError, match="botch_threshold must be provided"):
+        DicePoolSuccessConfig(
+            family="DicePoolSuccess",
+            dice_faces=10,
+            success_threshold=8,
+            botch_rule=True,
+            botch_threshold=None
+        )
 
 
 def test_trigger_rule_key_template_invalid():

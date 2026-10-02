@@ -100,3 +100,11 @@ def test_new_pack_invalid_id(temp_systems_dir, monkeypatch):
     result = subprocess.run(["python3", "-m", "systems.new", "Invalid-Name!", "--family", "D20VsTarget"], capture_output=True, text=True, env=env)
     assert result.returncode == 1
     assert "invalide" in result.stderr
+
+    result2 = subprocess.run(["python3", "-m", "systems.new", "abc\n", "--family", "D20VsTarget"], capture_output=True, text=True, env=env)
+    assert result2.returncode == 1
+    assert "invalide" in result2.stderr
+
+    result3 = subprocess.run(["python3", "-m", "systems.new", "../x", "--family", "D20VsTarget"], capture_output=True, text=True, env=env)
+    assert result3.returncode == 1
+    assert "invalide" in result3.stderr

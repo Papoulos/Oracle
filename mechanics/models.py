@@ -101,7 +101,11 @@ class DicePoolSuccessConfig(BaseModel):
     success_threshold: int
     botch_rule: bool = False
     botch_threshold: int | None = None
-    botch_condition: Literal["more_botches_than_successes", "any_botch"] = "more_botches_than_successes"
+    botch_condition: Literal["more_botches_than_successes", "any_botch", "no_success_and_botch"] = "more_botches_than_successes"
+
+    def model_post_init(self, __context):
+        if self.botch_rule and self.botch_threshold is None:
+            raise ValueError("botch_threshold must be provided when botch_rule is True")
 
     @classmethod
     def template(cls) -> "DicePoolSuccessConfig":
