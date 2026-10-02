@@ -11,7 +11,9 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 import chromadb
 import config
+import re
 from scenario_agents import ManualGeneratorAgent, GameplayRulesAgent
+from pack_extractor import PackExtractorAgent
 
 def get_embeddings():
     # Use base_utils get_embeddings
@@ -137,10 +139,14 @@ def main():
     parser.add_argument("--reset", action="store_true", help="Wipe all data (ChromaDB + Memory) and start over.")
     parser.add_argument("--log", action="store_true",
                         help="Activate detailed logging (sent prompts and raw LLM responses) in indexer_debug.log")
+    parser.add_argument("--pack", action="store_true", help="Generate draft pack for a system.")
+    parser.add_argument("--pack-id", type=str, help="The id of the pack to draft (alphanumeric and underscore only).")
+    parser.add_argument("--pdf", type=str, action="append", help="Specific PDF(s) to process for the pack.")
+    parser.add_argument("--force", action="store_true", help="Force overwrite of existing draft pack.")
     args = parser.parse_args()
 
     # If no specific mode argument is provided, we index everything and generate the manual.
-    index_all = not (args.core or args.scenario or args.pj or args.reset)
+    index_all = not (args.core or args.scenario or args.pj or args.reset or args.pack)
 
     if args.reset:
         print("Complete reset requested...")
@@ -175,6 +181,51 @@ def main():
         logging.root.setLevel(logging.DEBUG)
         print("Detailed logging activated -> indexer_debug.log")
     verbose = args.log
+
+    if args.pack:
+        if not args.pack_id:
+             print("Error: --pack-id is required when using --pack")
+             return
+
+        if not re.fullmatch(r"[a-z0-9_]+", args.pack_id):
+             print(f"Error: Invalid pack id '{args.pack_id}'. Must be lowercase alphanumeric and underscore.")
+             return
+
+        draft_dir = os.path.join("systems", "draft", args.pack_id)
+        if os.path.exists(draft_dir):
+             if not args.force:
+                  print(f"Error: Draft directory {draft_dir} already exists. Use --force to overwrite.")
+                  return
+             else:
+                  print(f"Removing existing draft directory: {draft_dir}")
+                  shutil.rmtree(draft_dir)
+
+        core_data_path = config.CORE_DATA_PATH if config.CORE_DATA_PATH else "./data/core"
+        if args.pdf:
+             pdf_files = [os.path.join(core_data_path, f) for f in args.pdf]
+        else:
+             pdf_files = [os.path.join(core_data_path, f) for f in os.listdir(core_data_path) if f.endswith(".pdf")]
+
+        client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
+        embeddings = get_embeddings()
+
+        # We attempt to load the store
+        try:
+             store = Chroma(
+                  client=client,
+                  collection_name=config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core",
+                  embedding_function=embeddings
+             )
+        except Exception:
+             store = None
+
+        print(f"Generating draft pack '{args.pack_id}' from {len(pdf_files)} PDF(s)...")
+        agent = PackExtractorAgent(store=store, verbose=verbose)
+        try:
+             agent.extract(args.pack_id, pdf_files)
+        except Exception as e:
+             print(f"Error generating pack: {e}")
+        return
 
     embeddings = get_embeddings()
     client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
