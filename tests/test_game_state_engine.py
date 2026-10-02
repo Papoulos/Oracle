@@ -213,3 +213,65 @@ def test_gse_pack_pbta(tmp_path):
     # Invalid trigger
     res_invalid = gse.rest("long_rest")
     assert res_invalid.success is False
+
+def test_import_without_langchain(monkeypatch):
+    import sys
+    monkeypatch.setitem(sys.modules, "langchain_ollama", None)
+    monkeypatch.setitem(sys.modules, "langchain", None)
+    # Reload game_state_engine to test if it imports fine
+    import importlib
+    import game_state_engine
+    importlib.reload(game_state_engine)
+    # Should not raise exception
+
+def test_trigger_false_positives():
+    from systems.loader import load_pack
+    from game_state_engine import GameStateEngine
+    pack = load_pack("dnd5e_srd")
+    gse = GameStateEngine(pack=pack)
+
+    assert gse.detect_action_type("Il sort de la pièce") is None
+    assert gse.detect_action_type("la nuit tombe") is None
+    assert gse.detect_action_type("le camp ennemi") is None
+
+def test_detect_action_with_key_template(tmp_path, monkeypatch):
+    import json
+    from mechanics.models import TriggersConfig
+    from systems.loader import load_pack
+    from game_state_engine import GameStateEngine
+
+    char_file = tmp_path / "char_template.json"
+    data = {
+        "resources": {
+            "spells_per_day": {
+                "level_2": {
+                    "current": 2,
+                    "max": 3
+                }
+            }
+        }
+    }
+    char_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    # Load normal pack and inject our custom rule
+    pack = load_pack("dnd5e_srd")
+
+    # Let's add a key_template to cast_spell manually
+    for rule in pack.triggers.rules:
+        if rule.id == "cast_spell":
+            rule.key_template = "level_{key}"
+
+    gse = GameStateEngine(str(char_file), pack=pack)
+
+    # E2E test
+    # This should detect cast_spell, extract "2", format it into "level_2"
+    action = gse.detect_action("je lance un sort de niveau 2")
+    assert action is not None
+    assert action.key == "level_2"
+
+    # consume_pool should now work successfully
+    res = gse.consume_pool(action.target, key=action.key, amount=action.amount)
+    assert res.success is True
+
+    # Check that current went from 2 to 1
+    assert gse.state["resources"]["spells_per_day"]["level_2"]["current"] == 1

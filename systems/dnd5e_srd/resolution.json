@@ -2,7 +2,6 @@
   "family": "D20VsTarget",
   "advantage_enabled": true,
   "advantage_dice": 2,
-  "adv_dis_cancel": true,
   "critical_success_on": 20,
   "critical_failure_on": 1
 }

@@ -4,5 +4,6 @@
   "dice_faces": 10,
   "success_threshold": 8,
   "botch_rule": true,
-  "botch_threshold": 1
+  "botch_threshold": 1,
+  "botch_condition": "more_botches_than_successes"
 }

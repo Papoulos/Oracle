@@ -4,10 +4,15 @@ import json
 import yaml
 import argparse
 
+import re
 from mechanics.models import FAMILIES, Manifest, ResourcesConfig
 
 
 def generate_new_pack(pack_id: str, family_name: str) -> None:
+    if not re.match(r"^[a-z0-9_]+$", pack_id):
+        print(f"Erreur : pack_id invalide '{pack_id}'. Il doit respecter l'expression régulière ^[a-z0-9_]+$", file=sys.stderr)
+        sys.exit(1)
+
     if family_name not in FAMILIES:
         available = ", ".join(FAMILIES.keys())
         print(f"Erreur : Famille '{family_name}' inconnue. Familles disponibles : {available}", file=sys.stderr)
