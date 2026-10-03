@@ -31,7 +31,7 @@ def index_directory(source_dir, collection_name, client, embeddings, index_json=
     documents = []
     for file in os.listdir(source_dir):
         file_path = os.path.join(source_dir, file)
-        if file.endswith(".pdf"):
+        if file.lower().endswith(".pdf"):
             loader = PyPDFLoader(file_path)
             documents.extend(loader.load())
         elif file.endswith(".json") and index_json:
@@ -143,6 +143,7 @@ def main():
     parser.add_argument("--pack-id", type=str, help="The id of the pack to draft (alphanumeric and underscore only).")
     parser.add_argument("--pdf", type=str, action="append", help="Specific PDF(s) to process for the pack.")
     parser.add_argument("--force", action="store_true", help="Force overwrite of existing draft pack.")
+    parser.add_argument("--language", type=str, help="ISO 639-1 language code to use (overrides detection).")
     args = parser.parse_args()
 
     # If no specific mode argument is provided, we index everything and generate the manual.
@@ -201,28 +202,40 @@ def main():
                   shutil.rmtree(draft_dir)
 
         core_data_path = config.CORE_DATA_PATH if config.CORE_DATA_PATH else "./data/core"
+        if not os.path.isdir(core_data_path):
+             print(f"Error: Core data directory '{core_data_path}' is missing.")
+             return
+
         if args.pdf:
              pdf_files = [os.path.join(core_data_path, f) for f in args.pdf]
         else:
-             pdf_files = [os.path.join(core_data_path, f) for f in os.listdir(core_data_path) if f.endswith(".pdf")]
+             pdf_files = [os.path.join(core_data_path, f) for f in os.listdir(core_data_path) if f.lower().endswith(".pdf")]
 
         client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
         embeddings = get_embeddings()
 
         # We attempt to load the store
         try:
-             store = Chroma(
-                  client=client,
-                  collection_name=config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core",
-                  embedding_function=embeddings
-             )
+             collection_name = config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core"
+             try:
+                 collection = client.get_collection(collection_name)
+                 if collection.count() == 0:
+                     store = None
+                 else:
+                     store = Chroma(
+                          client=client,
+                          collection_name=collection_name,
+                          embedding_function=embeddings
+                     )
+             except Exception:
+                 store = None
         except Exception:
              store = None
 
         print(f"Generating draft pack '{args.pack_id}' from {len(pdf_files)} PDF(s)...")
         agent = PackExtractorAgent(store=store, verbose=verbose)
         try:
-             agent.extract(args.pack_id, pdf_files)
+             agent.extract(args.pack_id, pdf_files, override_language=args.language)
         except Exception as e:
              print(f"Error generating pack: {e}")
         return
