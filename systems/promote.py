@@ -3,15 +3,24 @@ import sys
 import argparse
 import json
 import shutil
+import re
+import yaml
 from .validate import validate_pack
+from .provenance import ProvenanceData, REVIEW_CONFIDENCE_THRESHOLD
+
+SYSTEMS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def get_draft_dir(pack_id: str) -> str:
-    return os.path.join("systems", "draft", pack_id)
+    return os.path.join(SYSTEMS_DIR, "draft", pack_id)
 
 def get_target_dir(pack_id: str) -> str:
-    return os.path.join("systems", pack_id)
+    return os.path.join(SYSTEMS_DIR, pack_id)
 
 def init_review(pack_id: str) -> None:
+    if not re.fullmatch(r"[a-z0-9_]+", pack_id):
+        print(f"Error: Invalid pack id '{pack_id}'. Must be lowercase alphanumeric and underscore.")
+        sys.exit(1)
+
     draft_dir = get_draft_dir(pack_id)
     if not os.path.isdir(draft_dir):
         print(f"Error: Draft directory {draft_dir} does not exist.")
@@ -24,7 +33,7 @@ def init_review(pack_id: str) -> None:
 
     try:
         with open(prov_path, "r", encoding="utf-8") as f:
-            prov_data = json.load(f)
+            prov_data = ProvenanceData.model_validate_json(f.read())
     except Exception as e:
         print(f"Error reading provenance.json: {e}")
         sys.exit(1)
@@ -35,14 +44,9 @@ def init_review(pack_id: str) -> None:
         "notes": {}
     }
 
-    entries = prov_data.get("entries", [])
-    for entry in entries:
-        needs_review = entry.get("needs_review", False)
-        confidence = entry.get("confidence", 0)
-
-        # We flag entries for review if needs_review=True OR confidence < 70
-        if needs_review or confidence < 70:
-            key = f"{entry.get('file', '')}:{entry.get('path', '')}"
+    for entry in prov_data.entries:
+        if entry.needs_review or entry.confidence < REVIEW_CONFIDENCE_THRESHOLD:
+            key = f"{entry.file}:{entry.path}"
             review_data["validated"][key] = False
 
     review_path = os.path.join(draft_dir, "review.json")
@@ -52,12 +56,28 @@ def init_review(pack_id: str) -> None:
     print(f"Initialized review.json with {len(review_data['validated'])} entries to review.")
 
 def promote_pack(pack_id: str, force: bool) -> None:
+    if not re.fullmatch(r"[a-z0-9_]+", pack_id):
+        print(f"Error: Invalid pack id '{pack_id}'. Must be lowercase alphanumeric and underscore.")
+        sys.exit(1)
+
     draft_dir = get_draft_dir(pack_id)
     target_dir = get_target_dir(pack_id)
 
     if not os.path.isdir(draft_dir):
         print(f"Error: Draft directory {draft_dir} does not exist.")
         sys.exit(1)
+
+    # 0. Check manifest.id == pack_id
+    manifest_path = os.path.join(draft_dir, "manifest.yaml")
+    if not os.path.isfile(manifest_path):
+        print(f"Error: Missing manifest.yaml in {draft_dir}.")
+        sys.exit(1)
+
+    with open(manifest_path, "r", encoding="utf-8") as f:
+        manifest_data = yaml.safe_load(f)
+        if manifest_data.get("id") != pack_id:
+            print(f"Promotion refused: manifest.id '{manifest_data.get('id')}' does not match pack_id '{pack_id}'.")
+            sys.exit(1)
 
     # 1. Check status in provenance.json
     prov_path = os.path.join(draft_dir, "provenance.json")
@@ -66,10 +86,10 @@ def promote_pack(pack_id: str, force: bool) -> None:
         sys.exit(1)
 
     with open(prov_path, "r", encoding="utf-8") as f:
-         prov_data = json.load(f)
+         prov_data = ProvenanceData.model_validate_json(f.read())
 
-    if prov_data.get("status") != "complete":
-        print(f"Promotion refused: provenance status is '{prov_data.get('status')}', not 'complete'.")
+    if prov_data.status != "complete":
+        print(f"Promotion refused: provenance status is '{prov_data.status}', not 'complete'.")
         sys.exit(1)
 
     # 2. Check validate_pack (this will ignore provenance.json and review.json)
@@ -82,11 +102,10 @@ def promote_pack(pack_id: str, force: bool) -> None:
         sys.exit(1)
 
     # 3. Check review.json for required validations
-    entries = prov_data.get("entries", [])
     required_review_keys = set()
-    for entry in entries:
-         if entry.get("needs_review", False) or entry.get("confidence", 0) < 70:
-             required_review_keys.add(f"{entry.get('file', '')}:{entry.get('path', '')}")
+    for entry in prov_data.entries:
+         if entry.needs_review or entry.confidence < REVIEW_CONFIDENCE_THRESHOLD:
+             required_review_keys.add(f"{entry.file}:{entry.path}")
 
     if required_review_keys:
         review_path = os.path.join(draft_dir, "review.json")
@@ -104,15 +123,29 @@ def promote_pack(pack_id: str, force: bool) -> None:
                   sys.exit(1)
 
     # 4. Move files
+    bak_dir = None
     if os.path.exists(target_dir):
         if not force:
              print(f"Promotion refused: Target directory {target_dir} already exists. Use --force to overwrite.")
              sys.exit(1)
         else:
-             shutil.rmtree(target_dir)
+             bak_dir = target_dir + ".bak"
+             if os.path.exists(bak_dir):
+                 shutil.rmtree(bak_dir)
+             shutil.move(target_dir, bak_dir)
 
-    shutil.move(draft_dir, target_dir)
-    print(f"Successfully promoted draft to {target_dir}!")
+    try:
+        shutil.move(draft_dir, target_dir)
+        if bak_dir:
+            shutil.rmtree(bak_dir)
+        print(f"Successfully promoted draft to {target_dir}!")
+    except Exception as e:
+        if bak_dir:
+            if os.path.exists(target_dir):
+                shutil.rmtree(target_dir)
+            shutil.move(bak_dir, target_dir)
+        print(f"Promotion failed: {e}")
+        sys.exit(1)
 
 def main():
     parser = argparse.ArgumentParser(description="Promote a draft system pack.")

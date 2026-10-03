@@ -79,22 +79,31 @@ def select_pages(store: Chroma, queries: list[str], pages: list[PageText], max_c
 
 STEP_A_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert RPG systems analyst.
-Determine the mechanical resolution family of the provided rulebook.
+Determine the mechanical resolution family of the provided rulebook, its name, and its language.
 The possible families are: {families}
 
 If you are absolutely certain, return:
 ```json
-{{"family": "NameOfFamily", "confidence": 95, "why": "..."}}
+{{
+  "family": "NameOfFamily",
+  "confidence": 95,
+  "why": "...",
+  "name": "Name of the RPG System",
+  "language": "en"
+}}
 ```
+`language` MUST be a valid ISO 639-1 two-letter code (e.g., "fr", "en").
 
-If you are unsure, you MUST NOT guess. Return family "unknown" and list candidates:
+If you are unsure about the family, you MUST NOT guess. Return family "unknown" and list candidates:
 ```json
 {{
   "family": "unknown",
   "reason": "Explain why it's ambiguous...",
   "candidates": [
     {{"family": "CandidateFamily1", "confidence": 50, "why": "..."}}
-  ]
+  ],
+  "name": "Name of the RPG System",
+  "language": "en"
 }}
 ```
 """),
@@ -156,12 +165,12 @@ class PackExtractorAgent(BaseAgent):
         ]
 
     def _normalize_text(self, text: str) -> str:
-        # Simple normalization: lowercase, collapse whitespace, strip accents (simplistic approach)
         import unicodedata
         import re
-        t = unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode('utf-8')
+        t = unicodedata.normalize('NFKD', text)
         t = t.lower()
-        t = re.sub(r'[\s\-]+', ' ', t)
+        t = re.sub(r'-\n', '', t)
+        t = re.sub(r'[\s]+', ' ', t)
         return t.strip()
 
     def _fuzzy_match(self, excerpt: str, page_text: str) -> bool:
@@ -169,23 +178,15 @@ class PackExtractorAgent(BaseAgent):
         norm_page = self._normalize_text(page_text)
         if not norm_exc: return False
 
-        # We try a simple "in" first
         if norm_exc in norm_page:
             return True
 
-        # Fallback to difflib SequenceMatcher if excerpt is somewhat long
-        # We check if there's a block in norm_page that matches norm_exc well
-        # We'll just split norm_page into chunks of roughly the excerpt size
-        exc_len = len(norm_exc)
-        if exc_len < 10:
-             return False # Too short for fuzzy matching without high false positives
+        if len(norm_exc) < 10:
+             return False
 
-        for i in range(0, max(1, len(norm_page) - exc_len + 1), exc_len // 2):
-            chunk = norm_page[i:i + exc_len * 2]
-            ratio = difflib.SequenceMatcher(None, norm_exc, chunk).ratio()
-            if ratio > 0.85: # Documented threshold: 85%
-                return True
-        return False
+        from rapidfuzz import fuzz
+        ratio = fuzz.partial_ratio(norm_exc, norm_page)
+        return ratio >= 88
 
     def _get_leaf_paths(self, data, current_path=""):
         paths = set()
@@ -195,7 +196,7 @@ class PackExtractorAgent(BaseAgent):
         elif isinstance(data, list):
             for i, v in enumerate(data):
                 paths.update(self._get_leaf_paths(v, f"{current_path}/{i}"))
-        else:
+        elif data is not None:
             paths.add(current_path)
         return paths
 
@@ -218,8 +219,8 @@ class PackExtractorAgent(BaseAgent):
                     page=0,
                     excerpt="",
                     confidence=0,
-                    needs_review=True,
-                    review_reasons=["no_provenance"]
+                    needs_review=False,
+                    review_reasons=["defaulted_by_schema"]
                 ))
                 continue
 
@@ -253,7 +254,7 @@ class PackExtractorAgent(BaseAgent):
         return final_entries
 
 
-    def extract(self, pack_id: str, files: list[str]) -> None:
+    def extract(self, pack_id: str, files: list[str], override_language: str = None) -> None:
         draft_dir = os.path.join("systems", "draft", pack_id)
         os.makedirs(draft_dir, exist_ok=True)
 
@@ -272,6 +273,9 @@ class PackExtractorAgent(BaseAgent):
             queries = self.queries_fr + self.queries_en
             selected_pages = select_pages(self.store, queries, all_pages, config.PACK_CONTEXT_MAX_CHARS, k=20, neighbors=1)
 
+        if not selected_pages:
+            raise ValueError("Core index is empty or does not contain these PDFs. Run `python indexer.py --core` first.")
+
         context_str = format_pages(selected_pages)
         context_pages_meta = [ContextPage(source=p.source, page=p.page) for p in selected_pages]
 
@@ -283,7 +287,15 @@ class PackExtractorAgent(BaseAgent):
         if not result_a:
              raise ValueError("Failed to parse JSON for Step A")
 
+        import re
         family = result_a.get("family")
+        sys_name = result_a.get("name", pack_id)
+
+        language = result_a.get("language", "en")
+        if not re.fullmatch(r"[a-z]{2}", language):
+            language = "en"
+        if override_language:
+            language = override_language
 
         # We always initialize provenance
         prov_data = ProvenanceData(
@@ -294,10 +306,23 @@ class PackExtractorAgent(BaseAgent):
             context_pages=context_pages_meta
         )
 
-        if family == "unknown" or family not in FAMILIES:
+        confidence = result_a.get("confidence", 0)
+
+        if family == "unknown" or family not in FAMILIES or confidence < REVIEW_CONFIDENCE_THRESHOLD:
             prov_data.status = "unknown_family"
-            prov_data.reason = result_a.get("reason", "Family not determined")
+
+            if family not in FAMILIES and family != "unknown":
+                prov_data.reason = f"Proposed family '{family}' is not in the supported FAMILIES list."
+            elif confidence < REVIEW_CONFIDENCE_THRESHOLD:
+                prov_data.reason = f"Confidence {confidence} is below the threshold of {REVIEW_CONFIDENCE_THRESHOLD}."
+            else:
+                prov_data.reason = result_a.get("reason", "Family not determined")
+
             candidates_raw = result_a.get("candidates", [])
+
+            if family != "unknown" and confidence < REVIEW_CONFIDENCE_THRESHOLD:
+                 candidates_raw.append({"family": family, "confidence": confidence, "why": result_a.get("why", "")})
+
             for c in candidates_raw:
                 try:
                      prov_data.candidates.append(Candidate(**c))
@@ -316,11 +341,6 @@ class PackExtractorAgent(BaseAgent):
         res_schema = _json.dumps(ResConfigClass.model_json_schema(), indent=2)
         rec_schema = _json.dumps(ResourcesConfig.model_json_schema(), indent=2)
         trig_schema = _json.dumps(TriggersConfig.model_json_schema(), indent=2)
-
-        # For simplicity, default language to french if we don't prompt it separately
-        # But we could also ask the LLM. The prompt currently has a param for it.
-        # Let's say "fr" as the codebase uses FR for narration and some config defaults.
-        language = "fr"
 
         errors = ""
         max_retries = 3
@@ -378,7 +398,7 @@ class PackExtractorAgent(BaseAgent):
 
                     # Process provenance
                     raw_prov = file_data.get("provenance", [])
-                    entries = self._evaluate_provenance(config_dict, raw_prov, selected_pages)
+                    entries = self._evaluate_provenance(valid_obj.model_dump(mode="json"), raw_prov, selected_pages)
                     for e in entries:
                          e.file = file_name
 
@@ -438,7 +458,7 @@ class PackExtractorAgent(BaseAgent):
         # Write manifest
         if valid_configs: # Only if we got at least something
              man = Manifest.template(pack_id, family)
-             man.name = f"{pack_id} (Draft)"
+             man.name = sys_name
              man.version = "0.1.0-draft"
              man.language = language
              man.source_pdfs = [os.path.basename(f) for f in files]
