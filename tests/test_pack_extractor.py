@@ -54,6 +54,42 @@ def test_select_pages():
     assert len(selected) == 1
     assert selected[0].source == "rules.pdf"
 
+def test_fuzzy_match():
+    agent = PackExtractorAgent()
+
+    # Exact match
+    assert agent._fuzzy_match("Action resolution", "This is an Action resolution process.") is True
+
+    # One changed word
+    assert agent._fuzzy_match("Action resoltuion", "This is an Action resolution process.") is True
+
+    # Typos
+    assert agent._fuzzy_match("Acton resolution", "This is an Action resolution process.") is True
+
+    # Invented excerpt
+    assert agent._fuzzy_match("Completely made up text", "This is an Action resolution process.") is False
+
+    # Ligature and hyphenation
+    page_text = "This is an ac-\ntion resol\uFB01ution process."
+    excerpt = "action resolution"
+    assert agent._fuzzy_match(excerpt, page_text) is True
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_empty_selected_pages(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        mock_store = MagicMock()
+        mock_store.similarity_search.return_value = []
+        agent = PackExtractorAgent(store=mock_store)
+
+        with patch('pack_extractor.select_pages', return_value=[]):
+            with patch('pack_extractor.config.PACK_CONTEXT_MAX_CHARS', 1):
+                with pytest.raises(ValueError, match="Core index is empty or does not contain these PDFs. Run `python indexer.py --core` first."):
+                    agent.extract("test_empty", test_pdfs)
+    finally:
+        os.chdir(old_cwd)
+
 @patch.object(PackExtractorAgent, '_invoke_logged')
 def test_pack_extractor_unknown_family(mock_invoke, test_pdfs, tmp_path):
     # Set cwd to tmp_path for isolation
@@ -91,7 +127,7 @@ def test_pack_extractor_full_flow(mock_invoke, test_pdfs, tmp_path):
         # We need mock responses for Step A and Step B
         # Step A response: D20VsTarget
         msg_a = MagicMock()
-        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20", "name": "English Test System", "language": "en"}'
 
         # Step B response: Valid configurations with provenance
         msg_b = MagicMock()
@@ -139,6 +175,12 @@ def test_pack_extractor_full_flow(mock_invoke, test_pdfs, tmp_path):
         assert os.path.exists(os.path.join(draft_dir, "manifest.yaml"))
         assert os.path.exists(os.path.join(draft_dir, "resolution.json"))
 
+        with open(os.path.join(draft_dir, "manifest.yaml"), "r") as f:
+            import yaml
+            manifest_data = yaml.safe_load(f)
+            assert manifest_data["name"] == "English Test System"
+            assert manifest_data["language"] == "en"
+
         # Check provenance
         with open(os.path.join(draft_dir, "provenance.json"), "r") as f:
              prov = json.load(f)
@@ -149,33 +191,77 @@ def test_pack_extractor_full_flow(mock_invoke, test_pdfs, tmp_path):
         # One of them is advantage_enabled which has NO provenance in our mock
         missing_prov_entry = next((e for e in entries if e["path"] == "/advantage_enabled"), None)
         assert missing_prov_entry is not None
-        assert missing_prov_entry["needs_review"] is True
-        assert "no_provenance" in missing_prov_entry["review_reasons"]
+        assert missing_prov_entry["needs_review"] is False
+        assert "defaulted_by_schema" in missing_prov_entry["review_reasons"]
 
-        # Check promotion refusal without review.json
-        with pytest.raises(SystemExit) as e:
-             promote_pack("test_full", force=False)
-        assert e.value.code == 1
+        # For testing, we mock SYSTEMS_DIR to our tmp_path
+        with patch('systems.promote.SYSTEMS_DIR', str(tmp_path / "systems")):
+            # Check promotion refusal without review.json
+            with pytest.raises(SystemExit) as e:
+                 promote_pack("test_full", force=False)
+            assert e.value.code == 1
 
-        # Init review
-        init_review("test_full")
-        review_path = os.path.join(draft_dir, "review.json")
-        assert os.path.exists(review_path)
+            # Init review
+            init_review("test_full")
+            review_path = os.path.join(draft_dir, "review.json")
+            assert os.path.exists(review_path)
 
-        with open(review_path, "r") as f:
-             review = json.load(f)
+            with open(review_path, "r") as f:
+                 review = json.load(f)
 
-        # Validate them manually
-        for k in review["validated"]:
-             review["validated"][k] = True
+            # Validate them manually
+            for k in review["validated"]:
+                 review["validated"][k] = True
 
-        with open(review_path, "w") as f:
-             json.dump(review, f)
+            with open(review_path, "w") as f:
+                 json.dump(review, f)
 
-        # Now promote should work
-        promote_pack("test_full", force=False)
-        assert os.path.exists(os.path.join("systems", "test_full", "manifest.yaml"))
-        assert not os.path.exists(draft_dir)
+            # Now promote should work
+            promote_pack("test_full", force=False)
+
+            # Test paths based on promote.py directory resolution
+            from systems.promote import get_target_dir
+            target_dir = get_target_dir("test_full")
+
+            assert os.path.exists(os.path.join(target_dir, "manifest.yaml"))
+            assert not os.path.exists(draft_dir)
+
+            # Now force promotion and test backup
+            os.makedirs(draft_dir, exist_ok=True)
+            # Create dummy complete provenance
+            with open(os.path.join(draft_dir, "provenance.json"), "w") as f:
+                f.write(json.dumps({
+                    "status": "complete", "pack_id": "test_full", "model": "test",
+                    "generated_at": "test", "context_pages": [], "entries": []
+                }))
+
+            # Create manifest that matches pack_id
+            with open(os.path.join(draft_dir, "manifest.yaml"), "w") as f:
+                 f.write("id: test_full\nversion: '1'\nname: test\nlanguage: en\nfamily: D20VsTarget\nsource_pdfs: []")
+
+            with open(os.path.join(draft_dir, "resolution.json"), "w") as f:
+                 f.write('{"family": "D20VsTarget", "advantage_enabled": false, "critical_success_on": 20, "critical_failure_on": 1}')
+
+            with open(os.path.join(draft_dir, "resources.json"), "w") as f:
+                 f.write('{"recovery_triggers": [], "pools": [], "pool_groups": []}')
+
+            # Run promotion, backup should take place and delete old version
+            promote_pack("test_full", force=True)
+
+            assert os.path.exists(os.path.join(target_dir, "manifest.yaml"))
+            assert not os.path.exists(target_dir + ".bak") # Backup deleted if success
+
+            # Force promote a failing test
+            os.makedirs(draft_dir, exist_ok=True)
+            with open(os.path.join(draft_dir, "manifest.yaml"), "w") as f:
+                 f.write("id: test_full\nversion: '1'\nname: test\nlanguage: en\nfamily: D20VsTarget\nsource_pdfs: []")
+            # Missing provenance, so promotion will fail
+            with pytest.raises(SystemExit) as e:
+                promote_pack("test_full", force=True)
+            assert e.value.code == 1
+            # Backup should have been restored
+            assert os.path.exists(os.path.join(target_dir, "manifest.yaml"))
+            assert not os.path.exists(target_dir + ".bak") # Backup restored
 
     finally:
         os.chdir(old_cwd)
