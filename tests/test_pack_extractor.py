@@ -96,6 +96,10 @@ def test_pack_extractor_unknown_family(mock_invoke, test_pdfs, tmp_path):
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
         agent = PackExtractorAgent()
 
         # Mock step A to return unknown
@@ -105,14 +109,14 @@ def test_pack_extractor_unknown_family(mock_invoke, test_pdfs, tmp_path):
 
         agent.extract("test_unknown", test_pdfs)
 
-        prov_path = os.path.join("systems", "draft", "test_unknown", "provenance.json")
+        prov_path = os.path.join(tmp_path, "systems", "draft", "test_unknown", "provenance.json")
         assert os.path.exists(prov_path)
         with open(prov_path, "r") as f:
             prov = json.load(f)
 
         assert prov["status"] == "unknown_family"
         assert len(prov["candidates"]) == 1
-        assert not os.path.exists(os.path.join("systems", "draft", "test_unknown", "manifest.yaml"))
+        assert not os.path.exists(os.path.join(tmp_path, "systems", "draft", "test_unknown", "manifest.yaml"))
     finally:
         os.chdir(old_cwd)
 
@@ -122,6 +126,10 @@ def test_pack_extractor_full_flow(mock_invoke, test_pdfs, tmp_path):
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
         agent = PackExtractorAgent()
 
         # We need mock responses for Step A and Step B
@@ -171,7 +179,7 @@ def test_pack_extractor_full_flow(mock_invoke, test_pdfs, tmp_path):
 
         agent.extract("test_full", test_pdfs)
 
-        draft_dir = os.path.join("systems", "draft", "test_full")
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_full")
         assert os.path.exists(os.path.join(draft_dir, "manifest.yaml"))
         assert os.path.exists(os.path.join(draft_dir, "resolution.json"))
 
@@ -272,6 +280,10 @@ def test_pack_extractor_retry_logic(mock_invoke, test_pdfs, tmp_path):
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
         agent = PackExtractorAgent()
 
         # Step A
@@ -317,10 +329,119 @@ def test_pack_extractor_retry_logic(mock_invoke, test_pdfs, tmp_path):
 
         agent.extract("test_retry", test_pdfs)
 
-        draft_dir = os.path.join("systems", "draft", "test_retry")
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_retry")
         with open(os.path.join(draft_dir, "provenance.json"), "r") as f:
              prov = json.load(f)
 
         assert prov["status"] == "complete"
     finally:
          os.chdir(old_cwd)
+
+
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_language_normalization(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        def run_lang_test(lang_val, expected_lang, expected_defaulted):
+            msg_a = MagicMock()
+            msg_a.content = json.dumps({
+                "family": "D20VsTarget",
+                "confidence": 95,
+                "why": "Uses d20",
+                "name": "Test System",
+                "language": lang_val
+            })
+
+            msg_b = MagicMock()
+            msg_b.content = """
+            {
+              "resolution.json": {"config": {"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}, "provenance": []},
+              "resources.json": {"config": {"recovery_triggers": [], "pools": [], "pool_groups": []}, "provenance": []},
+              "triggers.json": {"config": {"version": 1, "rules": []}, "provenance": []}
+            }
+            """
+
+            mock_invoke.side_effect = [msg_a, msg_b]
+
+            pack_id = f"test_lang_{lang_val if isinstance(lang_val, str) else 'none'}"
+            pack_id = pack_id.replace('-', '_').lower()
+            agent.extract(pack_id, test_pdfs)
+
+            draft_dir = os.path.join(tmp_path, "systems", "draft", pack_id)
+            with open(os.path.join(draft_dir, "manifest.yaml"), "r") as f:
+                import yaml
+                manifest_data = yaml.safe_load(f)
+                assert manifest_data["language"] == expected_lang
+
+            with open(os.path.join(draft_dir, "provenance.json"), "r") as f:
+                prov = json.load(f)
+
+            lang_entry = next((e for e in prov["entries"] if e["path"] == "/language"), None)
+            if expected_defaulted:
+                assert lang_entry is not None
+                assert lang_entry["needs_review"] is True
+                assert "language_defaulted" in lang_entry["review_reasons"]
+                assert lang_entry["file"] == "manifest.yaml"
+            else:
+                assert lang_entry is None
+
+        run_lang_test("fr-FR", "fr", False)
+        run_lang_test("French", "en", True)
+        run_lang_test(None, "en", True)
+
+    finally:
+        os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_confidence_conversion(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        def run_conf_test(conf_val, expected_status):
+            msg_a = MagicMock()
+            msg_a.content = json.dumps({
+                "family": "D20VsTarget",
+                "confidence": conf_val,
+                "why": "Uses d20",
+                "name": "Test System",
+                "language": "en"
+            })
+
+            msg_b = MagicMock()
+            msg_b.content = """
+            {
+              "resolution.json": {"config": {"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}, "provenance": []},
+              "resources.json": {"config": {"recovery_triggers": [], "pools": [], "pool_groups": []}, "provenance": []},
+              "triggers.json": {"config": {"version": 1, "rules": []}, "provenance": []}
+            }
+            """
+
+            mock_invoke.side_effect = [msg_a, msg_b]
+
+            pack_id = f"test_conf_{str(conf_val).replace('%', '_pct')}"
+            agent.extract(pack_id, test_pdfs)
+
+            draft_dir = os.path.join(tmp_path, "systems", "draft", pack_id)
+            with open(os.path.join(draft_dir, "provenance.json"), "r") as f:
+                prov = json.load(f)
+
+            assert prov["status"] == expected_status
+
+        run_conf_test(95, "complete")
+        run_conf_test("95", "complete")
+        run_conf_test("95%", "unknown_family")
+        run_conf_test("high", "unknown_family")
+        run_conf_test(None, "unknown_family")
+
+    finally:
+        os.chdir(old_cwd)

@@ -13,6 +13,7 @@ import difflib
 import config
 from base_utils import BaseAgent, extract_json
 from systems.pdf_pages import PageText, read_pdf_pages, format_pages
+from systems.promote import get_draft_dir
 from systems.provenance import (
     ProvenanceData, ProvenanceEntry, Candidate, ContextPage,
     REVIEW_CONFIDENCE_THRESHOLD
@@ -106,6 +107,7 @@ If you are unsure about the family, you MUST NOT guess. Return family "unknown" 
   "language": "en"
 }}
 ```
+Note: Any invalid or unparseable `confidence` value will be counted as 0.
 """),
     ("human", "CODEX EXCERPTS:\n{context}"),
 ])
@@ -255,7 +257,7 @@ class PackExtractorAgent(BaseAgent):
 
 
     def extract(self, pack_id: str, files: list[str], override_language: str = None) -> None:
-        draft_dir = os.path.join("systems", "draft", pack_id)
+        draft_dir = get_draft_dir(pack_id)
         os.makedirs(draft_dir, exist_ok=True)
 
         logging.info(f"Reading PDFs for pack {pack_id}...")
@@ -291,11 +293,23 @@ class PackExtractorAgent(BaseAgent):
         family = result_a.get("family")
         sys_name = result_a.get("name", pack_id)
 
-        language = result_a.get("language", "en")
-        if not re.fullmatch(r"[a-z]{2}", language):
+        language_raw = result_a.get("language", "en")
+        language_defaulted = False
+
+        if not isinstance(language_raw, str):
             language = "en"
+            language_defaulted = True
+        else:
+            language_raw = language_raw.lower()
+            if re.fullmatch(r"[a-z]{2}(-[a-z]+)?", language_raw):
+                language = language_raw[:2]
+            else:
+                language = "en"
+                language_defaulted = True
+
         if override_language:
             language = override_language
+            language_defaulted = False
 
         # We always initialize provenance
         prov_data = ProvenanceData(
@@ -306,7 +320,22 @@ class PackExtractorAgent(BaseAgent):
             context_pages=context_pages_meta
         )
 
-        confidence = result_a.get("confidence", 0)
+        if language_defaulted:
+            prov_data.entries.append(ProvenanceEntry(
+                file="manifest.yaml",
+                path="/language",
+                source="",
+                page=0,
+                excerpt="",
+                confidence=0,
+                needs_review=True,
+                review_reasons=["language_defaulted"]
+            ))
+
+        try:
+            confidence = int(result_a.get("confidence", 0))
+        except (ValueError, TypeError):
+            confidence = 0
 
         if family == "unknown" or family not in FAMILIES or confidence < REVIEW_CONFIDENCE_THRESHOLD:
             prov_data.status = "unknown_family"
@@ -446,7 +475,8 @@ class PackExtractorAgent(BaseAgent):
         if prov_data.status != "complete":
              prov_data.reason = errors if errors else "Max retries reached with unknown errors"
 
-        prov_data.entries = all_entries
+        # Keep initial entries (like language fallback) and add new ones
+        prov_data.entries.extend(all_entries)
 
         # Write valid files
         for fname, obj in valid_configs.items():

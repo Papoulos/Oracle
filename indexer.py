@@ -14,6 +14,7 @@ import config
 import re
 from scenario_agents import ManualGeneratorAgent, GameplayRulesAgent
 from pack_extractor import PackExtractorAgent
+from systems.promote import get_draft_dir
 
 def get_embeddings():
     # Use base_utils get_embeddings
@@ -192,7 +193,7 @@ def main():
              print(f"Error: Invalid pack id '{args.pack_id}'. Must be lowercase alphanumeric and underscore.")
              return
 
-        draft_dir = os.path.join("systems", "draft", args.pack_id)
+        draft_dir = get_draft_dir(args.pack_id)
         if os.path.exists(draft_dir):
              if not args.force:
                   print(f"Error: Draft directory {draft_dir} already exists. Use --force to overwrite.")
