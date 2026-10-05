@@ -79,14 +79,15 @@ def test_pack_extractor_empty_selected_pages(mock_invoke, test_pdfs, tmp_path):
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
     try:
-        mock_store = MagicMock()
-        mock_store.similarity_search.return_value = []
-        agent = PackExtractorAgent(store=mock_store)
+        with patch('systems.promote.SYSTEMS_DIR', str(tmp_path / "systems")):
+            mock_store = MagicMock()
+            mock_store.similarity_search.return_value = []
+            agent = PackExtractorAgent(store=mock_store)
 
-        with patch('pack_extractor.select_pages', return_value=[]):
-            with patch('pack_extractor.config.PACK_CONTEXT_MAX_CHARS', 1):
-                with pytest.raises(ValueError, match="Core index is empty or does not contain these PDFs. Run `python indexer.py --core` first."):
-                    agent.extract("test_empty", test_pdfs)
+            with patch('pack_extractor.select_pages', return_value=[]):
+                with patch('pack_extractor.config.PACK_CONTEXT_MAX_CHARS', 1):
+                    with pytest.raises(ValueError, match="Core index is empty or does not contain these PDFs. Run `python indexer.py --core` first."):
+                        agent.extract("test_empty", test_pdfs)
     finally:
         os.chdir(old_cwd)
 
@@ -199,7 +200,7 @@ def test_pack_extractor_full_flow(mock_invoke, test_pdfs, tmp_path):
         # One of them is advantage_enabled which has NO provenance in our mock
         missing_prov_entry = next((e for e in entries if e["path"] == "/advantage_enabled"), None)
         assert missing_prov_entry is not None
-        assert missing_prov_entry["needs_review"] is False
+        assert missing_prov_entry["needs_review"] is True
         assert "defaulted_by_schema" in missing_prov_entry["review_reasons"]
 
         # For testing, we mock SYSTEMS_DIR to our tmp_path
@@ -398,6 +399,33 @@ def test_language_normalization(mock_invoke, test_pdfs, tmp_path):
     finally:
         os.chdir(old_cwd)
 
+def test_parse_confidence():
+    from pack_extractor import parse_confidence
+    assert parse_confidence(95) == 95
+    assert parse_confidence(95.4) == 95
+    assert parse_confidence("95") == 95
+    assert parse_confidence(" 95 ") == 95
+    assert parse_confidence("95%") == 95
+    assert parse_confidence("95.5") == 96
+    assert parse_confidence("150") == 100
+    assert parse_confidence(float("nan")) is None
+    assert parse_confidence("high") is None
+    assert parse_confidence("about 95 or 80") is None
+    assert parse_confidence(None) is None
+    assert parse_confidence(True) is None
+
+def test_normalize_language():
+    from pack_extractor import normalize_language
+    assert normalize_language("fr-FR") == "fr"
+    assert normalize_language("fr_FR") == "fr"
+    assert normalize_language(" fr ") == "fr"
+    assert normalize_language("zh-Hans-CN") == "zh"
+    assert normalize_language("French") is None
+    assert normalize_language("fra") is None
+    assert normalize_language("") is None
+    assert normalize_language(123) is None
+    assert normalize_language(None) is None
+
 @patch.object(PackExtractorAgent, '_invoke_logged')
 def test_confidence_conversion(mock_invoke, test_pdfs, tmp_path):
     old_cwd = os.getcwd()
@@ -439,7 +467,7 @@ def test_confidence_conversion(mock_invoke, test_pdfs, tmp_path):
 
         run_conf_test(95, "complete")
         run_conf_test("95", "complete")
-        run_conf_test("95%", "unknown_family")
+        run_conf_test("95%", "complete")
         run_conf_test("high", "unknown_family")
         run_conf_test(None, "unknown_family")
 

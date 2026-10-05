@@ -9,6 +9,9 @@ from pydantic import ValidationError, TypeAdapter
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_chroma import Chroma
 import difflib
+import math
+import re
+from rapidfuzz import fuzz
 
 import config
 from base_utils import BaseAgent, extract_json
@@ -23,6 +26,36 @@ from mechanics.models import (
     PbtA2d6Config
 )
 from systems.validate import validate_pack
+
+
+def parse_confidence(raw) -> int | None:
+    if isinstance(raw, bool):
+        return None
+
+    if isinstance(raw, (int, float)):
+        if math.isnan(raw) or math.isinf(raw):
+            return None
+        val = int(round(raw))
+        return max(0, min(100, val))
+
+    if isinstance(raw, str):
+        # Allow optional spaces and an optional % at the end.
+        m = re.fullmatch(r"^\s*(\d{1,3})(?:\.\d+)?\s*%?\s*$", raw)
+        if m:
+            val = round(float(raw.strip().replace('%', '')))
+            return max(0, min(100, val))
+
+    return None
+
+def normalize_language(raw) -> str | None:
+    if not isinstance(raw, str):
+        return None
+
+    s = raw.strip().lower()
+    m = re.fullmatch(r"([a-z]{2})(?:[-_][a-z0-9]+)*", s)
+    if m:
+        return m.group(1)
+    return None
 
 
 def select_pages(store: Chroma, queries: list[str], pages: list[PageText], max_chars: int, k: int, neighbors: int = 1) -> list[PageText]:
@@ -186,7 +219,6 @@ class PackExtractorAgent(BaseAgent):
         if len(norm_exc) < 10:
              return False
 
-        from rapidfuzz import fuzz
         ratio = fuzz.partial_ratio(norm_exc, norm_page)
         return ratio >= 88
 
@@ -221,7 +253,7 @@ class PackExtractorAgent(BaseAgent):
                     page=0,
                     excerpt="",
                     confidence=0,
-                    needs_review=False,
+                    needs_review=True,
                     review_reasons=["defaulted_by_schema"]
                 ))
                 continue
@@ -289,23 +321,17 @@ class PackExtractorAgent(BaseAgent):
         if not result_a:
              raise ValueError("Failed to parse JSON for Step A")
 
-        import re
         family = result_a.get("family")
         sys_name = result_a.get("name", pack_id)
 
-        language_raw = result_a.get("language", "en")
+        # Language normalization
+        language_raw = result_a.get("language")
         language_defaulted = False
 
-        if not isinstance(language_raw, str):
+        language = normalize_language(language_raw)
+        if language is None:
             language = "en"
             language_defaulted = True
-        else:
-            language_raw = language_raw.lower()
-            if re.fullmatch(r"[a-z]{2}(-[a-z]+)?", language_raw):
-                language = language_raw[:2]
-            else:
-                language = "en"
-                language_defaulted = True
 
         if override_language:
             language = override_language
@@ -332,28 +358,42 @@ class PackExtractorAgent(BaseAgent):
                 review_reasons=["language_defaulted"]
             ))
 
-        try:
-            confidence = int(result_a.get("confidence", 0))
-        except (ValueError, TypeError):
+        # Confidence parsing
+        raw_confidence = result_a.get("confidence")
+        confidence = parse_confidence(raw_confidence)
+
+        invalid_confidence = False
+        if confidence is None:
+            invalid_confidence = True
             confidence = 0
 
         if family == "unknown" or family not in FAMILIES or confidence < REVIEW_CONFIDENCE_THRESHOLD:
             prov_data.status = "unknown_family"
+            reasons = []
 
             if family not in FAMILIES and family != "unknown":
-                prov_data.reason = f"Proposed family '{family}' is not in the supported FAMILIES list."
-            elif confidence < REVIEW_CONFIDENCE_THRESHOLD:
-                prov_data.reason = f"Confidence {confidence} is below the threshold of {REVIEW_CONFIDENCE_THRESHOLD}."
+                reasons.append(f"Proposed family '{family}' is not in the supported FAMILIES list.")
+            elif family == "unknown":
+                reasons.append(result_a.get("reason", "Family not determined"))
             else:
-                prov_data.reason = result_a.get("reason", "Family not determined")
+                if invalid_confidence:
+                    reasons.append(f"invalid_confidence: {repr(raw_confidence)} traitée comme 0")
+                if confidence < REVIEW_CONFIDENCE_THRESHOLD:
+                    reasons.append(f"Confidence {confidence} is below the threshold of {REVIEW_CONFIDENCE_THRESHOLD}.")
 
-            candidates_raw = result_a.get("candidates", [])
+            prov_data.reason = " | ".join(reasons)
 
-            if family != "unknown" and confidence < REVIEW_CONFIDENCE_THRESHOLD:
+            candidates_raw = [c for c in (result_a.get("candidates") or []) if isinstance(c, dict)]
+
+            if family != "unknown" and family in FAMILIES and confidence < REVIEW_CONFIDENCE_THRESHOLD:
                  candidates_raw.append({"family": family, "confidence": confidence, "why": result_a.get("why", "")})
 
             for c in candidates_raw:
                 try:
+                     cand_conf = parse_confidence(c.get("confidence"))
+                     if cand_conf is None:
+                         cand_conf = 0
+                     c["confidence"] = cand_conf
                      prov_data.candidates.append(Candidate(**c))
                 except Exception:
                      pass
