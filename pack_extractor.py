@@ -183,10 +183,36 @@ The "excerpt" MUST be a direct quote from the text that justifies the value, and
 ])
 
 
+
+def response_text(resp) -> str:
+    if isinstance(resp.content, list):
+        return "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in resp.content)
+    return str(resp.content)
+
+def was_truncated(resp) -> bool:
+    meta = getattr(resp, "response_metadata", {})
+    for key in ["done_reason", "finish_reason", "stop_reason"]:
+        val = meta.get(key)
+        if isinstance(val, str) and val.lower() in ("length", "max_tokens"):
+            return True
+    return False
+
 class PackExtractorAgent(BaseAgent):
     def __init__(self, store: Chroma | None = None, verbose=False):
         # We use a strict temperature for data extraction tasks
-        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=0.1, verbose=verbose)
+        llm_opts = {
+            "num_ctx": config.PACK_NUM_CTX,
+            "num_predict": config.PACK_NUM_PREDICT,
+        }
+        # Explicit reasoning override for PackExtractorAgent (default false)
+        if config.PACK_REASONING_RAW is not None and config.PACK_REASONING_RAW.strip().lower() == "default":
+            llm_opts["reasoning"] = None # Explictly set to None to bypass BaseAgent fallback
+        elif config.PACK_REASONING is not None:
+            llm_opts["reasoning"] = config.PACK_REASONING
+        else:
+            llm_opts["reasoning"] = False
+
+        super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.PACK_EXTRACTOR_TEMP, verbose=verbose, llm_options=llm_opts)
         self.store = store
         self.queries_fr = [
             "résolution d'action, jet de dé, réussite, échec, critique",
@@ -317,9 +343,17 @@ class PackExtractorAgent(BaseAgent):
         families_list = ", ".join(FAMILIES.keys())
         resp_a = self._invoke_logged(STEP_A_PROMPT, {"families": families_list, "context": context_str}, label="step_A_family")
 
-        result_a = extract_json(resp_a.content, expected_type=dict)
+        text_a = response_text(resp_a)
+        result_a = extract_json(text_a, expected_type=dict)
         if not result_a:
-             raise ValueError("Failed to parse JSON for Step A")
+             debug_dir = os.path.join(draft_dir, "debug")
+             os.makedirs(debug_dir, exist_ok=True)
+             with open(os.path.join(debug_dir, "step_A.txt"), "w", encoding="utf-8") as f:
+                  f.write(f"=== METADATA ===\n{getattr(resp_a, 'response_metadata', {})}\n\n=== CONTENT ===\n{text_a}")
+
+             meta = getattr(resp_a, 'response_metadata', {})
+             reasoning_present = "reasoning_content" in getattr(resp_a, "additional_kwargs", {})
+             raise ValueError(f"Failed to parse JSON for Step A.\ndone_reason: {meta.get('done_reason', 'unknown')}\nreasoning_content present: {reasoning_present}\nlength: {len(text_a)}\nConseil: augmente PACK_NUM_PREDICT ou mets PACK_REASONING=false")
 
         family = result_a.get("family")
         sys_name = result_a.get("name", pack_id)
@@ -430,9 +464,20 @@ class PackExtractorAgent(BaseAgent):
                 "errors": errors
             }, label=f"step_B_extract_{attempt}")
 
-            result_b = extract_json(resp_b.content, expected_type=dict)
+            text_b = response_text(resp_b)
+            result_b = extract_json(text_b, expected_type=dict)
 
             if not result_b:
+                debug_dir = os.path.join(draft_dir, "debug")
+                os.makedirs(debug_dir, exist_ok=True)
+                with open(os.path.join(debug_dir, f"step_B_{attempt}.txt"), "w", encoding="utf-8") as f:
+                     f.write(f"=== METADATA ===\n{getattr(resp_b, 'response_metadata', {})}\n\n=== CONTENT ===\n{text_b}")
+
+                if was_truncated(resp_b) or not text_b.strip():
+                     meta = getattr(resp_b, 'response_metadata', {})
+                     reasoning_present = "reasoning_content" in getattr(resp_b, "additional_kwargs", {})
+                     raise ValueError(f"Failed to parse JSON for Step B (truncated or empty).\ndone_reason: {meta.get('done_reason', 'unknown')}\nreasoning_content present: {reasoning_present}\nlength: {len(text_b)}\nConseil: augmente PACK_NUM_PREDICT ou mets PACK_REASONING=false")
+
                 errors = "Failed to extract valid JSON from your previous response."
                 continue
 

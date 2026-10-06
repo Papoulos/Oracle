@@ -473,3 +473,89 @@ def test_confidence_conversion(mock_invoke, test_pdfs, tmp_path):
 
     finally:
         os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_empty_response_step_a(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = ""
+        msg_a.response_metadata = {"done_reason": "length"}
+        mock_invoke.return_value = msg_a
+
+        with pytest.raises(ValueError, match="(?s)Failed to parse JSON for Step A.*length"):
+            agent.extract("test_empty", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_empty")
+        debug_file = os.path.join(draft_dir, "debug", "step_A.txt")
+        assert os.path.exists(debug_file)
+    finally:
+        os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_truncated_response_step_b(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+
+        msg_b = MagicMock()
+        msg_b.content = '{"resolution.json": {"config": {"family": "D20VsTarget"'
+        msg_b.response_metadata = {"done_reason": "length"}
+
+        mock_invoke.side_effect = [msg_a, msg_b]
+
+        with pytest.raises(ValueError, match="(?s)Failed to parse JSON for Step B.*length"):
+            agent.extract("test_truncated_b", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_truncated_b")
+        debug_file = os.path.join(draft_dir, "debug", "step_B_0.txt")
+        assert os.path.exists(debug_file)
+    finally:
+        os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_free_text_retry_step_b(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+
+        msg_b1 = MagicMock()
+        msg_b1.content = "Voici le JSON demandé :" # non json, not truncated
+        msg_b1.response_metadata = {"done_reason": "stop"}
+
+        msg_b2 = MagicMock()
+        msg_b2.content = """
+        {
+          "resolution.json": {"config": {"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}, "provenance": []},
+          "resources.json": {"config": {"recovery_triggers": [], "pools": [], "pool_groups": []}, "provenance": []},
+          "triggers.json": {"config": {"version": 1, "rules": []}, "provenance": []}
+        }
+        """
+        msg_b2.response_metadata = {"done_reason": "stop"}
+
+        mock_invoke.side_effect = [msg_a, msg_b1, msg_b2]
+
+        agent.extract("test_freetext", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_freetext")
+        assert os.path.exists(os.path.join(draft_dir, "provenance.json"))
+        assert os.path.exists(os.path.join(draft_dir, "debug", "step_B_0.txt")) # debug for failed attempt
+    finally:
+        os.chdir(old_cwd)
