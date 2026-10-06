@@ -324,6 +324,12 @@ Adjust settings and models individually per agent:
 | Variable | Description |
 | :--- | :--- |
 | `LLM_PROVIDER` | `ollama`, `openai`, `anthropic`, or `gemini` (Google) |
+| `LLM_REASONING` | Enable reasoning for all agents (e.g. `true`, `false`, `default`). Optional. |
+| `LLM_KEEP_ALIVE` | Duration to keep the model loaded in Ollama (e.g. `30m`). Optional. |
+| `PACK_NUM_CTX` | Context window size for `PackExtractorAgent` (default: 32768) |
+| `PACK_NUM_PREDICT` | Output token limit for `PackExtractorAgent` (default: 16384) |
+| `PACK_REASONING` | Enable reasoning specifically for `PackExtractorAgent`. Default is `false` to avoid length truncation, but overrides `LLM_REASONING` unless set to `default`. |
+| `PACK_EXTRACTOR_TEMP` | Temperature specifically used by `PackExtractorAgent` (default: 0.1) |
 | `EMBEDDING_PROVIDER` | `ollama`, `openai`, or `gemini` |
 | `LLM_MODEL` | Default fallback model name |
 | `SYSTEM_PACK` | The id of the system pack to load from the `systems/` directory. If missing or empty, defaults to legacy experimental mode. |

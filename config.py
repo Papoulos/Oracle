@@ -39,6 +39,29 @@ if not SHEET_MANAGER_MODEL:
 
 SHEET_MANAGER_TEMP = float(os.getenv("SHEET_MANAGER_TEMP", 0.1))
 
+def parse_tristate(value: str | None) -> bool | None:
+    if value is None:
+        return None
+    val_lower = value.strip().lower()
+    if val_lower == "true":
+        return True
+    if val_lower == "false":
+        return False
+    if val_lower == "default" or val_lower == "":
+        return None
+    return None
+
+# --- LLM Additional Options ---
+LLM_REASONING = parse_tristate(os.getenv("LLM_REASONING"))
+LLM_KEEP_ALIVE = os.getenv("LLM_KEEP_ALIVE")
+
+# --- Pack Extractor Configuration ---
+PACK_NUM_CTX = int(os.getenv("PACK_NUM_CTX", 32768))
+PACK_NUM_PREDICT = int(os.getenv("PACK_NUM_PREDICT", 16384))
+PACK_REASONING_RAW = os.getenv("PACK_REASONING")
+PACK_REASONING = parse_tristate(PACK_REASONING_RAW) if PACK_REASONING_RAW is not None else False
+PACK_EXTRACTOR_TEMP = float(os.getenv("PACK_EXTRACTOR_TEMP", 0.1))
+
 # --- Server Configuration ---
 SERVER_ADDRESS = os.getenv("SERVER_ADDRESS")
 SERVER_PORT = int(os.getenv("SERVER_PORT")) if os.getenv("SERVER_PORT") else None

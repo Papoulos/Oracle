@@ -71,17 +71,25 @@ def extract_json(text: str, expected_type: type = dict):
 
     return None
 
-def get_llm(model_name, temperature):
+def get_llm(model_name, temperature, **options):
     # Ensure model_name is a string even if config values are None
     model_name = str(model_name) if model_name is not None else "default-model"
     if config.LLM_PROVIDER == "ollama":
-        return ChatOllama(
-            model=model_name,
-            base_url=config.LLM_BASE_URL,
-            temperature=temperature,
-            num_ctx=16384, # Doubled context window to support RAG + history + long responses
-            num_predict=2048  # Output token limit to prevent truncation
-        )
+        ollama_kwargs = {
+            "model": model_name,
+            "base_url": config.LLM_BASE_URL,
+            "temperature": temperature,
+            "num_ctx": options.get("num_ctx", 16384),
+            "num_predict": options.get("num_predict", 2048),
+        }
+        reasoning = options.get("reasoning", None)
+        if reasoning is not None:
+            ollama_kwargs["reasoning"] = reasoning
+        keep_alive = options.get("keep_alive", None)
+        if keep_alive is not None:
+            ollama_kwargs["keep_alive"] = keep_alive
+
+        return ChatOllama(**ollama_kwargs)
     elif config.LLM_PROVIDER == "anthropic":
         return ChatAnthropic(
             model_name=model_name,
@@ -149,9 +157,15 @@ def get_relevant_context(store, queries, log, threshold_chars, k=15) -> str:
     return "\n\n---\n\n".join(unique_contents.keys())
 
 class BaseAgent:
-    def __init__(self, model=None, temperature=0.7, verbose=False):
+    def __init__(self, model=None, temperature=0.7, verbose=False, llm_options: dict | None = None):
         model_name = model if model else config.LLM_MODEL
-        self.llm = get_llm(model_name, temperature)
+        options = llm_options if llm_options is not None else {}
+        if "reasoning" not in options and config.LLM_REASONING is not None:
+            options["reasoning"] = config.LLM_REASONING
+        if "keep_alive" not in options and config.LLM_KEEP_ALIVE is not None:
+            options["keep_alive"] = config.LLM_KEEP_ALIVE
+
+        self.llm = get_llm(model_name, temperature, **options)
         self.verbose = verbose
 
     def _invoke_logged(self, prompt_template, inputs, label=""):
