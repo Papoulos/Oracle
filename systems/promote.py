@@ -136,6 +136,9 @@ def promote_pack(pack_id: str, force: bool) -> None:
 
     try:
         shutil.move(draft_dir, target_dir)
+        debug_dir = os.path.join(target_dir, "debug")
+        if os.path.isdir(debug_dir):
+            shutil.rmtree(debug_dir)
         if bak_dir:
             shutil.rmtree(bak_dir)
         print(f"Successfully promoted draft to {target_dir}!")

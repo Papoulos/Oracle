@@ -559,3 +559,178 @@ def test_pack_extractor_free_text_retry_step_b(mock_invoke, test_pdfs, tmp_path)
         assert os.path.exists(os.path.join(draft_dir, "debug", "step_B_0.txt")) # debug for failed attempt
     finally:
         os.chdir(old_cwd)
+
+def test_step_b_examples_valid():
+    from pack_extractor import STEP_B_EXAMPLE_RESOURCES, STEP_B_EXAMPLE_TRIGGERS
+    from mechanics.models import ResourcesConfig, TriggersConfig
+    ResourcesConfig.model_validate(STEP_B_EXAMPLE_RESOURCES["config"])
+    TriggersConfig.model_validate(STEP_B_EXAMPLE_TRIGGERS["config"])
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_tolerant_unfolding(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+
+        msg_b = MagicMock()
+        # file data without "config" wrapper
+        msg_b.content = """
+        {
+          "resolution.json": {"config": {"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}, "provenance": []},
+          "resources.json": {"recovery_triggers": [], "pools": [], "pool_groups": []},
+          "triggers.json": {"version": 1, "rules": []}
+        }
+        """
+
+        mock_invoke.side_effect = [msg_a, msg_b]
+
+        agent.extract("test_tolerant", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_tolerant")
+        assert os.path.exists(os.path.join(draft_dir, "resources.json"))
+        assert os.path.exists(os.path.join(draft_dir, "triggers.json"))
+
+        with open(os.path.join(draft_dir, "resources.json"), "r") as f:
+            res_data = json.load(f)
+            assert "recovery_triggers" in res_data
+
+    finally:
+        os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_valid_envelope_behavior(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+
+        msg_b = MagicMock()
+        # Correct envelope
+        msg_b.content = """
+        {
+          "resolution.json": {"config": {"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}, "provenance": []},
+          "resources.json": {"config": {"recovery_triggers": [], "pools": [], "pool_groups": []}, "provenance": []},
+          "triggers.json": {"config": {"version": 1, "rules": []}, "provenance": []}
+        }
+        """
+
+        mock_invoke.side_effect = [msg_a, msg_b]
+
+        agent.extract("test_valid_env", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_valid_env")
+        assert os.path.exists(os.path.join(draft_dir, "provenance.json"))
+        assert not os.path.exists(os.path.join(draft_dir, "debug")) # No debug output if no errors
+    finally:
+        os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_no_config_no_valid_fields(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+
+        msg_b = MagicMock()
+        msg_b.content = """
+        {
+          "resolution.json": {"config": {"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}, "provenance": []},
+          "resources.json": {"invalid_key": "some_value"},
+          "triggers.json": {"config": {"version": 1, "rules": []}, "provenance": []}
+        }
+        """
+
+        # In max_retries, it will fail 3 times. We need 3 msg_b mock returns
+        mock_invoke.side_effect = [msg_a, msg_b, msg_b, msg_b]
+
+        agent.extract("test_no_config_invalid", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_no_config_invalid")
+        debug_file = os.path.join(draft_dir, "debug", "step_B_0.txt")
+        assert os.path.exists(debug_file)
+
+        with open(debug_file, "r") as f:
+            debug_content = f.read()
+            assert "Missing 'config' inside 'resources.json'" in debug_content
+            assert 'Expected {"config": {...}, "provenance": [...]}' in debug_content
+            assert "Keys received: invalid_key" in debug_content
+            assert "Field required" in debug_content # ValidationError detail
+    finally:
+        os.chdir(old_cwd)
+
+@patch.object(PackExtractorAgent, '_invoke_logged')
+def test_pack_extractor_debug_file_written(mock_invoke, test_pdfs, tmp_path):
+    old_cwd = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        import systems.promote
+        systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+        agent = PackExtractorAgent()
+
+        msg_a = MagicMock()
+        msg_a.content = '{"family": "D20VsTarget", "confidence": 95, "why": "Uses d20"}'
+
+        msg_b1 = MagicMock()
+        msg_b1.content = '{"resolution.json": {"config": {"invalid": 1}}}'
+        msg_b2 = MagicMock()
+        msg_b2.content = '{"resolution.json": {"config": {"invalid": 2}}}'
+        msg_b3 = MagicMock()
+        msg_b3.content = '{"resolution.json": {"config": {"invalid": 3}}}'
+
+        mock_invoke.side_effect = [msg_a, msg_b1, msg_b2, msg_b3]
+
+        agent.extract("test_debug_file", test_pdfs)
+
+        draft_dir = os.path.join(tmp_path, "systems", "draft", "test_debug_file")
+        assert os.path.exists(os.path.join(draft_dir, "debug", "step_B_0.txt"))
+        assert os.path.exists(os.path.join(draft_dir, "debug", "step_B_1.txt"))
+        assert os.path.exists(os.path.join(draft_dir, "debug", "step_B_2.txt"))
+    finally:
+        os.chdir(old_cwd)
+
+def test_promote_removes_debug_folder(tmp_path):
+    import systems.promote
+    systems.promote.SYSTEMS_DIR = str(tmp_path / 'systems')
+    draft_dir = systems.promote.get_draft_dir("test_promote")
+
+    os.makedirs(draft_dir)
+    os.makedirs(os.path.join(draft_dir, "debug"))
+
+    with open(os.path.join(draft_dir, "debug", "step_B_1.txt"), "w") as f:
+        f.write("error")
+
+    with open(os.path.join(draft_dir, "manifest.yaml"), "w") as f:
+        f.write("id: test_promote\nname: Test Promote\nversion: 1.0.0\nlanguage: en\nfamily: D20VsTarget\nsource_pdfs: []")
+
+    with open(os.path.join(draft_dir, "provenance.json"), "w") as f:
+        f.write('{"status": "complete", "entries": [], "pack_id": "test_promote", "model": "test_model", "generated_at": "2024-01-01T00:00:00Z", "context_pages": []}')
+
+    with open(os.path.join(draft_dir, "resolution.json"), "w") as f:
+        f.write('{"family": "D20VsTarget", "advantage_enabled": true, "critical_success_on": 20, "critical_failure_on": 1}')
+    with open(os.path.join(draft_dir, "resources.json"), "w") as f:
+        f.write('{"recovery_triggers": [], "pools": [], "pool_groups": []}')
+    with open(os.path.join(draft_dir, "triggers.json"), "w") as f:
+        f.write('{"version": 1, "rules": []}')
+
+    systems.promote.promote_pack("test_promote", False)
+
+    target_dir = systems.promote.get_target_dir("test_promote")
+    assert os.path.exists(target_dir)
+    assert not os.path.exists(os.path.join(target_dir, "debug"))
+    assert os.path.exists(os.path.join(target_dir, "manifest.yaml"))

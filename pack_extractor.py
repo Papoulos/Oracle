@@ -111,6 +111,29 @@ def select_pages(store: Chroma, queries: list[str], pages: list[PageText], max_c
     return selected_pages
 
 
+STEP_B_EXAMPLE_RESOURCES = {
+  "config": {
+    "recovery_triggers": [{"id": "full_rest", "name": "Full rest"}],
+    "pools": [{
+      "id": "vitality", "name": "Vitality", "kind": "health", "min_value": 0,
+      "current_path": "resources.vitality.current", "max_path": "resources.vitality.max",
+      "recovery": [{"trigger": "full_rest", "mode": "full"}]
+    }],
+    "pool_groups": []
+  },
+  "provenance": [{"path": "/pools/0/kind", "source": "rules.pdf", "page": 42,
+                  "excerpt": "Vitality measures how much damage a character can take.",
+                  "confidence": 85}]
+}
+STEP_B_EXAMPLE_TRIGGERS = {
+  "config": {"version": 1, "rules": [{
+    "id": "full_rest_request", "kind": "recover", "trigger": "full_rest",
+    "keywords": {"en": ["full rest", "sleep through the night"]}
+  }]},
+  "provenance": [{"path": "/rules/0/trigger", "source": "rules.pdf", "page": 43,
+                  "excerpt": "A full rest restores all vitality.", "confidence": 80}]
+}
+
 STEP_A_PROMPT = ChatPromptTemplate.from_messages([
     ("system", """You are an expert RPG systems analyst.
 Determine the mechanical resolution family of the provided rulebook, its name, and its language.
@@ -454,12 +477,17 @@ class PackExtractorAgent(BaseAgent):
 
         for attempt in range(max_retries):
             logging.info(f"Step B: Extraction attempt {attempt + 1}/{max_retries}...")
+            examples_text = f"EXAMPLE ONLY, from a fictional game. Use the real values from the rules text. Never copy these ids, names or page numbers. Keywords must be in {{language}}.\n"
+            examples_text += "resources.json example:\n" + _json.dumps(STEP_B_EXAMPLE_RESOURCES, indent=2) + "\n\n"
+            examples_text += "triggers.json example:\n" + _json.dumps(STEP_B_EXAMPLE_TRIGGERS, indent=2) + "\n"
+
             resp_b = self._invoke_logged(STEP_B_PROMPT, {
                 "language": language,
                 "family": family,
                 "resolution_schema": res_schema,
                 "resources_schema": rec_schema,
                 "triggers_schema": trig_schema,
+                "examples": examples_text,
                 "context": context_str,
                 "errors": errors
             }, label=f"step_B_extract_{attempt}")
@@ -496,37 +524,71 @@ class PackExtractorAgent(BaseAgent):
                     current_errors.append(f"Missing '{file_name}' object.")
                     continue
 
-                config_dict = file_data.get("config")
-                if not config_dict:
-                    current_errors.append(f"Missing 'config' inside '{file_name}'.")
+                if not isinstance(file_data, dict):
+                    current_errors.append(f"Expected an object for '{file_name}', got {type(file_data).__name__}.")
                     continue
 
-                try:
-                    # Enforce family inside resolution config to ensure polymorphism works
+                config_dict = file_data.get("config")
+                if not config_dict:
+                    # Tolerant unfolding
+                    config_dict = {k: v for k, v in file_data.items() if k != "provenance"}
+
                     if file_name == "resolution.json":
                         config_dict["family"] = family
-                    valid_obj = adapter.validate_python(config_dict)
 
-                    # Update our best knowledge
-                    valid_configs[file_name] = valid_obj
+                    try:
+                        valid_obj = adapter.validate_python(config_dict)
+                        # Success unfolding!
+                        logging.warning(f"config sans enveloppe pour {file_name}")
+                        # Provide empty provenance, schema will fill defaults with needs_review=True
+                        file_data["provenance"] = []
+                    except ValidationError as ve:
+                        keys_received = ", ".join(file_data.keys())
+                        err_msg = [
+                            f"Missing 'config' inside '{file_name}'.",
+                            'Expected {"config": {...}, "provenance": [...]}.',
+                            f"Keys received: {keys_received}"
+                        ]
+                        for err in ve.errors():
+                            loc = ".".join(str(l) for l in err["loc"])
+                            msg = err["msg"]
+                            val = str(err.get("input", ""))[:80]
+                            err_msg.append(f"File {file_name}, Path {loc}: {msg}. Value provided: {val}")
+                        current_errors.append("\n".join(err_msg))
+                        continue
+                else:
+                    try:
+                        if file_name == "resolution.json":
+                            config_dict["family"] = family
+                        valid_obj = adapter.validate_python(config_dict)
+                    except ValidationError as ve:
+                        # Condense error
+                        for err in ve.errors():
+                            loc = ".".join(str(l) for l in err["loc"])
+                            msg = err["msg"]
+                            val = str(err.get("input", ""))[:80]
+                            current_errors.append(f"File {file_name}, Path {loc}: {msg}. Value provided: {val}")
+                        continue
 
-                    # Process provenance
-                    raw_prov = file_data.get("provenance", [])
-                    entries = self._evaluate_provenance(valid_obj.model_dump(mode="json"), raw_prov, selected_pages)
-                    for e in entries:
-                         e.file = file_name
+                # Shared logic for both branches (if validation succeeds)
+                valid_configs[file_name] = valid_obj
 
-                    # Remove old entries for this file, add new ones
-                    all_entries = [e for e in all_entries if e.file != file_name]
-                    all_entries.extend(entries)
+                # Process provenance
+                raw_prov = file_data.get("provenance", [])
+                entries = self._evaluate_provenance(valid_obj.model_dump(mode="json"), raw_prov, selected_pages)
+                for e in entries:
+                     e.file = file_name
 
-                except ValidationError as ve:
-                    # Condense error
-                    for err in ve.errors():
-                        loc = ".".join(str(l) for l in err["loc"])
-                        msg = err["msg"]
-                        val = str(err.get("input", ""))[:80]
-                        current_errors.append(f"File {file_name}, Path {loc}: {msg}. Value provided: {val}")
+                # Remove old entries for this file, add new ones
+                all_entries = [e for e in all_entries if e.file != file_name]
+                all_entries.extend(entries)
+
+
+            if current_errors:
+                debug_dir = os.path.join(draft_dir, "debug")
+                os.makedirs(debug_dir, exist_ok=True)
+                with open(os.path.join(debug_dir, f"step_B_{attempt}.txt"), "w", encoding="utf-8") as f:
+                    f.write(f"=== METADATA ===\n{getattr(resp_b, 'response_metadata', {})}\n\n=== CONTENT ===\n{text_b}\n\n=== ERRORS ===\n" + "\n".join(current_errors))
 
             if not current_errors:
                 # We have all files valid individually. Now cross-file validation.
