@@ -1,0 +1,31 @@
+{
+  "recovery_triggers": [
+    {"id": "long_rest", "name": "Long Rest"},
+    {"id": "short_rest", "name": "Short Rest"}
+  ],
+  "pools": [
+    {
+      "id": "hit_dice",
+      "name": "Hit Dice",
+      "kind": "counter",
+      "min_value": 0,
+      "current_path": "resources.hit_dice.current",
+      "max_path": "resources.hit_dice.max",
+      "recovery": [
+        {"trigger": "long_rest", "mode": "formula", "amount_expr": "max(1, floor(pool.max / 2))"}
+      ]
+    },
+    {
+      "id": "stamina",
+      "name": "Stamina",
+      "kind": "counter",
+      "min_value": 0,
+      "current_path": "resources.stamina.current",
+      "max_path": "resources.stamina.max",
+      "recovery": [
+        {"trigger": "short_rest", "mode": "formula", "amount_expr": "d(1, 6) + character.tier"}
+      ]
+    }
+  ],
+  "pool_groups": []
+}

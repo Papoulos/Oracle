@@ -140,10 +140,13 @@ class RecoveryTrigger(BaseModel):
     id: str
     name: str
 
+from mechanics.expr import Formula
+
 class RecoveryRule(BaseModel):
     trigger: str
-    mode: Literal["full", "fixed", "percent"]
+    mode: Literal["full", "fixed", "percent", "formula"]
     amount: int | None = None
+    amount_expr: Formula | None = None
 
     def model_post_init(self, __context):
         if self.mode in ("fixed", "percent") and self.amount is None:
@@ -151,6 +154,13 @@ class RecoveryRule(BaseModel):
         if self.mode == "percent" and self.amount is not None:
             if not (0 <= self.amount <= 100):
                 raise ValueError("amount must be between 0 and 100 when mode is 'percent'")
+        if self.mode == "formula":
+            if self.amount_expr is None:
+                raise ValueError("amount_expr must be provided when mode is 'formula'")
+            if self.amount is not None:
+                raise ValueError("amount is forbidden when mode is 'formula'")
+        if self.mode in ("full", "fixed", "percent") and self.amount_expr is not None:
+            raise ValueError(f"amount_expr is forbidden when mode is '{self.mode}'")
 
 
 class PoolDef(BaseModel):
