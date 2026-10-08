@@ -1,0 +1,56 @@
+import re
+
+with open('tests/fixtures/cypher_recovery_pack/resolution.json', 'w') as f:
+    f.write("""{
+  "family": "StepTargetD20",
+  "multiplier": 3,
+  "min_difficulty": 0,
+  "max_difficulty": 10,
+  "auto_success_at": 0,
+  "tiers": [],
+  "modifiers": {
+    "attribute": 0,
+    "skill": 0,
+    "situational": 0,
+    "gear": 0
+  },
+  "advantages": {
+    "boons": 0,
+    "banes": 0
+  },
+  "step_modifiers": {
+    "trainings": 0,
+    "assets": 0,
+    "efforts": 0,
+    "inability": 0
+  }
+}""")
+
+with open('tests/fixtures/cypher_recovery_auto_pack/resolution.json', 'w') as f:
+    f.write("""{
+  "family": "StepTargetD20",
+  "multiplier": 3,
+  "min_difficulty": 0,
+  "max_difficulty": 10,
+  "auto_success_at": 0,
+  "tiers": [],
+  "modifiers": {
+    "attribute": 0,
+    "skill": 0,
+    "situational": 0,
+    "gear": 0
+  },
+  "advantages": {
+    "boons": 0,
+    "banes": 0
+  },
+  "step_modifiers": {
+    "trainings": 0,
+    "assets": 0,
+    "efforts": 0,
+    "inability": 0
+  }
+}""")
+
+
+print("Fixes 13 applied")

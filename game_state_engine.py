@@ -323,7 +323,46 @@ class GameStateEngine:
                 pass
         return {"recovery_tiers": []}
 
+
+    def next_rest(self, sequence_id: str) -> ActionResult:
+        """
+        Advances and applies the next rest in a defined recovery sequence.
+        """
+        if not self.pack or not getattr(self.pack.resources, "recovery_sequences", []):
+            return ActionResult(success=False, message="No recovery sequences defined in this pack.")
+
+        if "pending_allocation" in self.state:
+            return ActionResult(success=False, message="Cannot execute sequence while there is a pending recovery allocation.")
+
+        seq = next((s for s in self.pack.resources.recovery_sequences if s.id == sequence_id), None)
+        if not seq:
+            valid_seqs = [s.id for s in self.pack.resources.recovery_sequences]
+            return ActionResult(success=False, message=f"Unknown recovery sequence '{sequence_id}'. Valid sequences are: {', '.join(valid_seqs)}.")
+
+        # Read index
+        current_index = get_by_path(self.state, seq.state_path)
+        if current_index is None:
+            current_index = 0
+        elif not isinstance(current_index, int) or isinstance(current_index, bool) or current_index < 0:
+            logger.warning(f"Invalid state for sequence index at '{seq.state_path}'. Defaulting to 0.")
+            current_index = 0
+        elif current_index >= len(seq.steps):
+            logger.warning(f"Sequence index at '{seq.state_path}' out of bounds. Wrapping around.")
+            current_index = current_index % len(seq.steps)
+
+        trigger = seq.steps[current_index]
+        next_index = (current_index + 1) % len(seq.steps)
+
+        # We need to execute the rest without saving, append our sequence changes, then save
+        # To do this safely without rewriting the whole rest(), we can temporarily patch save()
+        # But a cleaner way is just to call a modified internal _apply_rest
+
+        return self._inner_rest(trigger, sequence_info={"id": sequence_id, "step": trigger, "index": current_index, "next_index": next_index, "path": seq.state_path})
+
     def rest(self, trigger_id: str = "long") -> ActionResult:
+        return self._inner_rest(trigger_id)
+
+    def _inner_rest(self, trigger_id: str = "long", sequence_info: dict = None) -> ActionResult:
         """
         Applies a rest/recovery action.
 
@@ -337,6 +376,9 @@ class GameStateEngine:
               - min: The minimum value of the pool (configuration 'min_value').
         """
         if self.pack:
+            if "pending_allocation" in self.state:
+                return ActionResult(success=False, message="Cannot rest while there is a pending recovery allocation.")
+
             # Check if recovery_rules.json exists and log warning
             if os.path.exists("Memory/recovery_rules.json"):
                 logger.info("Memory/recovery_rules.json exists but is ignored because a system pack is loaded.")
@@ -426,8 +468,91 @@ class GameStateEngine:
                                 except ExprError as e:
                                     return ActionResult(success=False, message=f"Recovery formula failed for '{group.id}': {e}")
 
+            pooled_changes = []
+            pending_alloc = None
+
+            for pooled_rule in getattr(self.pack.resources, "pooled_recoveries", []):
+                if trigger_id in pooled_rule.triggers:
+                    try:
+                        points = max(0, evaluate_int(pooled_rule.points_expr, {"character": self.state}, self.rng))
+
+                        if pooled_rule.allocation == "auto_in_order":
+                            projected_values = {}
+                            max_values = {}
+
+                            for pool_id in pooled_rule.among:
+                                pool = next((p for p in self.pack.resources.pools if p.id == pool_id), None)
+                                if pool:
+                                    max_val = pool.max_value if pool.max_value is not None else get_by_path(self.state, pool.max_path)
+                                    curr_val = get_by_path(self.state, pool.current_path)
+                                    if max_val is not None and curr_val is not None:
+                                        projected_values[pool.id] = curr_val
+                                        max_values[pool.id] = max_val
+
+                            for change in pending_changes:
+                                if change["type"] == "pool":
+                                    pid = change["pool"].id
+                                    if pid in projected_values:
+                                        projected_values[pid] = change["new_val"]
+                                elif change["type"] == "group_pool":
+                                    pid = change["pool"].id
+                                    if pid in projected_values:
+                                        projected_values[pid] = change["new_val"]
+
+                            allocated = {}
+                            unallocated = points
+
+                            for pool_id in pooled_rule.among:
+                                if pool_id not in projected_values:
+                                    continue
+
+                                missing = max_values[pool_id] - projected_values[pool_id]
+                                if missing > 0 and unallocated > 0:
+                                    gain = min(missing, unallocated)
+                                    avant = projected_values[pool_id]
+                                    projected_values[pool_id] += gain
+                                    unallocated -= gain
+
+                                    allocated[pool_id] = {
+                                        "avant": avant,
+                                        "apres": projected_values[pool_id],
+                                        "gain": gain
+                                    }
+
+                                    pool = next(p for p in self.pack.resources.pools if p.id == pool_id)
+                                    pooled_changes.append({
+                                        "type": "pool",
+                                        "pool": pool,
+                                        "current": avant,
+                                        "new_val": projected_values[pool_id],
+                                        "gain": gain
+                                    })
+
+                            state_changes.setdefault("pooled", {})[pooled_rule.id] = {
+                                "allocated": allocated,
+                                "wasted": {
+                                    "total": unallocated,
+                                    "unallocated": unallocated,
+                                    "capped": {}
+                                }
+                            }
+
+                        elif pooled_rule.allocation == "player_choice":
+                            pending_alloc = {
+                                "rule_id": pooled_rule.id,
+                                "trigger": trigger_id,
+                                "points": points,
+                                "among": pooled_rule.among
+                            }
+                    except ExprError as e:
+                        return ActionResult(success=False, message=f"Recovery formula failed for pooled rule '{pooled_rule.id}': {e}")
+
+            if pending_alloc:
+                self.state["pending_allocation"] = pending_alloc
+                state_changes["pending_allocation"] = pending_alloc
+
             # Apply changes
-            for change in pending_changes:
+            for change in pending_changes + pooled_changes:
                 if change["type"] == "pool":
                     pool = change["pool"]
                     if change["current"] != change["new_val"]:
@@ -448,12 +573,33 @@ class GameStateEngine:
                             state_changes[group.id] = {}
                         state_changes[group.id][change["key"]] = {"avant": change["current"], "apres": change["new_val"], "gain": change["gain"]}
 
+            if sequence_info:
+                set_by_path(self.state, sequence_info["path"], sequence_info["next_index"])
+                state_changes["sequence"] = {
+                    "id": sequence_info["id"],
+                    "step": sequence_info["step"],
+                    "next_index": sequence_info["next_index"]
+                }
+
             self.synchronize_and_recalculate()
             self.save()
+
+            final_changes = {"rest": trigger_id, "restored": {}}
+            for key, val in state_changes.items():
+                if key in ("pending_allocation", "pooled", "sequence", "restored"):
+                    final_changes[key] = val
+                else:
+                    final_changes["restored"][key] = val
+
+            msg = f"Rest '{trigger_id}' completed. Restored: {', '.join(restored) if restored else 'nothing'}."
+            if sequence_info:
+                seq = next((s for s in getattr(self.pack.resources, 'recovery_sequences', []) if s.id == sequence_info['id']), None)
+                msg += f" (step {sequence_info['index'] + 1}/{len(seq.steps) if seq else '?'})"
+
             return ActionResult(
                 success=True,
-                message=f"Rest '{trigger_id}' completed. Restored: {', '.join(restored) if restored else 'nothing'}.",
-                state_changes={"rest": trigger_id, "restored": state_changes}
+                message=msg,
+                state_changes=final_changes
             )
 
         # Experimental Mode
@@ -520,6 +666,87 @@ class GameStateEngine:
             success=True,
             message=f"Rest '{palier['name']}' completed. Restored: {', '.join(restored) if restored else 'nothing'}.",
             state_changes={"rest": trigger_id, "restored": restored}
+        )
+
+
+    def allocate_recovery(self, allocation: dict[str, int]) -> ActionResult:
+        """
+        Distributes a pending pooled recovery among chosen pools.
+        """
+        pending = self.state.get("pending_allocation")
+        if not pending:
+            return ActionResult(success=False, message="No pending allocation to resolve.")
+
+        among = set(pending["among"])
+        points = pending["points"]
+
+        # Validation
+        for k, v in allocation.items():
+            if k not in among:
+                return ActionResult(success=False, message=f"Key '{k}' is not in the allowed targets ({', '.join(among)}).")
+            if not isinstance(v, int) or v < 0:
+                return ActionResult(success=False, message=f"Value for '{k}' must be a non-negative integer.")
+
+        total_requested = sum(allocation.values())
+        if total_requested > points:
+            return ActionResult(success=False, message=f"Total allocated points ({total_requested}) exceed available points ({points}).")
+
+        unallocated = points - total_requested
+
+        # Calculate actual gains and wastes
+        allocated = {}
+        capped = {}
+
+        for k, req in allocation.items():
+            if req == 0:
+                continue
+
+            pool = next((p for p in self.pack.resources.pools if p.id == k), None)
+            if not pool:
+                continue
+
+            curr = get_by_path(self.state, pool.current_path)
+            max_val = pool.max_value if pool.max_value is not None else get_by_path(self.state, pool.max_path)
+
+            if curr is None or max_val is None:
+                continue
+
+            missing = max(0, max_val - curr)
+            gain = min(req, missing)
+            cap = req - gain
+
+            if gain > 0:
+                allocated[k] = {
+                    "avant": curr,
+                    "apres": curr + gain,
+                    "gain": gain
+                }
+                set_by_path(self.state, pool.current_path, curr + gain)
+
+            if cap > 0:
+                capped[k] = cap
+
+        wasted_total = unallocated + sum(capped.values())
+        wasted = {
+            "total": wasted_total,
+            "unallocated": unallocated,
+            "capped": capped
+        }
+
+        state_changes = {
+            "allocated": allocated,
+            "wasted": wasted,
+            "rule_id": pending["rule_id"]
+        }
+
+        del self.state["pending_allocation"]
+        self.synchronize_and_recalculate()
+        self.save()
+
+        return ActionResult(
+            success=True,
+            message="Recovery allocation applied successfully.",
+            state_changes=state_changes
         )
 
     def _legacy_rest(self, rest_type: str = "long") -> ActionResult:

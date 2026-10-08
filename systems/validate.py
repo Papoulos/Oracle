@@ -155,7 +155,80 @@ def validate_pack(pack_path: str) -> list[Issue]:
                         except ExprError as e:
                             issues.append(Issue(severity="error", file="resources.json", path=path, message=str(e)))
 
+            for i, rule in enumerate(resources_data.get("pooled_recoveries", [])):
+                if rule.get("points_expr"):
+                    path = f"/pooled_recoveries/{i}/points_expr"
+                    try:
+                        compile_expr(rule["points_expr"])
+                        vars_ref = referenced_variables(rule["points_expr"])
+                        for var in vars_ref:
+                            if not var.startswith("character."):
+                                issues.append(Issue(
+                                    severity="error",
+                                    file="resources.json",
+                                    path=path,
+                                    message=f"Invalid variable '{var}' in pooled recovery rule '{rule.get('id', 'unknown')}'. Allowed: variables starting with 'character.'."
+                                ))
+                    except ExprError as e:
+                        issues.append(Issue(severity="error", file="resources.json", path=path, message=str(e)))
+
             resources = ResourcesConfig.model_validate(resources_data)
+
+            # Cross-validation for resources
+            recovery_triggers = {t.id for t in resources.recovery_triggers}
+            pools = {p.id: p for p in resources.pools}
+
+            # Check unique IDs in pooled_recoveries and recovery_sequences
+            pooled_ids = set()
+            for i, rule in enumerate(resources.pooled_recoveries):
+                if rule.id in pooled_ids:
+                    issues.append(Issue(severity="error", file="resources.json", path=f"/pooled_recoveries/{i}", message=f"Duplicate pooled_recovery id: {rule.id}"))
+                pooled_ids.add(rule.id)
+
+                # Check triggers exist
+                for trigger in rule.triggers:
+                    if trigger not in recovery_triggers:
+                        issues.append(Issue(severity="error", file="resources.json", path=f"/pooled_recoveries/{i}", message=f"Trigger '{trigger}' not found in recovery_triggers"))
+
+                # Check among targets valid pools
+                for target in rule.among:
+                    if target not in pools:
+                        issues.append(Issue(severity="error", file="resources.json", path=f"/pooled_recoveries/{i}", message=f"Target pool '{target}' not found in pools"))
+                    elif pools[target].kind not in ("health", "counter"):
+                        issues.append(Issue(severity="error", file="resources.json", path=f"/pooled_recoveries/{i}", message=f"Target pool '{target}' must be of kind 'health' or 'counter'"))
+
+            sequence_ids = set()
+            for i, seq in enumerate(resources.recovery_sequences):
+                if seq.id in sequence_ids:
+                    issues.append(Issue(severity="error", file="resources.json", path=f"/recovery_sequences/{i}", message=f"Duplicate recovery_sequence id: {seq.id}"))
+                sequence_ids.add(seq.id)
+
+                # Check steps exist in triggers
+                for step in seq.steps:
+                    if step not in recovery_triggers:
+                        issues.append(Issue(severity="error", file="resources.json", path=f"/recovery_sequences/{i}", message=f"Step '{step}' not found in recovery_triggers"))
+
+                # Check state_path syntax (pointer path syntax without resources. prefix)
+                if not re.match(r'^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$', seq.state_path):
+                    issues.append(Issue(severity="error", file="resources.json", path=f"/recovery_sequences/{i}", message=f"Invalid state_path syntax: {seq.state_path}"))
+                if seq.state_path.startswith("resources."):
+                    issues.append(Issue(severity="error", file="resources.json", path=f"/recovery_sequences/{i}", message=f"state_path should not start with 'resources.': {seq.state_path}"))
+
+            # Warn if a recovery_trigger has no rules
+            used_triggers = set()
+            for pool in resources.pools:
+                for rule in pool.recovery:
+                    used_triggers.add(rule.trigger)
+            for group in resources.pool_groups:
+                for rule in group.recovery:
+                    used_triggers.add(rule.trigger)
+            for rule in resources.pooled_recoveries:
+                for trigger in rule.triggers:
+                    used_triggers.add(trigger)
+
+            for trigger in recovery_triggers:
+                if trigger not in used_triggers:
+                    issues.append(Issue(severity="warning", file="resources.json", path=f"/recovery_triggers", message=f"Recovery trigger '{trigger}' is not used by any pool, pool_group, or pooled_recovery rule"))
             check_for_todos(resources_data, "resources.json", "", issues)
 
         except ValidationError as e:
