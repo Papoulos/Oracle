@@ -99,6 +99,17 @@ def test_short_circuit():
     assert evaluate("1 if True else 10 / 0", {}) == 1
     assert evaluate("10 / 0 if False else 1", {}) == 1
 
+def test_boolean_logic():
+    # evaluate_int should fail because result is boolean
+    with pytest.raises(ExprError, match="Result is boolean, expected int"):
+        evaluate_int("x and 5", {"x": 3})
+
+    assert evaluate("0 or 0", {}) == False
+    assert evaluate("x and 5", {"x": 3}) == True
+    assert evaluate("x or 5", {"x": 0}) == True
+    assert evaluate("not x", {"x": 0}) == True
+    assert evaluate("not x", {"x": 1}) == False
+
 def test_pydantic_formula():
     class Model(BaseModel):
         f: Formula

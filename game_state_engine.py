@@ -3,10 +3,12 @@ import os
 import logging
 import unicodedata
 import re
+import random
 from dataclasses import dataclass, field
 from typing import Optional
 from systems.loader import SystemPack
 from mechanics.paths import get_by_path, set_by_path
+from mechanics.expr import evaluate_int, ExprError
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +44,10 @@ class GameStateEngine:
         "inspiration": "inspiration",
     }
 
-    def __init__(self, character_path: str = "Memory/character.json", pack: Optional[SystemPack] = None):
+    def __init__(self, character_path: str = "Memory/character.json", pack: Optional[SystemPack] = None, rng: Optional[random.Random] = None):
         self.character_path = character_path
         self.pack = pack
+        self.rng = rng if rng is not None else random.Random()
         if self.pack is None:
             logger.warning("mode expérimental, aucun system pack chargé")
         else:
@@ -321,6 +324,18 @@ class GameStateEngine:
         return {"recovery_tiers": []}
 
     def rest(self, trigger_id: str = "long") -> ActionResult:
+        """
+        Applies a rest/recovery action.
+
+        Formula Evaluation Context (ctx):
+        When using the "formula" recovery mode via System Packs, the formula evaluates
+        against a specific context containing:
+          - character: The full character sheet state (self.state)
+          - pool: Information about the pool being recovered, containing:
+              - current: The current value of the pool.
+              - max: The maximum value of the pool.
+              - min: The minimum value of the pool (configuration 'min_value').
+        """
         if self.pack:
             # Check if recovery_rules.json exists and log warning
             if os.path.exists("Memory/recovery_rules.json"):
@@ -337,17 +352,28 @@ class GameStateEngine:
             restored = []
             state_changes = {}
 
-            def apply_rule(current_val, max_val, mode, amount):
-                if mode == "full":
-                    return max_val
-                elif mode == "fixed":
-                    return min(max_val, current_val + amount)
-                elif mode == "percent":
-                    gain = max(1, max_val * amount // 100)
-                    return min(max_val, current_val + gain)
-                return current_val
+            def apply_rule(current_val, max_val, min_val, rule):
+                if rule.mode == "full":
+                    gain = max_val - current_val
+                    return min(max_val, current_val + gain), min(max_val - current_val, gain)
+                elif rule.mode == "fixed":
+                    gain = rule.amount
+                    return min(max_val, current_val + gain), min(max_val - current_val, gain)
+                elif rule.mode == "percent":
+                    gain = max(1, max_val * rule.amount // 100)
+                    return min(max_val, current_val + gain), min(max_val - current_val, gain)
+                elif rule.mode == "formula":
+                    ctx = {
+                        "character": self.state,
+                        "pool": {"current": current_val, "max": max_val, "min": min_val}
+                    }
+                    gain = max(0, evaluate_int(rule.amount_expr, ctx, self.rng))
+                    return min(max_val, current_val + gain), min(max_val - current_val, gain)
+                return current_val, 0
 
-            # Apply to pools
+            pending_changes = []
+
+            # Gather pools
             for pool in self.pack.resources.pools:
                 rule = next((r for r in pool.recovery if r.trigger == trigger_id), None)
                 if rule:
@@ -363,36 +389,64 @@ class GameStateEngine:
                         if max_val is None:
                             logger.warning(f"Unresolvable max value for pool '{pool.id}'. Ignored during rest.")
                             continue
-                        new_val = apply_rule(current, max_val, rule.mode, rule.amount)
-                        set_by_path(self.state, pool.current_path, new_val)
-                        if current != new_val:
-                            restored.append(pool.name)
-                            state_changes[pool.id] = {"avant": current, "apres": new_val}
+                        try:
+                            new_val, gain = apply_rule(current, max_val, pool.min_value, rule)
+                            pending_changes.append({
+                                "type": "pool",
+                                "pool": pool,
+                                "current": current,
+                                "new_val": new_val,
+                                "gain": gain
+                            })
+                        except ExprError as e:
+                            return ActionResult(success=False, message=f"Recovery formula failed for '{pool.id}': {e}")
 
-                        # Mirror top-level pv if it's health
-                        if pool.kind == "health" and "pv" in self.state:
-                            self.state["pv"] = new_val
-
-            # Apply to pool_groups
+            # Gather pool_groups
             for group in self.pack.resources.pool_groups:
                 rule = next((r for r in group.recovery if r.trigger == trigger_id), None)
                 if rule:
                     group_dict = get_by_path(self.state, group.path)
                     if isinstance(group_dict, dict):
-                        group_restored = False
-                        group_changes = {}
-                        for key, values in group_dict.items():
-                            if isinstance(values, dict) and "current" in values and "max" in values:
-                                current = values["current"]
-                                max_val = values["max"]
-                                new_val = apply_rule(current, max_val, rule.mode, rule.amount)
-                                values["current"] = new_val
-                                if current != new_val:
-                                    group_restored = True
-                                    group_changes[key] = {"avant": current, "apres": new_val}
-                        if group_restored:
+                        for key, sub_res in group_dict.items():
+                            if isinstance(sub_res, dict) and "current" in sub_res and "max" in sub_res:
+                                current = sub_res["current"]
+                                max_val = sub_res["max"]
+                                min_val = 0 # Sub-pools default to 0 min_value
+                                try:
+                                    new_val, gain = apply_rule(current, max_val, min_val, rule)
+                                    pending_changes.append({
+                                        "type": "group",
+                                        "group": group,
+                                        "key": key,
+                                        "current": current,
+                                        "new_val": new_val,
+                                        "gain": gain,
+                                        "dict_ref": sub_res
+                                    })
+                                except ExprError as e:
+                                    return ActionResult(success=False, message=f"Recovery formula failed for '{group.id}': {e}")
+
+            # Apply changes
+            for change in pending_changes:
+                if change["type"] == "pool":
+                    pool = change["pool"]
+                    if change["current"] != change["new_val"]:
+                        set_by_path(self.state, pool.current_path, change["new_val"])
+                        if pool.name not in restored:
+                            restored.append(pool.name)
+                        state_changes[pool.id] = {"avant": change["current"], "apres": change["new_val"], "gain": change["gain"]}
+
+                        if pool.kind == "health" and "pv" in self.state:
+                            self.state["pv"] = change["new_val"]
+                elif change["type"] == "group":
+                    group = change["group"]
+                    if change["current"] != change["new_val"]:
+                        change["dict_ref"]["current"] = change["new_val"]
+                        if group.name not in restored:
                             restored.append(group.name)
-                            state_changes[group.id] = group_changes
+                        if group.id not in state_changes:
+                            state_changes[group.id] = {}
+                        state_changes[group.id][change["key"]] = {"avant": change["current"], "apres": change["new_val"], "gain": change["gain"]}
 
             self.synchronize_and_recalculate()
             self.save()

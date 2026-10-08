@@ -239,14 +239,14 @@ def _evaluate_node(node: ast.AST, ctx: dict, rng: random.Random) -> Any:
             for val in node.values:
                 res = _evaluate_node(val, ctx, rng)
                 if not res:
-                    return res
-            return res
+                    return False
+            return True
         elif isinstance(node.op, ast.Or):
             for val in node.values:
                 res = _evaluate_node(val, ctx, rng)
                 if res:
-                    return res
-            return res
+                    return True
+            return False
         else:
             raise ExprError("Unsupported operator")
     elif isinstance(node, ast.Compare):

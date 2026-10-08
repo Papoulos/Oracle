@@ -141,6 +141,11 @@ To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle sep
     *   *Dynamic Recovery (Agnostic)*: Loads recovery tiers and triggers from `Memory/recovery_rules.json` and updates stats/resources dynamically based on the rule definition (e.g., full recovery, percentage recovery, flat recovery).
     *   *Standard Fallbacks*: Restores 100% of all resource pools and HP on a legacy `long` rest, and 25% HP on a legacy `short` rest if no custom recovery rules are present.
 *   **System Packs**: Full mechanical decoupling. The Engine now natively supports "System Packs" (`systems/<id>/`) containing `manifest.yaml`, `resolution.json`, `resources.json`, and the new `triggers.json`. Setting `SYSTEM_PACK=id` in your `.env` forces the engine to dynamically pull its health pools, spell groups, resting rules, and localized action keywords directly from the pack. The legacy "experimental mode" (with hardcoded strings and fallback recovery rules) is kept for backwards compatibility but triggers a warning if no pack is loaded.
+    *   **Formula Recovery Context**: System packs support `formula` recovery modes. The formulas are evaluated using a context (`ctx`) that includes:
+        *   `character`: the full character sheet (`self.state`).
+        *   `pool.current`: the current value of the pool being recovered.
+        *   `pool.max`: the maximum value of the pool being recovered (from `max_value`, `max_path` or group sub-dict key).
+        *   `pool.min`: the minimum value defined in the pool configuration (`min_value`, default 0).
 *   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
 
 ---

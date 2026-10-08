@@ -8,6 +8,7 @@ import re
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
 from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, PbtA2d6Config, TriggersConfig
+from mechanics.expr import compile_expr, referenced_variables, ExprError
 
 
 class Issue(BaseModel):
@@ -117,8 +118,46 @@ def validate_pack(pack_path: str) -> list[Issue]:
             with open(resources_path, "r", encoding="utf-8") as f:
                 resources_data = json.load(f)
 
+            # First pass: Validate formulas even if resources validation fails
+            for i, pool in enumerate(resources_data.get("pools", [])):
+                for j, rule in enumerate(pool.get("recovery", [])):
+                    if rule.get("mode") == "formula" and rule.get("amount_expr"):
+                        path = f"/pools/{i}/recovery/{j}/amount_expr"
+                        try:
+                            compile_expr(rule["amount_expr"])
+                            vars_ref = referenced_variables(rule["amount_expr"])
+                            for var in vars_ref:
+                                if not var.startswith("character.") and var not in ("pool.current", "pool.max", "pool.min"):
+                                    issues.append(Issue(
+                                        severity="error",
+                                        file="resources.json",
+                                        path=path,
+                                        message=f"Invalid variable '{var}' in recovery rule (pool '{pool.get('id', 'unknown')}', trigger '{rule.get('trigger', 'unknown')}'). Allowed: variables starting with 'character.' or one of pool.current, pool.max, pool.min."
+                                    ))
+                        except ExprError as e:
+                            issues.append(Issue(severity="error", file="resources.json", path=path, message=str(e)))
+
+            for i, group in enumerate(resources_data.get("pool_groups", [])):
+                for j, rule in enumerate(group.get("recovery", [])):
+                    if rule.get("mode") == "formula" and rule.get("amount_expr"):
+                        path = f"/pool_groups/{i}/recovery/{j}/amount_expr"
+                        try:
+                            compile_expr(rule["amount_expr"])
+                            vars_ref = referenced_variables(rule["amount_expr"])
+                            for var in vars_ref:
+                                if not var.startswith("character.") and var not in ("pool.current", "pool.max", "pool.min"):
+                                    issues.append(Issue(
+                                        severity="error",
+                                        file="resources.json",
+                                        path=path,
+                                        message=f"Invalid variable '{var}' in recovery rule (pool_group '{group.get('id', 'unknown')}', trigger '{rule.get('trigger', 'unknown')}'). Allowed: variables starting with 'character.' or one of pool.current, pool.max, pool.min."
+                                    ))
+                        except ExprError as e:
+                            issues.append(Issue(severity="error", file="resources.json", path=path, message=str(e)))
+
             resources = ResourcesConfig.model_validate(resources_data)
             check_for_todos(resources_data, "resources.json", "", issues)
+
         except ValidationError as e:
             issues.append(Issue(severity="error", file="resources.json", path=resources_path, message=str(e)))
         except json.JSONDecodeError as e:
