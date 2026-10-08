@@ -1,0 +1,50 @@
+{
+  "recovery_triggers": [
+    {"id": "one_action_rest", "name": "One Action Rest"},
+    {"id": "ten_minute_rest", "name": "Ten Minute Rest"},
+    {"id": "one_hour_rest", "name": "One Hour Rest"},
+    {"id": "ten_hour_rest", "name": "Ten Hour Rest"}
+  ],
+  "pools": [
+    {
+      "id": "might",
+      "name": "Might",
+      "kind": "counter",
+      "current_path": "resources.might.current",
+      "max_path": "resources.might.max",
+      "recovery": []
+    },
+    {
+      "id": "speed",
+      "name": "Speed",
+      "kind": "counter",
+      "current_path": "resources.speed.current",
+      "max_path": "resources.speed.max",
+      "recovery": []
+    },
+    {
+      "id": "intellect",
+      "name": "Intellect",
+      "kind": "counter",
+      "current_path": "resources.intellect.current",
+      "max_path": "resources.intellect.max",
+      "recovery": []
+    }
+  ],
+  "pool_groups": [],
+  "pooled_recoveries": [
+    {
+      "id": "recovery_roll",
+      "triggers": ["one_action_rest", "ten_minute_rest", "one_hour_rest", "ten_hour_rest"],
+      "points_expr": "d(1, 6) + character.tier",
+      "among": ["might", "speed", "intellect"],
+      "allocation": "auto_in_order"
+    }
+  ],
+  "recovery_sequences": [
+    {
+      "id": "cypher_rests",
+      "steps": ["one_action_rest", "ten_minute_rest", "one_hour_rest", "ten_hour_rest"]
+    }
+  ]
+}

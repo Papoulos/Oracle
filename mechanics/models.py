@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Literal, Annotated, Union
+from typing import Literal, Union, Annotated, Optional
 from pydantic import BaseModel, Field
 
 
@@ -186,10 +186,25 @@ class PoolGroupDef(BaseModel):
     recovery: list[RecoveryRule]
 
 
+class PooledRecoveryRule(BaseModel):
+    id: str
+    triggers: list[str] = Field(min_length=1)
+    points_expr: Formula
+    among: list[str] = Field(min_length=1)
+    allocation: Literal["player_choice", "auto_in_order"] = "player_choice"
+
+class RecoverySequence(BaseModel):
+    id: str
+    steps: list[str] = Field(min_length=2)
+    state_path: str = "recovery_step"
+
+
 class ResourcesConfig(BaseModel):
     recovery_triggers: list[RecoveryTrigger]
     pools: list[PoolDef]
     pool_groups: list[PoolGroupDef]
+    pooled_recoveries: list[PooledRecoveryRule] = Field(default_factory=list)
+    recovery_sequences: list[RecoverySequence] = Field(default_factory=list)
 
     def model_post_init(self, __context):
         # Validate that all triggers in recovery rules exist in recovery_triggers
