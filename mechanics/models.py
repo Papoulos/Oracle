@@ -139,6 +139,7 @@ ResolutionConfig = Annotated[
 class RecoveryTrigger(BaseModel):
     id: str
     name: str
+    informational: bool = False
 
 from mechanics.expr import Formula
 

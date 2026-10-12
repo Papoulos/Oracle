@@ -226,8 +226,9 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 for trigger in rule.triggers:
                     used_triggers.add(trigger)
 
-            for trigger in recovery_triggers:
-                if trigger not in used_triggers:
+            for trigger_data in resources_data.get("recovery_triggers", []):
+                trigger = trigger_data.get("id")
+                if trigger not in used_triggers and not trigger_data.get("informational"):
                     issues.append(Issue(severity="warning", file="resources.json", path=f"/recovery_triggers", message=f"Recovery trigger '{trigger}' is not used by any pool, pool_group, or pooled_recovery rule"))
             check_for_todos(resources_data, "resources.json", "", issues)
 

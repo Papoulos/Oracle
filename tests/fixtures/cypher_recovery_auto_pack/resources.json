@@ -12,7 +12,9 @@
       "kind": "counter",
       "current_path": "resources.might.current",
       "max_path": "resources.might.max",
-      "recovery": []
+      "recovery": [
+        {"trigger": "one_action_rest", "mode": "full"}
+      ]
     },
     {
       "id": "speed",
