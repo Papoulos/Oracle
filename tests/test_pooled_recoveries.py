@@ -121,6 +121,11 @@ def test_allocate_recovery_invalid(character_file, monkeypatch):
 
     engine = get_engine(character_file, os.environ['SYSTEM_PACK'])
 
+    # Test boolean is explicitly rejected
+    res_bool = engine.allocate_recovery({"might": True})
+    assert not res_bool.success
+    assert "non-negative integer" in res_bool.message
+
     # Invalid key
     res = engine.allocate_recovery({"speed": 1})
     assert not res.success
@@ -162,23 +167,22 @@ def test_auto_in_order(character_file, monkeypatch):
     monkeypatch.setenv("SYSTEM_PACK", "cypher_recovery_auto_pack")
     monkeypatch.setenv("SYSTEMS_DIR", "tests/fixtures")
 
-
-    monkeypatch.setenv("SYSTEMS_DIR", "tests/fixtures")
-
-
-
     engine = get_engine(character_file, os.environ['SYSTEM_PACK'])
     random.seed(42)
     engine.rng = random.Random(42)
-    # Say points_expr yields 6 points
-    # Might missing = 5. Speed missing = 8. Intellect missing = 2
-    # 5 goes to Might (filling it). 1 goes to Speed.
+    # Say points_expr yields 6 points.
+    # might missing is 5, but might has a "full" recovery for this trigger,
+    # so it gets restored to 10 *before* shared allocations are distributed.
+    # Shared points (6) are evaluated next. Might is full, so 0 shared points go to Might.
+    # The remaining points go to Speed, leaving Intellect unchanged.
+    # points_expr: d(1,6) + tier(1). With random.seed(42), randint(1,6) is 6, so total is 7.
+    # Speed is at 2, gets 7 points -> 9.
 
     res = engine.rest("one_action_rest")
     assert res.success
 
     assert engine.state["resources"]["might"]["current"] == 10
-    assert engine.state["resources"]["speed"]["current"] == 4
+    assert engine.state["resources"]["speed"]["current"] == 9
     assert engine.state["resources"]["intellect"]["current"] == 8
 
 def test_next_rest_sequence(character_file, monkeypatch):

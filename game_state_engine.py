@@ -684,7 +684,7 @@ class GameStateEngine:
         for k, v in allocation.items():
             if k not in among:
                 return ActionResult(success=False, message=f"Key '{k}' is not in the allowed targets ({', '.join(among)}).")
-            if not isinstance(v, int) or v < 0:
+            if isinstance(v, bool) or not isinstance(v, int) or v < 0:
                 return ActionResult(success=False, message=f"Value for '{k}' must be a non-negative integer.")
 
         total_requested = sum(allocation.values())
