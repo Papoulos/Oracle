@@ -1,0 +1,7 @@
+id: cypher_system
+name: Cypher System (CSRD 2025-08-22)
+version: 0.3.0-draft
+language: fr
+family: StepTargetD20
+source_pdfs:
+- Cypher-System-Reference-Document-2025-08-22.docx
