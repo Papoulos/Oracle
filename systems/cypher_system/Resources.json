@@ -1,0 +1,54 @@
+{
+  "recovery_triggers": [
+    {"id": "one_action_rest", "name": "Repos d'une action"},
+    {"id": "ten_minute_rest", "name": "Repos de dix minutes"},
+    {"id": "one_hour_rest", "name": "Repos d'une heure"},
+    {"id": "ten_hour_rest", "name": "Repos de dix heures"}
+  ],
+  "pools": [
+    {
+      "id": "might",
+      "name": "Puissance (Might)",
+      "kind": "counter",
+      "min_value": 0,
+      "current_path": "resources.might.current",
+      "max_path": "resources.might.max",
+      "recovery": []
+    },
+    {
+      "id": "speed",
+      "name": "Vitesse (Speed)",
+      "kind": "counter",
+      "min_value": 0,
+      "current_path": "resources.speed.current",
+      "max_path": "resources.speed.max",
+      "recovery": []
+    },
+    {
+      "id": "intellect",
+      "name": "Intellect",
+      "kind": "counter",
+      "min_value": 0,
+      "current_path": "resources.intellect.current",
+      "max_path": "resources.intellect.max",
+      "recovery": []
+    }
+  ],
+  "pool_groups": [],
+  "pooled_recoveries": [
+    {
+      "id": "recovery_roll",
+      "triggers": ["one_action_rest", "ten_minute_rest", "one_hour_rest", "ten_hour_rest"],
+      "points_expr": "d(1, 6) + character.tier",
+      "among": ["might", "speed", "intellect"],
+      "allocation": "player_choice"
+    }
+  ],
+  "recovery_sequences": [
+    {
+      "id": "cypher_rests",
+      "steps": ["one_action_rest", "ten_minute_rest", "one_hour_rest", "ten_hour_rest"],
+      "state_path": "recovery_step"
+    }
+  ]
+}
