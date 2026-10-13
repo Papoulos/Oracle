@@ -82,6 +82,12 @@ class StepTargetD20Config(BaseModel):
     max_difficulty: int
     auto_success_at: int
     max_total_reduction: int | None = None
+    adjustment_caps: dict[str, int] = Field(default_factory=dict)
+
+    def model_post_init(self, __context):
+        for key, cap in self.adjustment_caps.items():
+            if cap < 0:
+                raise ValueError(f"adjustment_cap for '{key}' must be >= 0")
 
     @classmethod
     def template(cls) -> "StepTargetD20Config":
@@ -294,6 +300,7 @@ class ResolutionResult(BaseModel):
     tier_label: str | None = None
     margin: int | None = None
     flags: list[str] = Field(default_factory=list)
+    impossible: bool = False
 
     # Extra fields useful for specific mechanics (e.g. StepTargetD20)
     difficulty_initial: int | None = None
