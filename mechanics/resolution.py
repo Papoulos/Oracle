@@ -127,7 +127,16 @@ def _resolve_step_target_d20(
         raise ValueError("Difficulty is required for StepTargetD20 resolution.")
     difficulty_initial = request.difficulty
 
-    total_reduction = sum(request.step_adjustments.values())
+    warnings = []
+    total_reduction = 0
+    for key, value in request.step_adjustments.items():
+        if value < 0 and key in config.adjustment_caps:
+            cap = config.adjustment_caps[key]
+            if value < -cap:
+                value = -cap
+                warnings.append(f"{key} capped at {cap}")
+        total_reduction += value
+
     if config.max_total_reduction is not None:
         if total_reduction < -config.max_total_reduction:
             total_reduction = -config.max_total_reduction
@@ -147,7 +156,21 @@ def _resolve_step_target_d20(
             difficulty_initial=difficulty_initial,
             difficulty_final=difficulty_final,
             target=target,
-            margin=None
+            margin=None,
+            warnings=warnings
+        )
+
+    if target > 20 + request.modifier + request.roll_bonus:
+        return ResolutionResult(
+            rolled=[],
+            total=0,
+            outcome=Outcome.FAILURE,
+            difficulty_initial=difficulty_initial,
+            difficulty_final=difficulty_final,
+            target=target,
+            margin=None,
+            impossible=True,
+            warnings=warnings
         )
 
     roll = rng.randint(1, 20)
@@ -163,7 +186,8 @@ def _resolve_step_target_d20(
         difficulty_initial=difficulty_initial,
         difficulty_final=difficulty_final,
         target=target,
-        margin=margin
+        margin=margin,
+        warnings=warnings
     )
 
 

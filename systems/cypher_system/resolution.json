@@ -4,5 +4,10 @@
   "min_difficulty": 0,
   "max_difficulty": 10,
   "auto_success_at": 0,
-  "max_total_reduction": 10
+  "max_total_reduction": 10,
+  "adjustment_caps": {
+    "skill": 2,
+    "asset": 2,
+    "effort": 6
+  }
 }

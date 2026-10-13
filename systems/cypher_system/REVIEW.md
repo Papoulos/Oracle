@@ -31,12 +31,12 @@ Chemins de la fiche : convention `resources.<id>.current` / `.max`.
 | # | Mécanique | Règle (CSRD) | Statut / ce qui manque |
 |---|---|---|---|
 | G1 | **Récupération par jet** | d6 + palier, répartis librement entre les réserves, sans dépasser le maximum ; cycle de 4 repos | **Couvert** (PR #126 à #128) : formule, répartition par le joueur, cycle de repos. Reste à relier à la détection d'actions (triggers.json) |
-| G2 | **Plafonds par catégorie** | Compétences <= 2 pas, atouts <= 2, effort <= 6 | À faire (famille StepTargetD20) |
+| G2 | **Plafonds par catégorie** | Compétences <= 2 pas, atouts <= 2, effort <= 6 | Couvert (PR 4a) |
 | G3 | **Coût de l'effort** | 3 points le 1er niveau, 2 les suivants, moins l'Edge de la réserve (Edge utilisé une fois par action et par réserve) ; Edge 3 = 1 niveau gratuit ; +1 par niveau si Impaired ; niveaux <= score d'Effort ; réserve selon la tâche | Formule possible (`expr.py`) ; reste le catalogue d'actions qui l'applique et consomme la réserve |
 | G4 | **Jets spéciaux** | 1 : intrusion du MJ (sans XP) ; 17 / 18 : +1 / +2 dégâts (attaques) ; 19 : effet mineur ou +3 dégâts ; 20 : effet majeur ou +4 dégâts, et le coût en réserve de l'action est remboursé | Le résultat n'expose ni le d20 naturel ni les effets |
 | G5 | **Piste de dégâts** | Hale / Impaired / Debilitated / Dead, avec effets (Impaired : effort +1 par niveau, effets spéciaux ignorés ; Debilitated : seulement se déplacer) | Pas de machine à états dans le format ni dans le moteur |
 | G6 | **Application des dégâts** | Ordre Might, Speed, Intellect ; l'Armor (nombre fixe) se soustrait ; l'excédent passe à la réserve suivante | Le moteur n'a que des PV |
-| G7 | **Jet impossible** | Si même un 20 naturel ne suffit pas, aucun jet n'est fait | `StepTargetD20` lance quand même le dé (cible 21 : échec certain) |
+| G7 | **Jet impossible** | Si même un 20 naturel ne suffit pas, aucun jet n'est fait | Couvert (PR 4a) |
 | G8 | **Modificateurs de jet** | Un total de +3 sur le jet se convertit en atout (difficulté -1) | À la charge de l'appelant ; non modélisé |
 
 Le pack n'a pas de `triggers.json` : aucune détection automatique de « je me repose » tant que la détection ne sait pas appeler `next_rest` (à faire avec le catalogue d'actions). Les `recovery` par réserve sont vides : la récupération passe entièrement par la règle partagée.
