@@ -7,7 +7,8 @@ from typing import Literal, Any
 import re
 from pydantic import BaseModel, ValidationError, TypeAdapter
 
-from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, PbtA2d6Config, TriggersConfig
+from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, PbtA2d6Config, StepTargetD20Config, TriggersConfig
+from mechanics.actions import ActionsConfig
 from mechanics.expr import compile_expr, referenced_variables, ExprError
 
 
@@ -297,6 +298,83 @@ def validate_pack(pack_path: str) -> list[Issue]:
         except Exception as e:
             issues.append(Issue(severity="error", file="triggers.json", path=triggers_path, message=str(e)))
 
+    # 5. Actions Config (Optional)
+    actions_path = os.path.join(pack_path, "actions.json")
+    if os.path.isfile(actions_path):
+        try:
+            with open(actions_path, "r", encoding="utf-8") as f:
+                actions_data = json.load(f)
+
+            if not os.path.isfile(resolution_path):
+                issues.append(Issue(severity="error", file="actions.json", path=actions_path, message="actions require StepTargetD20 resolution (missing resolution.json)"))
+            elif not isinstance(resolution, StepTargetD20Config):
+                issues.append(Issue(severity="error", file="actions.json", path=actions_path, message="actions require StepTargetD20 resolution"))
+
+            actions = ActionsConfig.model_validate(actions_data)
+
+            # Check action IDs are unique
+            action_ids = set()
+            for action in actions.actions:
+                if action.id in action_ids:
+                    issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}", message=f"Duplicate action id: {action.id}"))
+                action_ids.add(action.id)
+
+                # Check pools exist
+                if resources:
+                    valid_pools = {p.id for p in resources.pools}
+                    for pool_id in action.pools:
+                        if pool_id not in valid_pools:
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/pools", message=f"Pool '{pool_id}' not found in resources.json pools"))
+
+                # Check effort config
+                if action.effort:
+                    # adjustment_key must exist in resolution.adjustment_caps
+                    if isinstance(resolution, StepTargetD20Config) and action.effort.adjustment_key not in resolution.adjustment_caps:
+                        issues.append(Issue(severity="warning", file="actions.json", path=f"/actions/{action.id}/effort", message=f"adjustment_key '{action.effort.adjustment_key}' not found in resolution.adjustment_caps"))
+
+                    # effort expression vars whitelist
+                    try:
+                        compile_expr(action.effort.cost_expr)
+                        vars_ref = referenced_variables(action.effort.cost_expr)
+                        allowed_effort_vars = {"effort.levels", "effort.edge", "effort.impaired"}
+                        for var in vars_ref:
+                            if not var.startswith("character.") and var not in allowed_effort_vars:
+                                issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/effort/cost_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'effort.levels', 'effort.edge', 'effort.impaired'."))
+                    except ExprError as e:
+                        issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/effort/cost_expr", message=str(e)))
+
+                    # path validation
+                    ptr_regex = r'^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$'
+                    if action.effort.max_levels_path and not re.match(ptr_regex, action.effort.max_levels_path):
+                        issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/effort/max_levels_path", message=f"Invalid pointer path syntax: {action.effort.max_levels_path}"))
+
+                    if action.effort.edge_path_template:
+                        test_str = action.effort.edge_path_template.replace("{pool}", "test_pool")
+                        if not re.match(ptr_regex, test_str):
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/effort/edge_path_template", message=f"Invalid pointer path syntax: {action.effort.edge_path_template}"))
+
+            # Check difficulty_scale
+            levels = set()
+            for scale in actions.difficulty_scale:
+                if scale.level in levels:
+                    issues.append(Issue(severity="error", file="actions.json", path=f"/difficulty_scale", message=f"Duplicate difficulty level: {scale.level}"))
+                levels.add(scale.level)
+                if isinstance(resolution, StepTargetD20Config):
+                    if not (resolution.min_difficulty <= scale.level <= resolution.max_difficulty):
+                        issues.append(Issue(severity="error", file="actions.json", path=f"/difficulty_scale", message=f"Difficulty level {scale.level} is out of resolution bounds ({resolution.min_difficulty} to {resolution.max_difficulty})"))
+
+            if actions.difficulty_scale and isinstance(resolution, StepTargetD20Config):
+                expected_levels = set(range(resolution.min_difficulty, resolution.max_difficulty + 1))
+                if not expected_levels.issubset(levels):
+                    issues.append(Issue(severity="warning", file="actions.json", path="/difficulty_scale", message="difficulty_scale does not cover all levels from min_difficulty to max_difficulty"))
+
+
+        except ValidationError as e:
+            issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=str(e)))
+        except json.JSONDecodeError as e:
+            issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=f"Invalid JSON: {e}"))
+        except Exception as e:
+            issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=str(e)))
 
     return issues
 

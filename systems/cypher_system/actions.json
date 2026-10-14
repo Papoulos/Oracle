@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "difficulty_scale": [
+    {"level": 0, "name": "Routine", "guidance": "Tout le monde réussit presque toujours."},
+    {"level": 1, "name": "Simple", "guidance": "La plupart des gens réussissent la plupart du temps."},
+    {"level": 2, "name": "Standard", "guidance": "Demande de l'attention ; la plupart y arrivent."},
+    {"level": 3, "name": "Demanding", "guidance": "Attention totale ; 50/50 pour la plupart des gens."},
+    {"level": 4, "name": "Difficult", "guidance": "50/50 pour des gens formés."},
+    {"level": 5, "name": "Challenging", "guidance": "Même des gens formés échouent souvent."},
+    {"level": 6, "name": "Intimidating", "guidance": "Les gens ordinaires n'y arrivent presque jamais."},
+    {"level": 7, "name": "Formidable", "guidance": "Impossible sans compétences ou grand effort."},
+    {"level": 8, "name": "Heroic", "guidance": "Digne de récits."},
+    {"level": 9, "name": "Immortal", "guidance": "Digne de légendes."},
+    {"level": 10, "name": "Impossible", "guidance": "Hors de portée d'humains ordinaires."}
+  ],
+  "actions": [
+    {
+      "id": "task",
+      "kind": "task",
+      "name": "Tâche",
+      "description": "Toute action dont l'issue est incertaine : attaquer, se défendre, crocheter, grimper, convaincre. Le MJ choisit la réserve (Might, Speed ou Intellect) et la difficulté de l'obstacle ; le joueur peut appliquer de l'Effort.",
+      "pools": ["might", "speed", "intellect"],
+      "effort": {
+        "cost_expr": "max(0, 3 + 2*(effort.levels - 1) + (effort.levels if effort.impaired else 0) - effort.edge) if effort.levels > 0 else 0",
+        "adjustment_key": "effort",
+        "max_levels_path": "effort",
+        "edge_path_template": "edge.{pool}"
+      }
+    }
+  ]
+}

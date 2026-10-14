@@ -7,6 +7,8 @@ import random
 from dataclasses import dataclass, field
 from typing import Optional
 from systems.loader import SystemPack
+from mechanics.models import ResolutionRequest
+from mechanics.resolution import resolve
 from mechanics.paths import get_by_path, set_by_path
 from mechanics.expr import evaluate_int, ExprError
 
@@ -794,6 +796,183 @@ class GameStateEngine:
             state_changes={"rest": rest_type, "restored": restored}
         )
 
+    def execute_task(
+        self,
+        action_id: str,
+        pool_id: Optional[str],
+        difficulty: int,
+        step_adjustments: Optional[dict[str, int]] = None,
+        effort_levels: int = 0,
+        impaired: bool = False
+    ) -> ActionResult:
+        """
+        Executes a task action (e.g. attack, defend, climb) dynamically from the system pack.
+        """
+        if not self.pack:
+            return ActionResult(success=False, message="No system pack loaded.", blocked_reason="no_pack")
+        if not getattr(self.pack, "actions", None) or not self.pack.actions.actions:
+            return ActionResult(success=False, message="System pack has no actions configured.", blocked_reason="no_actions")
+        if self.pack.resolution.family != "StepTargetD20":
+            return ActionResult(success=False, message="Task actions currently only support StepTargetD20 family.", blocked_reason="unsupported_family")
+
+        action = next((a for a in self.pack.actions.actions if a.id == action_id and a.kind == "task"), None)
+        if not action:
+            valid_actions = [a.id for a in self.pack.actions.actions if a.kind == "task"]
+            return ActionResult(success=False, message=f"Unknown task action '{action_id}'. Valid actions: {', '.join(valid_actions)}", blocked_reason="unknown_action")
+
+        # Validation of pool_id
+        if action.pools:
+            if pool_id is None:
+                return ActionResult(success=False, message=f"pool_id is required for action '{action_id}'", blocked_reason="invalid_pool")
+            if pool_id not in action.pools:
+                return ActionResult(success=False, message=f"pool '{pool_id}' is not allowed for action '{action_id}'", blocked_reason="invalid_pool")
+        else:
+            if pool_id is not None:
+                return ActionResult(success=False, message=f"action '{action_id}' does not use a pool", blocked_reason="invalid_pool")
+            if effort_levels > 0:
+                return ActionResult(success=False, message="effort requires a pool", blocked_reason="invalid_pool")
+
+        pool_def = None
+        if pool_id:
+            pool_def = next((p for p in self.pack.resources.pools if p.id == pool_id), None)
+            if not pool_def:
+                return ActionResult(success=False, message=f"Pool '{pool_id}' not found in resources.", blocked_reason="invalid_pool")
+
+        # Validation of difficulty
+        if type(difficulty) is bool or not isinstance(difficulty, int):
+            return ActionResult(success=False, message="difficulty must be an integer", blocked_reason="invalid_difficulty")
+        if not (self.pack.resolution.min_difficulty <= difficulty <= self.pack.resolution.max_difficulty):
+            return ActionResult(success=False, message=f"difficulty {difficulty} out of bounds [{self.pack.resolution.min_difficulty}, {self.pack.resolution.max_difficulty}]", blocked_reason="invalid_difficulty")
+
+        # Validation of effort
+        if type(effort_levels) is bool or not isinstance(effort_levels, int) or effort_levels < 0:
+            return ActionResult(success=False, message="effort_levels must be a non-negative integer", blocked_reason="invalid_effort")
+
+        adj = dict(step_adjustments or {})
+        effort_cost = 0
+        edge = 0
+
+        if action.effort:
+            if action.effort.adjustment_key in adj and effort_levels > 0:
+                return ActionResult(success=False, message=f"effort_levels conflict: '{action.effort.adjustment_key}' already in step_adjustments", blocked_reason="effort_conflict")
+
+            max_levels = None
+            if action.effort.max_levels_path:
+                max_levels = get_by_path(self.state, action.effort.max_levels_path)
+
+            if max_levels is not None and effort_levels > max_levels:
+                return ActionResult(success=False, message=f"effort_levels ({effort_levels}) exceeds max_levels ({max_levels})", blocked_reason="invalid_effort")
+
+            if action.effort.edge_path_template and pool_id:
+                edge_path = action.effort.edge_path_template.format(pool=pool_id)
+                e_val = get_by_path(self.state, edge_path)
+                if isinstance(e_val, int) and type(e_val) is not bool and e_val >= 0:
+                    edge = e_val
+
+            ctx = {
+                "character": self.state,
+                "effort": {"levels": effort_levels, "edge": edge, "impaired": impaired}
+            }
+            if effort_levels > 0:
+                try:
+                    raw_cost = evaluate_int(action.effort.cost_expr, ctx, self.rng)
+                    effort_cost = max(0, raw_cost)
+                except ExprError as e:
+                    return ActionResult(success=False, message=f"formula_error: {e}", blocked_reason="formula_error")
+
+                adj[action.effort.adjustment_key] = -effort_levels
+
+        current_val = 0
+        if pool_def:
+            val = get_by_path(self.state, pool_def.current_path)
+            if isinstance(val, int) and type(val) is not bool:
+                current_val = val
+
+            if current_val - effort_cost < pool_def.min_value:
+                return ActionResult(success=False, message=f"Insufficient resources in '{pool_id}' to pay effort cost of {effort_cost}", blocked_reason="insufficient_resources")
+
+        req = ResolutionRequest(
+            difficulty=difficulty,
+            step_adjustments=adj
+        )
+        result = resolve(self.pack.resolution, req, self.rng)
+
+        # Build output message
+        pool_name = pool_def.name if pool_def else "no pool"
+
+        initial_name = next((s.name for s in self.pack.actions.difficulty_scale if s.level == difficulty), None)
+        diff_str = f"difficulty {difficulty}"
+        if initial_name:
+            diff_str += f" ({initial_name})"
+
+        final_name = next((s.name for s in self.pack.actions.difficulty_scale if s.level == result.difficulty_final), None)
+        if result.difficulty_initial != result.difficulty_final:
+            diff_str += f" reduced to {result.difficulty_final}"
+            if final_name:
+                diff_str += f" ({final_name})"
+
+        # Construct technical phrase
+        if result.impossible:
+            phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {result.target} is unreachable: no die rolled, FAILURE."
+        elif result.difficulty_final == self.pack.resolution.auto_success_at:
+            phrase = f"Task '{action_id}' with {pool_name}: {diff_str}: automatic success, no die rolled."
+        else:
+            margin_str = f"+{result.margin}" if result.margin is not None and result.margin >= 0 else str(result.margin)
+            rolled_str = str(result.rolled[0]) if result.rolled else "none"
+            phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {result.target}, rolled {rolled_str}, {result.outcome.name} (margin {margin_str})."
+
+        if effort_levels > 0 and pool_def:
+            rem = current_val - effort_cost
+            phrase += f" Effort: {effort_levels} level(s), cost {effort_cost} ({rem} remaining)."
+
+        if result.warnings:
+            phrase += f" Warnings: {', '.join(result.warnings)}."
+
+        state_changes = {
+            "task": {
+                "action": action_id,
+                "pool": pool_id,
+                "difficulty": {
+                    "initial": result.difficulty_initial,
+                    "final": result.difficulty_final,
+                    "name": final_name
+                },
+                "target": result.target,
+                "rolled": result.rolled,
+                "total": result.total,
+                "outcome": result.outcome.name,
+                "margin": result.margin,
+                "impossible": result.impossible,
+                "warnings": list(result.warnings)
+            }
+        }
+
+        # Apply deduction
+        if effort_cost > 0 and pool_def:
+            new_val = current_val - effort_cost
+            set_by_path(self.state, pool_def.current_path, new_val)
+            if pool_def.kind == "health" and "pv" in self.state:
+                self.state["pv"] = new_val
+
+            state_changes["effort"] = {
+                "levels": effort_levels,
+                "edge": edge,
+                "cost": effort_cost
+            }
+            state_changes[pool_id] = {
+                "avant": current_val,
+                "apres": new_val
+            }
+
+        if effort_cost > 0:
+            self.save()
+
+        return ActionResult(
+            success=True,
+            message=phrase,
+            state_changes=state_changes
+        )
+
     def synchronize_and_recalculate(self):
         """
         Recalculates derived values (HP, AC, etc.) based on stats, race and class.
@@ -828,6 +1007,34 @@ class GameStateEngine:
             except: pass
 
         self.save()
+
+    # ── Info Extraction ──────────────────────────────────────
+
+    def describe_difficulty_scale(self) -> str:
+        """
+        Returns a formatted string describing the difficulty scale for the current pack.
+        Format: 'Niveau X (Name, cible Y) : <guidance>'
+        Returns an empty string if no pack, no scale, or family is not StepTargetD20.
+        """
+        if not self.pack or not getattr(self.pack, "actions", None) or not self.pack.actions.difficulty_scale:
+            return ""
+
+        if self.pack.resolution.family != "StepTargetD20":
+            return ""
+
+        multiplier = getattr(self.pack.resolution, "multiplier", 1)
+        scale = self.pack.actions.difficulty_scale
+        sorted_scale = sorted(scale, key=lambda x: x.level)
+
+        lines = []
+        for level_info in sorted_scale:
+            target = level_info.level * multiplier
+            line = f"Niveau {level_info.level} ({level_info.name}, cible {target})"
+            if level_info.guidance:
+                line += f" : {level_info.guidance}"
+            lines.append(line)
+
+        return "\n".join(lines)
 
     # ── Automatic Detection from Text ─────────────────
 
