@@ -146,6 +146,7 @@ To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle sep
         *   `pool.current`: the current value of the pool being recovered.
         *   `pool.max`: the maximum value of the pool being recovered (from `max_value`, `max_path` or group sub-dict key).
         *   `pool.min`: the minimum value defined in the pool configuration (`min_value`, default 0).
+    *   **Actions (`actions.json`)**: System packs optionally support defining task actions (e.g. attack, defend, climb) with dynamic effort mechanics and difficulty scales. The engine provides `execute_task(action_id, pool_id, difficulty, effort_levels)` which evaluates complex cost formulas (using `effort.levels`, `effort.edge`, and `effort.impaired`), verifies resources atomically, applies step adjustments, resolves the check against the configured `StepTargetD20` family, and directly returns an `ActionResult` with structured `state_changes` and a technical message. `ActionResult.success` indicates the mechanical operation completed (whether the check succeeded or failed).
 *   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
 
 ---

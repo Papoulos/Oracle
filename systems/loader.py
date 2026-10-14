@@ -6,6 +6,7 @@ from typing import Optional
 
 from pydantic import TypeAdapter
 from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, TriggersConfig
+from mechanics.actions import ActionsConfig
 from systems.validate import validate_pack
 
 
@@ -23,6 +24,7 @@ class SystemPack:
     resolution: ResolutionConfig
     resources: ResourcesConfig
     triggers: Optional[TriggersConfig]
+    actions: Optional[ActionsConfig] = None
 
 
 def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
@@ -73,9 +75,18 @@ def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
             triggers_data = json.load(f)
         triggers = TriggersConfig.model_validate(triggers_data)
 
+    # Load Actions (optional)
+    actions = None
+    actions_path = os.path.join(pack_dir, "actions.json")
+    if os.path.exists(actions_path):
+        with open(actions_path, "r", encoding="utf-8") as f:
+            actions_data = json.load(f)
+        actions = ActionsConfig.model_validate(actions_data)
+
     return SystemPack(
         manifest=manifest,
         resolution=resolution,
         resources=resources,
-        triggers=triggers
+        triggers=triggers,
+        actions=actions
     )
