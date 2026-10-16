@@ -370,7 +370,14 @@ def validate_pack(pack_path: str) -> list[Issue]:
 
 
         except ValidationError as e:
-            issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=str(e)))
+            for err in e.errors():
+                loc = err.get("loc", [])
+                path = "/" + "/".join(str(x) for x in loc) if loc else actions_path
+                msg = err.get("msg", "")
+                if msg.startswith("Value error, "):
+                    msg = msg[13:]
+                msg = msg.replace("\n", " ").replace("\r", " ")
+                issues.append(Issue(severity="error", file="actions.json", path=path, message=msg))
         except json.JSONDecodeError as e:
             issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=f"Invalid JSON: {e}"))
         except Exception as e:
