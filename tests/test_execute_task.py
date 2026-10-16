@@ -1,6 +1,7 @@
 import pytest
 import json
 import random
+from pathlib import Path
 from game_state_engine import GameStateEngine
 from systems.loader import load_pack
 
@@ -163,3 +164,71 @@ def test_describe_difficulty_scale_dnd5e(monkeypatch, tmp_path):
     e = GameStateEngine(character_path=str(tmp_path / "c.json"), pack=pack)
     desc = e.describe_difficulty_scale()
     assert desc == ""
+
+def test_execute_task_impossible_waives_effort(engine):
+    # Diff 10, target 30 initially, reduced to target 27. Impossible.
+    # Speed pool starts at 8. Effort cost would be something.
+    rng_state = engine.rng.getstate()
+    with open(engine.character_path) as f:
+        before = f.read()
+
+    res = engine.execute_task("task", "speed", 10, effort_levels=1)
+
+    assert res.success is True
+    assert "Effort not spent: the task is impossible." in res.message
+    assert res.state_changes["task"]["impossible"] is True
+    assert res.state_changes["effort"]["levels"] == 1
+    assert res.state_changes["effort"]["cost"] == 0
+    assert res.state_changes["effort"]["waived"] is True
+    assert "speed" not in res.state_changes
+
+    assert engine.rng.getstate() == rng_state
+    with open(engine.character_path) as f:
+        after = f.read()
+    assert before == after
+
+def test_execute_task_possible_spends_effort(engine):
+    # Diff 7 (Impossible), target 21, but 1 level of effort makes it diff 6, target 18 (possible).
+    rng_state = engine.rng.getstate()
+    res = engine.execute_task("task", "speed", 7, effort_levels=1)
+
+    assert res.success is True
+    assert "Effort not spent" not in res.message
+    assert res.state_changes["task"]["impossible"] is False
+    assert res.state_changes["effort"]["levels"] == 1
+    assert res.state_changes["effort"]["cost"] > 0
+    assert res.state_changes["effort"]["waived"] is False
+    assert res.state_changes["speed"]["avant"] == 8
+    assert res.state_changes["speed"]["apres"] == 8 - res.state_changes["effort"]["cost"]
+
+    assert engine.rng.getstate() != rng_state
+
+def test_execute_task_still_impossible_waives_effort(engine):
+    # Diff 8, target 24. 1 level of effort -> diff 7, target 21. Still impossible.
+    rng_state = engine.rng.getstate()
+    with open(engine.character_path) as f:
+        before = f.read()
+
+    res = engine.execute_task("task", "speed", 8, effort_levels=1)
+
+    assert res.success is True
+    assert "Effort not spent: the task is impossible." in res.message
+    assert res.state_changes["task"]["impossible"] is True
+    assert res.state_changes["effort"]["levels"] == 1
+    assert res.state_changes["effort"]["cost"] == 0
+    assert res.state_changes["effort"]["waived"] is True
+    assert "speed" not in res.state_changes
+
+    assert engine.rng.getstate() == rng_state
+    with open(engine.character_path) as f:
+        after = f.read()
+    assert before == after
+
+def test_execute_task_no_actions_step_target_fixture(monkeypatch, tmp_path):
+    monkeypatch.setenv("SYSTEMS_DIR", "systems")
+    # Load step target pack which shouldn't have actions.json or might not have one?
+    pack = load_pack("step_target_pack", base_dir=Path(__file__).parent / "fixtures")
+    e = GameStateEngine(character_path=str(tmp_path / "c.json"), pack=pack)
+    res = e.execute_task("task", "hp", 4)
+    assert res.success is False
+    assert res.blocked_reason == "no_actions"

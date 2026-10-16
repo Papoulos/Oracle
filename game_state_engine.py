@@ -921,9 +921,17 @@ class GameStateEngine:
             rolled_str = str(result.rolled[0]) if result.rolled else "none"
             phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {result.target}, rolled {rolled_str}, {result.outcome.name} (margin {margin_str})."
 
+        effort_waived = False
+        if effort_levels > 0 and result.impossible:
+            effort_waived = True
+            effort_cost = 0
+
         if effort_levels > 0 and pool_def:
-            rem = current_val - effort_cost
-            phrase += f" Effort: {effort_levels} level(s), cost {effort_cost} ({rem} remaining)."
+            if effort_waived:
+                phrase += " Effort not spent: the task is impossible."
+            else:
+                rem = current_val - effort_cost
+                phrase += f" Effort: {effort_levels} level(s), cost {effort_cost} ({rem} remaining)."
 
         if result.warnings:
             phrase += f" Warnings: {', '.join(result.warnings)}."
@@ -947,6 +955,14 @@ class GameStateEngine:
             }
         }
 
+        if effort_levels > 0 and pool_def:
+            state_changes["effort"] = {
+                "levels": effort_levels,
+                "edge": edge,
+                "cost": effort_cost,
+                "waived": effort_waived
+            }
+
         # Apply deduction
         if effort_cost > 0 and pool_def:
             new_val = current_val - effort_cost
@@ -954,11 +970,6 @@ class GameStateEngine:
             if pool_def.kind == "health" and "pv" in self.state:
                 self.state["pv"] = new_val
 
-            state_changes["effort"] = {
-                "levels": effort_levels,
-                "edge": edge,
-                "cost": effort_cost
-            }
             state_changes[pool_id] = {
                 "avant": current_val,
                 "apres": new_val
