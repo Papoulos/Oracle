@@ -5,6 +5,9 @@ from mechanics.expr import Formula
 
 
 class DifficultyLevel(BaseModel):
+    """
+    guidance: Benchmark for a specific difficulty level.
+    """
     level: int = Field(ge=0)
     name: str
     guidance: str = ""
@@ -18,10 +21,14 @@ class EffortRule(BaseModel):
 
 
 class TaskAction(BaseModel):
+    """
+    guidance: GM procedure for this action, injected into the analysis prompt.
+    """
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     kind: Literal["task"] = "task"
     name: str
     description: str = ""
+    guidance: str = ""
     pools: list[str] = Field(default_factory=list)
     effort: Optional[EffortRule] = None
 
