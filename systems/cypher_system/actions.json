@@ -19,6 +19,7 @@
       "kind": "task",
       "name": "Tâche",
       "description": "Toute action dont l'issue est incertaine : attaquer, se défendre, crocheter, grimper, convaincre. Le MJ choisit la réserve (Might, Speed ou Intellect) et la difficulté de l'obstacle ; le joueur peut appliquer de l'Effort.",
+      "guidance": "Procédure du MJ pour toute tâche (attaquer, se défendre, crocheter, grimper, convaincre). 1) Si l'action est routinière, sans chance réaliste d'échec : pas de jet. 2) Choisis la réserve : Might pour la force physique, l'endurance et la résistance ; Speed pour l'agilité, la rapidité, les réflexes et l'esquive ; Intellect pour le savoir, la perception, la persuasion et la volonté. 3) Choisis la difficulté de 0 à 10 avec l'échelle fournie ; pour attaquer ou se défendre, elle vaut le niveau de l'adversaire. 4) Facilitations : compétence du personnage pour cette tâche, seulement si elle figure sur sa fiche (formé = 1, spécialisé = 2) ; atouts réels de la situation (0 à 2) ; obstacles (+1 par pas). 5) Niveaux d'effort : uniquement si le joueur déclare explicitement appliquer de l'Effort ; sinon 0. Ne choisis jamais l'effort à sa place.",
       "pools": ["might", "speed", "intellect"],
       "effort": {
         "cost_expr": "max(0, 3 + 2*(effort.levels - 1) + (effort.levels if effort.impaired else 0) - effort.edge) if effort.levels > 0 else 0",
