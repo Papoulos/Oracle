@@ -59,7 +59,7 @@ MECHANICAL STATE: {state_summary}
                     except KeyError:
                         max_str = "?"
 
-                prompt += f"- {pool_id} ({pool_def.name}): {current_str}/{max_str}\n"
+                prompt += f"- {pool_id} ({pool_def.name}) : {current_str}/{max_str}\n"
         prompt += "\n"
 
     prompt += """According to the rules and the character state, determines if a roll is required.
@@ -118,9 +118,16 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
         action_id = action_def.id
 
     pool_id = raw.get("pool")
-    if pool_id and pool_id not in action_def.pools:
-        # Invalid pool
-        return None
+    if not pool_id:
+        pool_id = None
+
+    if action_def.pools:
+        if pool_id is None:
+            return None
+        if pool_id not in action_def.pools:
+            return None
+    else:
+        pool_id = None
 
     diff = raw.get("difficulty")
     if not isinstance(diff, int) or isinstance(diff, bool):
@@ -191,9 +198,8 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
         if final_level:
             final_name = final_level.name
 
-    # Or use provided names if present (fallback)
     if not init_name and diff_info.get("name"):
-        init_name = diff_info.get("name") # Usually final name is stored in state_changes
+        init_name = diff_info.get("name")
 
     init_name_str = f" ({init_name})" if init_name else ""
     final_name_str = f" ({final_name})" if final_name else ""
@@ -207,20 +213,11 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
         if pool_def:
             pool_name = pool_def.name
 
-    effort_res = state_changes.get("effort")
-    effort_str = ""
-    if effort_res and not effort_res.get("waived") and effort_res.get("cost", 0) > 0:
-        cost = effort_res.get("cost")
-        levels = effort_res.get("levels")
-        before = effort_res.get("before")
-        after = effort_res.get("after")
-        effort_str = f" Effort : {levels} niveau(x), coût {cost}, {pool_name} {before}→{after}."
-
     target = task_res.get("target")
-    roll = task_res.get("roll")
-    outcome = task_res.get("outcome")
-    margin = task_res.get("margin")
+    impossible = bool(task_res.get("impossible", False))
+    rolled_list = task_res.get("rolled", [])
 
+    outcome = task_res.get("outcome")
     if outcome == "SUCCESS":
         outcome_str = "Succès"
     elif outcome == "FAILURE":
@@ -228,38 +225,45 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
     else:
         outcome_str = "Impossible"
 
+    margin = task_res.get("margin")
     margin_str = ""
     if margin is not None:
-        margin_str = f"+{margin}" if margin >= 0 else f"{margin}"
+        margin_str = f" (marge +{margin})" if margin >= 0 else f" (marge {margin})"
 
     base_str = f"Tâche — {pool_name} : "
 
-    if task_res.get("impossible"):
-        res = f"{base_str}cible {target} inatteignable : aucun dé, échec. Effort non dépensé."
-    elif task_res.get("auto_success"):
+    # Resolution format
+    if impossible:
+        res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target} inatteignable : aucun dé, échec."
+    elif not rolled_list:
         res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str} : réussite automatique, aucun dé."
     else:
-        res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target}, d20 = {roll} → {outcome_str} (marge {margin_str})."
+        roll = rolled_list[0]
+        res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target}, d20 = {roll} → {outcome_str}{margin_str}."
 
-    res += effort_str
+    # Effort block
+    effort_res = state_changes.get("effort")
+    if effort_res:
+        waived = bool(effort_res.get("waived", False))
+        cost = effort_res.get("cost", 0)
+        levels = effort_res.get("levels", 0)
 
-    warnings = state_changes.get("warnings", [])
+        if waived:
+            res += " Effort non dépensé."
+        elif cost > 0:
+            res += f" Effort : {levels} niveau(x), coût {cost}"
+            pool_changes = state_changes.get(pool_id)
+            if pool_changes and "avant" in pool_changes and "apres" in pool_changes:
+                res += f", {pool_name} {pool_changes['avant']}→{pool_changes['apres']}."
+            else:
+                res += "."
+
+    warnings = task_res.get("warnings", [])
     if warnings:
         warn_str = " ; ".join(warnings)
         res += f" Attention : {warn_str}."
 
     return res
-
-def _clean_empty_dicts(d: dict):
-    """Recursively removes empty dictionaries, in-place if possible."""
-    keys_to_del = []
-    for k, v in d.items():
-        if isinstance(v, dict):
-            _clean_empty_dicts(v)
-            if not v:
-                keys_to_del.append(k)
-    for k in keys_to_del:
-        del d[k]
 
 def _get_by_path_strict(data: dict, path: str):
     keys = path.split('.')
@@ -315,14 +319,13 @@ def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict
                 curr = new_sheet
                 can_delete = True
                 for part in parts[:-1]:
-                    if part in curr:
+                    if isinstance(curr, dict) and part in curr:
                         curr = curr[part]
                     else:
                         can_delete = False
                         break
-                if can_delete and parts[-1] in curr:
+                if can_delete and isinstance(curr, dict) and parts[-1] in curr:
                     del curr[parts[-1]]
                     restored_paths.append(path)
 
-    _clean_empty_dicts(new_sheet)
     return new_sheet, restored_paths
