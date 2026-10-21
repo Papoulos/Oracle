@@ -17,6 +17,7 @@ exporte le document en PDF.
 | resources.json | `recovery_triggers` (4) | one_action / ten_minute / one_hour / ten_hour | Les quatre repos successifs | Recovering Points in a Pool |
 | resources.json | `pooled_recoveries.recovery_roll` | `d(1, 6) + character.tier`, réparti par le joueur entre les trois réserves | Jet de récupération : 1d6 + palier, à répartir librement | Recovering Points in a Pool |
 | resources.json | `recovery_sequences.cypher_rests` | cycle des quatre repos, indice dans `recovery_step` | Le 1er repos demande une action, le 2e dix minutes, le 3e une heure, le 4e dix heures, puis le cycle repart | Recovering Points in a Pool |
+| triggers.json | règle `rest_request`, séquence `cypher_rests` | - | "je me repose", "je prends un repos", "je fais une pause", "je reprends mon souffle", "je prends un moment pour me reposer" | Recovering Points in a Pool |
 
 Chemins de la fiche : convention `resources.<id>.current` / `.max`.
 
@@ -30,7 +31,7 @@ Chemins de la fiche : convention `resources.<id>.current` / `.max`.
 
 | # | Mécanique | Règle (CSRD) | Statut / ce qui manque |
 |---|---|---|---|
-| G1 | **Récupération par jet** | d6 + palier, répartis librement entre les réserves, sans dépasser le maximum ; cycle de 4 repos | **Couvert** (PR #126 à #128) : formule, répartition par le joueur, cycle de repos. Reste à relier à la détection d'actions (triggers.json) |
+| G1 | **Récupération par jet** | d6 + palier, répartis librement entre les réserves, sans dépasser le maximum ; cycle de 4 repos | **Couvert** (PR #126 à #128) : formule, répartition par le joueur, cycle de repos. Détection de « je me repose » couverte (PR 5b-1) ; branchement dans l'agent : PR 5b-2 |
 | G2 | **Plafonds par catégorie** | Compétences <= 2 pas, atouts <= 2, effort <= 6 | Couvert (PR 4a) |
 | G3 | **Coût de l'effort** | 3 points le 1er niveau, 2 les suivants, moins l'Edge de la réserve (Edge utilisé une fois par action et par réserve) ; Edge 3 = 1 niveau gratuit ; +1 par niveau si Impaired ; niveaux <= score d'Effort ; réserve selon la tâche | Couvert (PR 4b) |
 | G4 | **Jets spéciaux** | 1 : intrusion du MJ (sans XP) ; 17 / 18 : +1 / +2 dégâts (attaques) ; 19 : effet mineur ou +3 dégâts ; 20 : effet majeur ou +4 dégâts, et le coût en réserve de l'action est remboursé | Le résultat n'expose ni le d20 naturel ni les effets |
@@ -39,7 +40,7 @@ Chemins de la fiche : convention `resources.<id>.current` / `.max`.
 | G7 | **Jet impossible** | Si même un 20 naturel ne suffit pas, aucun jet n'est fait | Couvert (PR 4a) |
 | G8 | **Modificateurs de jet** | Un total de +3 sur le jet se convertit en atout (difficulté -1) | À la charge de l'appelant ; non modélisé |
 
-Le pack n'a pas de `triggers.json` : aucune détection automatique de « je me repose » tant que la détection ne sait pas appeler `next_rest` (à faire avec le catalogue d'actions). Les `recovery` par réserve sont vides : la récupération passe entièrement par la règle partagée.
+Le pack a un `triggers.json` avec une seule règle (repos par séquence) ; les `recovery` par réserve restent vides (la récupération passe par la règle partagée) ; la consommation de réserves par phrase n'existe pas pour Cypher (l'effort passe par execute_task).
 
 ## Simulation du cycle de repos (graine 11, palier 2)
 

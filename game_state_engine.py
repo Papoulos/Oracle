@@ -30,6 +30,7 @@ class DetectedAction:
     key: Optional[str] = None
     amount: int = 1
     trigger: Optional[str] = None
+    sequence: Optional[str] = None
 
 
 class GameStateEngine:
@@ -1088,7 +1089,8 @@ class GameStateEngine:
                         target=getattr(rule, "target", None),
                         key=final_key,
                         amount=getattr(rule, "amount", 1),
-                        trigger=getattr(rule, "trigger", None)
+                        trigger=getattr(rule, "trigger", None),
+                        sequence=getattr(rule, "sequence", None)
                     )
         return None
 
@@ -1101,6 +1103,8 @@ class GameStateEngine:
             action = self.detect_action(user_input)
             if action:
                 if action.kind == "recover":
+                    if action.sequence:
+                        return f"rest_seq:{action.sequence}"
                     return f"rest:{action.trigger}"
                 return action.rule_id
             return None

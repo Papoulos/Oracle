@@ -258,7 +258,7 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 recovery_triggers = {t.id for t in resources.recovery_triggers}
 
                 rule_ids = set()
-                for rule in triggers.rules:
+                for i, rule in enumerate(triggers.rules):
                     # check unique id
                     if rule.id in rule_ids:
                         issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Duplicate rule id: {rule.id}"))
@@ -269,8 +269,15 @@ def validate_pack(pack_path: str) -> list[Issue]:
                         issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Target '{rule.target}' not found in resources.json pools or pool_groups"))
 
                     # check trigger
-                    if rule.kind == "recover" and rule.trigger not in recovery_triggers:
-                         issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Trigger '{rule.trigger}' not found in resources.json recovery_triggers"))
+                    if rule.kind == "recover" and rule.trigger is not None:
+                         if rule.trigger not in recovery_triggers:
+                             issues.append(Issue(severity="error", file="triggers.json", path=f"rules.{rule.id}", message=f"Trigger '{rule.trigger}' not found in resources.json recovery_triggers"))
+
+                    # check sequence
+                    if rule.kind == "recover" and getattr(rule, "sequence", None) is not None:
+                         valid_sequences = {seq.id for seq in resources.recovery_sequences} if resources and hasattr(resources, "recovery_sequences") else set()
+                         if rule.sequence not in valid_sequences:
+                             issues.append(Issue(severity="error", file="triggers.json", path=f"/rules/{i}/sequence", message=f"sequence '{rule.sequence}' not found in resources.json recovery_sequences"))
 
                     # check regex compilable
                     if rule.key_regex:
