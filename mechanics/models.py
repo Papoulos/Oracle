@@ -260,6 +260,7 @@ class TriggerRule(BaseModel):
     kind: Literal["consume", "recover"]
     target: str | None = None
     trigger: str | None = None
+    sequence: str | None = None
     amount: int | None = None
     key_regex: dict[str, str] | None = None
     key_default: str | None = None
@@ -267,10 +268,14 @@ class TriggerRule(BaseModel):
     keywords: dict[str, list[str]]
 
     def model_post_init(self, __context):
-        if self.kind == "consume" and self.target is None:
-            raise ValueError("target must be provided when kind is 'consume'")
-        if self.kind == "recover" and self.trigger is None:
-            raise ValueError("trigger must be provided when kind is 'recover'")
+        if self.kind == "consume":
+            if self.target is None:
+                raise ValueError("target must be provided when kind is 'consume'")
+            if self.sequence is not None:
+                raise ValueError("sequence cannot be provided when kind is 'consume'")
+        if self.kind == "recover":
+            if (self.trigger is None) == (self.sequence is None):
+                raise ValueError("recover rule requires exactly one of 'trigger' or 'sequence'")
         if self.key_template is not None and "{key}" not in self.key_template:
             raise ValueError("key_template must contain '{key}' if provided")
 

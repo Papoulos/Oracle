@@ -149,6 +149,7 @@ To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle sep
     *   **Actions (`actions.json`)**: System packs optionally support defining task actions (e.g. attack, defend, climb) with dynamic effort mechanics and difficulty scales. The engine provides `execute_task(action_id, pool_id, difficulty, effort_levels)` which evaluates complex cost formulas (using `effort.levels`, `effort.edge`, and `effort.impaired`), verifies resources atomically, applies step adjustments, resolves the check against the configured `StepTargetD20` family, and directly returns an `ActionResult` with structured `state_changes` and a technical message. `ActionResult.success` indicates the mechanical operation completed (whether the check succeeded or failed).
 *   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
 *   **Task Flow module**: `mechanics/task_flow.py` offers pure functions for the orchestrator to build prompts, sanitize decisions, format narrative outcomes based on `state_changes`, and enforce state safety.
+*   `TriggerRule.sequence` allows triggering a recovery sequence defined in `resources.recovery_sequences`. `DetectedAction.sequence` carries this ID if detected. Allocation flows (e.g., `build_allocation_prompt`, `sanitize_allocation` in `mechanics/task_flow.py`) govern user choice for shared point pools.
 
 ---
 

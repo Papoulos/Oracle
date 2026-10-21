@@ -329,3 +329,137 @@ def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict
                     restored_paths.append(path)
 
     return new_sheet, restored_paths
+
+def build_allocation_prompt(pack, sheet: dict, pending: dict, user_input: str) -> str:
+    points = pending.get("points", "?")
+    if not isinstance(points, int):
+        points = "?"
+
+    among = pending.get("among", [])
+    if not isinstance(among, list):
+        among = []
+
+    prompt = f"Points to allocate: {points}\n\n"
+    prompt += "AVAILABLE POOLS (Current / Max):\n"
+
+    if among and pack.resources and pack.resources.pools:
+        for pool_id in among:
+            pool_def = next((p for p in pack.resources.pools if p.id == pool_id), None)
+            if pool_def:
+                try:
+                    current_val = get_by_path(sheet, pool_def.current_path)
+                except KeyError:
+                    current_val = "?"
+                current_str = str(current_val) if isinstance(current_val, int) and not isinstance(current_val, bool) else "?"
+
+                max_str = "?"
+                if pool_def.max_value is not None:
+                    max_str = str(pool_def.max_value)
+                elif pool_def.max_path:
+                    try:
+                        max_val = get_by_path(sheet, pool_def.max_path)
+                        max_str = str(max_val) if isinstance(max_val, int) and not isinstance(max_val, bool) else "?"
+                    except KeyError:
+                        max_str = "?"
+
+                pool_line = f"- {pool_id} ({pool_def.name}) : {current_str}/{max_str}"
+
+                if current_str != "?" and max_str != "?":
+                    try:
+                        c = int(current_str)
+                        m = int(max_str)
+                        missing = m - c
+                        if missing < 0:
+                            missing = 0
+                        pool_line += f" (manque {missing})"
+                    except ValueError:
+                        pass
+
+                prompt += f"{pool_line}\n"
+            else:
+                prompt += f"- {pool_id} (?) : ?/?\n"
+    elif among:
+        for pool_id in among:
+            prompt += f"- {pool_id} (?) : ?/?\n"
+
+    prompt += f"\nPlayer message: \"{user_input}\"\n\n"
+
+    prompt += """Instructions:
+You must determine how the player wants to allocate their points based ONLY on their message.
+Do NOT invent an allocation if the player does not explicitly specify one.
+If the message does not specify an allocation, set "understood" to false.
+If the player explicitly declines or cancels the allocation, set "decline" to true.
+
+Reply strictly in JSON format:
+{
+    "understood": boolean,
+    "decline": boolean,
+    "allocation": {"pool_id": integer, ...}
+}
+"""
+    return prompt
+
+def sanitize_allocation(raw: Any, pending: dict) -> dict | None:
+    if not isinstance(raw, dict):
+        return None
+
+    points = pending.get("points")
+    if not isinstance(points, int) or points < 0:
+        return None
+
+    among = pending.get("among")
+    if not isinstance(among, list) or not among:
+        return None
+    if not all(isinstance(a, str) for a in among):
+        return None
+
+    understood = raw.get("understood")
+    if understood is not True:
+        return None
+
+    decline = raw.get("decline")
+    if decline is True:
+        return {"action": "decline", "allocation": {}}
+
+    allocation_raw = raw.get("allocation")
+    if not isinstance(allocation_raw, dict):
+        return None
+
+    allocation = {}
+    total_allocated = 0
+
+    for k, v in allocation_raw.items():
+        if k not in among:
+            continue
+
+        if isinstance(v, bool):
+            return None
+
+        # Custom explicit parsing since _parse_int_val defaults to 0 on failure. We want strict integers/convertible floats
+        parsed_v = None
+        if isinstance(v, int):
+            parsed_v = v
+        elif isinstance(v, float) and v.is_integer():
+            parsed_v = int(v)
+        elif isinstance(v, str):
+            try:
+                f_val = float(v)
+                if f_val.is_integer():
+                    parsed_v = int(f_val)
+            except ValueError:
+                pass
+
+        if parsed_v is None or parsed_v < 0:
+             return None
+
+        if parsed_v > 0:
+            allocation[k] = parsed_v
+            total_allocated += parsed_v
+
+    if total_allocated == 0:
+        return None
+
+    if total_allocated > points:
+        return None
+
+    return {"action": "allocate", "allocation": allocation}

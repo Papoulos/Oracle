@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "rules": [
+    {
+      "id": "rest_request",
+      "kind": "recover",
+      "sequence": "cypher_rests",
+      "keywords": {"fr": ["je me repose", "je prends un repos", "je fais une pause",
+                          "je reprends mon souffle", "je prends un moment pour me reposer"]}
+    }
+  ]
+}
