@@ -294,6 +294,25 @@ sequenceDiagram
     Narr->>Player: Immersive Response (Perception, tension, action hook) + Info Summary block
 ```
 
+### Mode tâche (packs avec actions.json)
+
+Lorsque le `SYSTEM_PACK` spécifié possède un fichier `actions.json` valide **ET** que la famille de résolution est `StepTargetD20`, le `GameStateEngine` gère entièrement la résolution mécanique des actions des joueurs (Task Mode) :
+- **Analyse de tâche :** L'Orchestrateur détermine si l'action nécessite un jet en fournissant un JSON normalisé avec l'action choisie, la réserve, la difficulté et les ajustements (avantages ou obstacles).
+- **Résolution déterministe :** Le moteur Python exécute la tâche en appliquant les coûts (effort), effectue les calculs, vérifie la capacité du personnage et génère un rapport technique incontestable.
+- **Narration forcée :** Le LLM narratif reçoit des instructions l'obligeant à s'appuyer exclusivement sur le rapport technique.
+- **Garde-fou des états :** Si le mode tâche ou les actions de l'Orchestrateur tentent de modifier l'état ou la progression mécanique du personnage de manière incohérente avec le modèle (ex: triche sur les ressources en cours de tour, altérations sur les variables sous la tutelle exclusive du moteur), un mécanisme de validation et de correction (safeguard) annule ces écritures. Les variables réservées sont rechargées de force dans la fiche avant d'être écrites, préservant ainsi la pureté des statistiques du système.
+> **Note :** La gestion des dégâts automatiques et du système de repos Cypher System n'est pas encore implémentée de manière entièrement procédurale dans le mode tâche actuel.
+
+### Détection d'actions du pack
+
+Le `GameStateEngine` intercepte de façon transparente les intentions des joueurs en croisant leurs requêtes avec les mots-clés du pack (via `triggers.json`).
+- **Consommations (Consume) :** Déduit instantanément des réserves sans faire appel au LLM (ex: sorts, munitions).
+- **Repos et Séquences (Recover) :** Gère la régénération des ressources selon des règles configurables (formules, dés), des limites maximales, ou via une suite d'étapes de repos séquentielles (ex: Cypher System).
+- **Répartition en attente (Allocation) :** Lorsque les règles de récupération prévoient un gain au choix du joueur sur plusieurs réserves, le moteur bloque la boucle normale et consigne une `pending_allocation`. Au tour suivant :
+  - **Allocate :** Le joueur répartit ses points, le moteur met à jour la fiche.
+  - **Decline :** Le joueur refuse, les points sont perdus.
+  - **Non comprise :** Si l'intention est floue, le moteur redemande poliment de clarifier, empêchant tout avancement abusif ou hors-sujet.
+
 ---
 
 ## 📚 RAG & Indexing
@@ -322,17 +341,6 @@ python indexer.py --scenario
 # Re-run character handbook generation only
 python indexer.py --pj
 ```
-
----
-
-### Mode tâche (packs avec actions.json)
-
-Lorsque le `SYSTEM_PACK` spécifié possède un fichier `actions.json` valide **ET** que la famille de résolution est `StepTargetD20`, le `GameStateEngine` gère entièrement la résolution mécanique des actions des joueurs (Task Mode) :
-- **Analyse de tâche :** L'Orchestrateur détermine si l'action nécessite un jet en fournissant un JSON normalisé avec l'action choisie, la réserve, la difficulté et les ajustements (avantages ou obstacles).
-- **Résolution déterministe :** Le moteur Python exécute la tâche en appliquant les coûts (effort), effectue les calculs, vérifie la capacité du personnage et génère un rapport technique incontestable.
-- **Narration forcée :** Le LLM narratif reçoit des instructions l'obligeant à s'appuyer exclusivement sur le rapport technique.
-- **Garde-fou des états :** Si le mode tâche ou les actions de l'Orchestrateur tentent de modifier l'état ou la progression mécanique du personnage de manière incohérente avec le modèle (ex: triche sur les ressources en cours de tour, altérations sur les variables sous la tutelle exclusive du moteur), un mécanisme de validation et de correction (safeguard) annule ces écritures. Les variables réservées sont rechargées de force dans la fiche avant d'être écrites, préservant ainsi la pureté des statistiques du système.
-> **Note :** La gestion des dégâts automatiques et du système de repos Cypher System n'est pas encore implémentée de manière entièrement procédurale dans le mode tâche actuel.
 
 ---
 

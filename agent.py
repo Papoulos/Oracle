@@ -14,7 +14,7 @@ import config
 from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
 from scenario_agents import ScenarioExtractorAgent
 from validation import validate_scenario_structure, validate_character_sheet
-from mechanics.task_flow import build_task_analysis_prompt, sanitize_task_decision, format_task_roll_line, enforce_engine_owned_fields
+from mechanics.task_flow import build_task_analysis_prompt, sanitize_task_decision, format_task_roll_line, enforce_engine_owned_fields, build_allocation_prompt, sanitize_allocation, format_pending_allocation_note
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +383,67 @@ class RPGAgent(BaseAgent):
         self.chronicle_data = None
         self.setup_logs = []
         self._missing_character_fields = None
+
+    def _pack_mechanical_step(self, user_input: str) -> str:
+        """
+        Handles proactive mechanical actions using the pack's action detection,
+        including pending allocations. Returns the mechanical context string.
+        """
+        pending = self.gse.state.get("pending_allocation")
+        if pending is not None:
+            prompt = build_allocation_prompt(self.gse.pack, self.gse.state, pending, user_input)
+            raw = None
+            try:
+                raw = extract_json(self.llm.invoke(prompt).content, expected_type=dict)
+            except Exception as e:
+                logger.warning(f"Allocation analysis failed: {e}")
+
+            decision = sanitize_allocation(raw, pending)
+            mechanical_context = ""
+            if decision:
+                if decision["action"] == "allocate":
+                    result = self.gse.allocate_recovery(decision["allocation"])
+                else:
+                    result = self.gse.allocate_recovery({})
+
+                if result:
+                    if result.success:
+                        mechanical_context = f"\nMECANIQUE : {result.message}"
+                    else:
+                        mechanical_context = f"\n⚠ ACTION BLOQUÉE : {result.blocked_reason} — {result.message}"
+                        # Allocation blocked (e.g., bad limits), engine retained the pending state
+                        mechanical_context += format_pending_allocation_note(self.gse.state["pending_allocation"], self.gse.state, self.gse.pack)
+            else:
+                mechanical_context = format_pending_allocation_note(pending, self.gse.state, self.gse.pack)
+
+            return mechanical_context
+
+        # Normal detection
+        detected = self.gse.detect_action(user_input)
+        if not detected:
+            return ""
+
+        result = None
+        if detected.kind == "consume":
+            result = self.gse.consume_pool(detected.target, key=detected.key, amount=detected.amount or 1)
+        elif detected.kind == "recover":
+            if detected.sequence is not None:
+                result = self.gse.next_rest(detected.sequence)
+            elif detected.trigger is not None:
+                result = self.gse.rest(detected.trigger)
+
+        if not result:
+            return ""
+
+        mechanical_context = ""
+        if result.success:
+            mechanical_context = f"\nMECANIQUE : {result.message}"
+            if "pending_allocation" in result.state_changes:
+                mechanical_context += format_pending_allocation_note(result.state_changes["pending_allocation"], self.gse.state, self.gse.pack)
+        else:
+            mechanical_context = f"\n⚠ ACTION BLOQUÉE : {result.blocked_reason} — {result.message}"
+
+        return mechanical_context
 
     def _task_mode(self) -> bool:
         """Returns True if the engine's pack supports action tasks using the StepTargetD20 family."""
@@ -813,27 +874,32 @@ Reply ONLY with this JSON:
             chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
             # Mechanical detection and validation (Proactive actions)
-            action_type = self.gse.detect_action_type(user_input)
-            mechanical_result = None
+            if self.gse.pack is not None:
+                mechanical_context = self._pack_mechanical_step(user_input)
+                if mechanical_context is not None and "RÉPARTITION EN ATTENTE" in mechanical_context and "MECANIQUE :" not in mechanical_context and "ACTION BLOQUÉE :" not in mechanical_context:
+                    pass
+            else:
+                action_type = self.gse.detect_action_type(user_input)
+                mechanical_result = None
 
-            if action_type == "spell":
-                spell_level = 1
-                mechanical_result = self.gse.consume_spell_slot(spell_level)
-            elif action_type == "rage":
-                mechanical_result = self.gse.consume_resource("points_de_rage")
-            elif action_type and action_type.startswith("rest:"):
-                palier_id = action_type.split(":", 1)[1]
-                mechanical_result = self.gse.rest(palier_id)
-            elif action_type == "rest":
-                rest_type = "long" if any(w in user_input.lower() for w in ["long", "nuit", "camp"]) else "short"
-                mechanical_result = self.gse.rest(rest_type)
+                if action_type == "spell":
+                    spell_level = 1
+                    mechanical_result = self.gse.consume_spell_slot(spell_level)
+                elif action_type == "rage":
+                    mechanical_result = self.gse.consume_resource("points_de_rage")
+                elif action_type and action_type.startswith("rest:"):
+                    palier_id = action_type.split(":", 1)[1]
+                    mechanical_result = self.gse.rest(palier_id)
+                elif action_type == "rest":
+                    rest_type = "long" if any(w in user_input.lower() for w in ["long", "nuit", "camp"]) else "short"
+                    mechanical_result = self.gse.rest(rest_type)
 
-            mechanical_context = ""
-            if mechanical_result:
-                if not mechanical_result.success:
-                    mechanical_context = f"\n⚠ ACTION BLOQUÉE : {mechanical_result.blocked_reason} — {mechanical_result.message}"
-                else:
-                    mechanical_context = f"\nMECANIQUE : {mechanical_result.message}"
+                mechanical_context = ""
+                if mechanical_result:
+                    if not mechanical_result.success:
+                        mechanical_context = f"\n⚠ ACTION BLOQUÉE : {mechanical_result.blocked_reason} — {mechanical_result.message}"
+                    else:
+                        mechanical_context = f"\nMECANIQUE : {mechanical_result.message}"
 
             state_summary = self.gse.get_state_summary()
             self.character_data = self.gse.state # Sync before analysis
