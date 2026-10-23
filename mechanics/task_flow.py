@@ -330,6 +330,33 @@ def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict
 
     return new_sheet, restored_paths
 
+def _pool_values(pack, sheet: dict, pool_id: str) -> tuple[Any, Any, Any]:
+    pool_def = None
+    if pack.resources and pack.resources.pools:
+        pool_def = next((p for p in pack.resources.pools if p.id == pool_id), None)
+
+    if not pool_def:
+        return None, "?", "?"
+
+    try:
+        current_val = get_by_path(sheet, pool_def.current_path)
+    except KeyError:
+        current_val = "?"
+    current_str = str(current_val) if isinstance(current_val, int) and not isinstance(current_val, bool) else "?"
+
+    max_str = "?"
+    if pool_def.max_value is not None:
+        max_str = str(pool_def.max_value)
+    elif pool_def.max_path:
+        try:
+            max_val = get_by_path(sheet, pool_def.max_path)
+            max_str = str(max_val) if isinstance(max_val, int) and not isinstance(max_val, bool) else "?"
+        except KeyError:
+            max_str = "?"
+
+    return pool_def, current_str, max_str
+
+
 def build_allocation_prompt(pack, sheet: dict, pending: dict, user_input: str) -> str:
     points = pending.get("points", "?")
     if not isinstance(points, int):
@@ -344,24 +371,8 @@ def build_allocation_prompt(pack, sheet: dict, pending: dict, user_input: str) -
 
     if among and pack.resources and pack.resources.pools:
         for pool_id in among:
-            pool_def = next((p for p in pack.resources.pools if p.id == pool_id), None)
+            pool_def, current_str, max_str = _pool_values(pack, sheet, pool_id)
             if pool_def:
-                try:
-                    current_val = get_by_path(sheet, pool_def.current_path)
-                except KeyError:
-                    current_val = "?"
-                current_str = str(current_val) if isinstance(current_val, int) and not isinstance(current_val, bool) else "?"
-
-                max_str = "?"
-                if pool_def.max_value is not None:
-                    max_str = str(pool_def.max_value)
-                elif pool_def.max_path:
-                    try:
-                        max_val = get_by_path(sheet, pool_def.max_path)
-                        max_str = str(max_val) if isinstance(max_val, int) and not isinstance(max_val, bool) else "?"
-                    except KeyError:
-                        max_str = "?"
-
                 pool_line = f"- {pool_id} ({pool_def.name}) : {current_str}/{max_str}"
 
                 if current_str != "?" and max_str != "?":
@@ -463,3 +474,28 @@ def sanitize_allocation(raw: Any, pending: dict) -> dict | None:
         return None
 
     return {"action": "allocate", "allocation": allocation}
+
+def format_pending_allocation_note(pending: dict, sheet: dict, pack) -> str:
+    """
+    Returns a formatted, localized (French) string explaining the pending allocation to the player.
+    """
+    if not isinstance(pending, dict):
+        return ""
+
+    points = pending.get("points")
+    among = pending.get("among")
+
+    if not isinstance(points, int) or not isinstance(among, list) or not among:
+        return ""
+
+    formatted_items = []
+    for pool_id in among:
+        pool_def, current_str, max_str = _pool_values(pack, sheet, pool_id)
+        if pool_def:
+            formatted_items.append(f"{pool_id} ({pool_def.name}) {current_str}/{max_str}")
+        else:
+            formatted_items.append(f"{pool_id}")
+
+    liste = ", ".join(formatted_items)
+
+    return f"\n⏳ RÉPARTITION EN ATTENTE : {points} point(s) de récupération à répartir entre : {liste}. Demande au joueur comment les répartir ; ne décide pas à sa place."
