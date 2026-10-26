@@ -9,6 +9,7 @@ from pydantic import BaseModel, ValidationError, TypeAdapter
 
 from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, PbtA2d6Config, StepTargetD20Config, TriggersConfig
 from mechanics.actions import ActionsConfig
+from mechanics.character import CharacterSchemaConfig, CreationManualConfig
 from mechanics.expr import compile_expr, referenced_variables, ExprError
 
 
@@ -389,6 +390,94 @@ def validate_pack(pack_path: str) -> list[Issue]:
             issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=f"Invalid JSON: {e}"))
         except Exception as e:
             issues.append(Issue(severity="error", file="actions.json", path=actions_path, message=str(e)))
+
+    # 6. Character Schema Config (Optional)
+    schema_path = os.path.join(pack_path, "character_schema.json")
+    if os.path.isfile(schema_path):
+        try:
+            with open(schema_path, "r", encoding="utf-8") as f:
+                schema_data = json.load(f)
+
+            schema = CharacterSchemaConfig.model_validate(schema_data)
+
+            # Check paths format and duplicates
+            ptr_regex = r'^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$'
+            seen_paths = set()
+            for idx, field in enumerate(schema.required_fields):
+                if not re.match(ptr_regex, field.path):
+                    issues.append(Issue(severity="error", file="character_schema.json", path=f"/required_fields/{idx}/path", message=f"Invalid path format: {field.path}"))
+                if field.path in seen_paths:
+                    issues.append(Issue(severity="error", file="character_schema.json", path=f"/required_fields/{idx}/path", message=f"Duplicate path: {field.path}"))
+                seen_paths.add(field.path)
+
+            # Check pool coverage
+            if resources:
+                covered_paths = set(seen_paths)
+                for pool in resources.pools:
+                    is_covered = False
+                    for p in covered_paths:
+                        if p == pool.current_path:
+                            is_covered = True
+                            break
+                        if pool.max_path and p == pool.max_path:
+                            is_covered = True
+                            break
+                        # Parent path coverage
+                        if "." in pool.current_path and p == pool.current_path.rsplit(".", 1)[0]:
+                            is_covered = True
+                            break
+                        # Prefix coverage (e.g. p is 'resources.might' and pool.current_path is 'resources.might.current')
+                        if pool.current_path.startswith(p + "."):
+                            is_covered = True
+                            break
+                    if not is_covered:
+                        issues.append(Issue(severity="warning", file="character_schema.json", path="/required_fields", message=f"pool '{pool.id}' ({pool.current_path}) is not covered by any required field"))
+
+        except ValidationError as e:
+            for err in e.errors():
+                loc = err.get("loc", [])
+                path = "/" + "/".join(str(x) for x in loc) if loc else schema_path
+                msg = err.get("msg", "")
+                if msg.startswith("Value error, "):
+                    msg = msg[13:]
+                msg = msg.replace("\n", " ").replace("\r", " ")
+                issues.append(Issue(severity="error", file="character_schema.json", path=path, message=msg))
+        except json.JSONDecodeError as e:
+            issues.append(Issue(severity="error", file="character_schema.json", path=schema_path, message=f"Invalid JSON: {e}"))
+        except Exception as e:
+            issues.append(Issue(severity="error", file="character_schema.json", path=schema_path, message=str(e)))
+
+    # 7. Creation Manual Config (Optional)
+    manual_path = os.path.join(pack_path, "creation_manual.json")
+    if os.path.isfile(manual_path):
+        try:
+            with open(manual_path, "r", encoding="utf-8") as f:
+                manual_data = json.load(f)
+
+            manual = CreationManualConfig.model_validate(manual_data)
+
+            if not manual.steps:
+                issues.append(Issue(severity="warning", file="creation_manual.json", path="/steps", message="creation manual has no steps"))
+            else:
+                expected_step = 1
+                for idx, step in enumerate(manual.steps):
+                    if step.step != expected_step:
+                        issues.append(Issue(severity="error", file="creation_manual.json", path=f"/steps/{idx}/step", message=f"Expected step {expected_step}, got {step.step}"))
+                    expected_step += 1
+
+        except ValidationError as e:
+            for err in e.errors():
+                loc = err.get("loc", [])
+                path = "/" + "/".join(str(x) for x in loc) if loc else manual_path
+                msg = err.get("msg", "")
+                if msg.startswith("Value error, "):
+                    msg = msg[13:]
+                msg = msg.replace("\n", " ").replace("\r", " ")
+                issues.append(Issue(severity="error", file="creation_manual.json", path=path, message=msg))
+        except json.JSONDecodeError as e:
+            issues.append(Issue(severity="error", file="creation_manual.json", path=manual_path, message=f"Invalid JSON: {e}"))
+        except Exception as e:
+            issues.append(Issue(severity="error", file="creation_manual.json", path=manual_path, message=str(e)))
 
     return issues
 
