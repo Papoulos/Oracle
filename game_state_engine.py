@@ -995,21 +995,32 @@ class GameStateEngine:
 
         stats = self.state.get("statistics", {})
 
-        resources = self.state.setdefault("resources", {})
-        pv = resources.setdefault("hit_points", {})
+        # Normalize hit_points only if no pack, or if the pack has a pool id "hit_points"
+        run_hp_normalization = True
+        if self.pack is not None:
+            run_hp_normalization = False
+            if hasattr(self.pack, "resources") and self.pack.resources:
+                for pool in self.pack.resources.pools:
+                    if pool.id == "hit_points":
+                        run_hp_normalization = True
+                        break
 
-        hp_max = pv.get("max", 0)
-        hp_cur = pv.get("current", 0)
+        if run_hp_normalization:
+            resources = self.state.setdefault("resources", {})
+            pv = resources.setdefault("hit_points", {})
 
-        if hp_max == 0 and "pv" in self.state and isinstance(self.state["pv"], int):
-            hp_max = self.state["pv"]
-            pv["max"] = hp_max
+            hp_max = pv.get("max", 0)
+            hp_cur = pv.get("current", 0)
 
-        if hp_cur > hp_max and hp_max > 0:
-            pv["current"] = hp_max
+            if hp_max == 0 and "pv" in self.state and isinstance(self.state["pv"], int):
+                hp_max = self.state["pv"]
+                pv["max"] = hp_max
 
-        if hp_max > 0 and isinstance(self.state.get("pv"), int) and "current" in pv:
-            self.state["pv"] = pv["current"]
+            if hp_cur > hp_max and hp_max > 0:
+                pv["current"] = hp_max
+
+            if hp_max > 0 and isinstance(self.state.get("pv"), int) and "current" in pv:
+                self.state["pv"] = pv["current"]
 
         if "level" in self.state:
             try: self.state["level"] = int(self.state["level"])

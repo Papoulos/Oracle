@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import TypeAdapter
 from mechanics.models import Manifest, ResolutionConfig, ResourcesConfig, TriggersConfig
 from mechanics.actions import ActionsConfig
+from mechanics.character import CharacterSchemaConfig, CreationManualConfig
 from systems.validate import validate_pack
 
 
@@ -25,6 +26,8 @@ class SystemPack:
     resources: ResourcesConfig
     triggers: Optional[TriggersConfig]
     actions: Optional[ActionsConfig] = None
+    character_schema: Optional[CharacterSchemaConfig] = None
+    creation_manual: Optional[CreationManualConfig] = None
 
 
 def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
@@ -83,10 +86,28 @@ def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
             actions_data = json.load(f)
         actions = ActionsConfig.model_validate(actions_data)
 
+    # Load Character Schema (optional)
+    character_schema = None
+    character_schema_path = os.path.join(pack_dir, "character_schema.json")
+    if os.path.exists(character_schema_path):
+        with open(character_schema_path, "r", encoding="utf-8") as f:
+            schema_data = json.load(f)
+        character_schema = CharacterSchemaConfig.model_validate(schema_data)
+
+    # Load Creation Manual (optional)
+    creation_manual = None
+    creation_manual_path = os.path.join(pack_dir, "creation_manual.json")
+    if os.path.exists(creation_manual_path):
+        with open(creation_manual_path, "r", encoding="utf-8") as f:
+            manual_data = json.load(f)
+        creation_manual = CreationManualConfig.model_validate(manual_data)
+
     return SystemPack(
         manifest=manifest,
         resolution=resolution,
         resources=resources,
         triggers=triggers,
-        actions=actions
+        actions=actions,
+        character_schema=character_schema,
+        creation_manual=creation_manual
     )

@@ -294,6 +294,13 @@ sequenceDiagram
     Narr->>Player: Immersive Response (Perception, tension, action hook) + Info Summary block
 ```
 
+### Fichiers optionnels de création de personnage
+Les packs système peuvent inclure des fichiers optionnels (strictement validés par `validate_pack` et chargés par `systems.loader`) pour configurer la création de personnage :
+- `character_schema.json` : Définit la structure attendue de la fiche de personnage et assure la validation dynamique.
+- `creation_manual.json` : Guide étape par étape la logique du processus de création de personnage en isolant cette connaissance du LLM.
+
+La méthode `synchronize_and_recalculate` du moteur a été mise à jour : la normalisation historique des "hit_points" ne s'applique désormais qu'aux packs définissant explicitement un pool d'id `hit_points`, et préserve intactes les structures de PV spécifiques aux autres systèmes (comme Cypher System).
+
 ### Mode tâche (packs avec actions.json)
 
 Lorsque le `SYSTEM_PACK` spécifié possède un fichier `actions.json` valide **ET** que la famille de résolution est `StepTargetD20`, le `GameStateEngine` gère entièrement la résolution mécanique des actions des joueurs (Task Mode) :
