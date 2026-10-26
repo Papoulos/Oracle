@@ -995,15 +995,10 @@ class GameStateEngine:
 
         stats = self.state.get("statistics", {})
 
-        # Normalize hit_points only if no pack, or if the pack has a pool id "hit_points"
+        # Normalize hit_points only if no pack, or if the pack manages them explicitly.
         run_hp_normalization = True
         if self.pack is not None:
-            run_hp_normalization = False
-            if hasattr(self.pack, "resources") and self.pack.resources:
-                for pool in self.pack.resources.pools:
-                    if pool.id == "hit_points":
-                        run_hp_normalization = True
-                        break
+            run_hp_normalization = self._pack_manages_hit_points()
 
         if run_hp_normalization:
             resources = self.state.setdefault("resources", {})
@@ -1030,6 +1025,31 @@ class GameStateEngine:
             except: pass
 
         self.save()
+
+    def _pack_manages_hit_points(self) -> bool:
+        """
+        Checks if the loaded pack explicitly manages a 'resources.hit_points' namespace
+        via its pools or pool_groups paths.
+        """
+        if not self.pack or not hasattr(self.pack, "resources") or not self.pack.resources:
+            return False
+
+        def is_hp_path(path) -> bool:
+            if not isinstance(path, str):
+                return False
+            return path == "resources.hit_points" or path.startswith("resources.hit_points.")
+
+        for pool in getattr(self.pack.resources, "pools", []):
+            if is_hp_path(getattr(pool, "current_path", None)):
+                return True
+            if is_hp_path(getattr(pool, "max_path", None)):
+                return True
+
+        for group in getattr(self.pack.resources, "pool_groups", []):
+            if is_hp_path(getattr(group, "path", None)):
+                return True
+
+        return False
 
     # ── Info Extraction ──────────────────────────────────────
 
