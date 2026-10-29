@@ -9,7 +9,9 @@ def setup_module():
         shutil.rmtree("Memory")
     os.makedirs("Memory", exist_ok=True)
 
-def test_incremental_creation():
+def test_incremental_creation(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     # Write a test schema before initializing the agent
     schema = {
         "required_fields": [

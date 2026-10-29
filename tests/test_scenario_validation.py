@@ -166,6 +166,8 @@ def test_validation_doublons_et_localisation_pnj(clean_scenario_data):
     assert corrected["entities"]["npcs"][1]["usual_location"] is None
 
 def test_setup_world_json_scenarios(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     # Setup test configuration environment paths
     monkeypatch.setattr(config, "SCENARIO_DATA_PATH", str(tmp_path))
 

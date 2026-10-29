@@ -159,7 +159,11 @@ def test_validate_pack_manual_steps(tmp_path):
     assert any(i.severity == "error" and i.file == "creation_manual.json" and "Expected step 2, got 3" in i.message for i in issues2)
 
 
-def test_synchronize_and_recalculate_hit_points_logic(tmp_path):
+def test_synchronize_and_recalculate_hit_points_logic(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     # Pack with hp kind health but no hit_points id
     pools1 = [{
         "id": "hp",
@@ -202,7 +206,11 @@ def test_synchronize_and_recalculate_hit_points_logic(tmp_path):
     assert "hit_points" in engine3.state["resources"]
 
 
-def test_synchronize_hit_points_regression_139(tmp_path):
+def test_synchronize_hit_points_regression_139(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     Test pour la régression #139 : la normalisation des points de vie (hit_points) doit
     se déclencher UNIQUEMENT si le pack gère explicitement "resources.hit_points" dans ses
