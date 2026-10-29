@@ -13,7 +13,9 @@ def setup_module():
     os.makedirs("Memory", exist_ok=True)
 
 
-def test_pure_validation_add_like():
+def test_pure_validation_add_like(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     schema = {
         "required_fields": [
             {"path": "name", "type": "string"},
@@ -53,7 +55,9 @@ def test_pure_validation_add_like():
     assert len(missing) == 0
 
 
-def test_pure_validation_investigation_horror():
+def test_pure_validation_investigation_horror(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     schema = {
         "required_fields": [
             {"path": "name", "type": "string"},
@@ -97,7 +101,9 @@ def test_pure_validation_investigation_horror():
     assert len(missing) == 0
 
 
-def test_pure_validation_fallback_schema():
+def test_pure_validation_fallback_schema(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     # Schema absent / empty -> must return False and clear message
     is_complete, missing = validate_character_sheet({"name": "Test"}, None)
     assert not is_complete
@@ -113,7 +119,9 @@ def test_pure_validation_fallback_schema():
     assert "character_data missing" in missing_empty
 
 
-def test_orchestration_audit_triggered():
+def test_orchestration_audit_triggered(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     agent = RPGAgent()
 
     # 1. Write schema in Memory
@@ -152,7 +160,9 @@ def test_orchestration_audit_triggered():
     assert agent.game_state == "SUMMARY"  # Transition because complete after audit
 
 
-def test_orchestration_transition_no_audit_when_already_complete():
+def test_orchestration_transition_no_audit_when_already_complete(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     agent = RPGAgent()
 
     schema = {
@@ -179,7 +189,9 @@ def test_orchestration_transition_no_audit_when_already_complete():
     assert agent.game_state == "SUMMARY"
 
 
-def test_manual_generator_agent_schema_fallback():
+def test_manual_generator_agent_schema_fallback(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     # Test where ManualGeneratorAgent's LLM call mocked for schema returns invalid/empty JSON
     # -> check fallback on {"required_fields": []} and check that character_schema.json is written.
 

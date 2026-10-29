@@ -4,7 +4,9 @@ from agent import RPGAgent
 import os
 from unittest import mock
 
-def test_character_completion_transition():
+def test_character_completion_transition(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     if os.path.exists("Memory/character_schema.json"):
         try:
             os.remove("Memory/character_schema.json")

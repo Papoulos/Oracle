@@ -12,7 +12,9 @@ def setup_module():
     os.makedirs("Memory", exist_ok=True)
 
 
-def test_manual_generator_below_threshold():
+def test_manual_generator_below_threshold(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     Core store with total text under CORE_FULLTEXT_THRESHOLD_CHARS
     -> no call to DISCOVERY_PROMPT, no call to similarity_search;
@@ -40,7 +42,9 @@ def test_manual_generator_below_threshold():
     assert not mock_store.similarity_search.called
 
 
-def test_manual_generator_above_threshold_success():
+def test_manual_generator_above_threshold_success(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     Core store exceeding threshold, DISCOVERY_PROMPT mocked returning {"components": ["Type", "Descripteur", "Focus"]}
     -> verify targeted RAG queries are correctly built from these terms.
@@ -78,7 +82,9 @@ def test_manual_generator_above_threshold_success():
     assert "Focus, création de personnage" in called_queries
 
 
-def test_manual_generator_above_threshold_invalid_json_fallback():
+def test_manual_generator_above_threshold_invalid_json_fallback(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     DISCOVERY_PROMPT mocked returning invalid/empty JSON -> fall back on default generic queries, no crash.
     """
@@ -110,7 +116,9 @@ def test_manual_generator_above_threshold_invalid_json_fallback():
     assert "équipement, ressources de départ, progression du personnage" in called_queries
 
 
-def test_no_dnd_bias_in_prompts():
+def test_no_dnd_bias_in_prompts(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     Verify that the final system prompt sent for manual generation does not contain
     pre-conceived D&D terms in hardcoded form.
@@ -127,7 +135,9 @@ def test_no_dnd_bias_in_prompts():
         assert term not in system_prompt.lower(), f"Forbidden term '{term}' is still present in ManualGeneratorAgent prompt."
 
 
-def test_manual_generator_discovery_fallback_queries():
+def test_manual_generator_discovery_fallback_queries(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     Verifies that with fewer than MIN_COMPOSANTES_DECOUVERTES components,
     the fallback queries are correctly added.
@@ -160,7 +170,9 @@ def test_manual_generator_discovery_fallback_queries():
     assert "caractéristiques, points de vie, équipement, capacités de classe" in called_queries
 
 
-def test_prompts_contain_french_dialogue_instruction():
+def test_prompts_contain_french_dialogue_instruction(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     """
     Verify that the system prompts translated to English explicitly instruct
     the LLM to respond to the player in French.
