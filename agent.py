@@ -14,30 +14,33 @@ import config
 from base_utils import BaseAgent, get_llm, get_embeddings, extract_json
 from scenario_agents import ScenarioExtractorAgent
 from validation import validate_scenario_structure, validate_character_sheet
+from mechanics.character import schema_as_legacy_dict, apply_schema_defaults
+from mechanics.paths import get_by_path, set_by_path
 from mechanics.task_flow import build_task_analysis_prompt, sanitize_task_decision, format_task_roll_line, enforce_engine_owned_fields, build_allocation_prompt, sanitize_allocation, format_pending_allocation_note
 
 logger = logging.getLogger(__name__)
 
 class CharacterCreator(BaseAgent):
-    def __init__(self, vector_store, verbose=False):
+    def __init__(self, vector_store, verbose=False, pack=None):
         super().__init__(model=config.CHARACTER_MODEL, temperature=config.CHARACTER_TEMP, verbose=verbose)
         self.vector_store = vector_store
+        self.pack = pack
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Game Master (GM) expert in role-playing games.
             Your current goal is to guide the player in creating their character.
             Use the CHARACTER CREATION MANUAL as a checklist to ensure nothing is forgotten, but remain interactive and flexible.
 
-            CHARACTER CREATION MANUAL (Global structure):
+            CHARACTER CREATION MANUAL (Global structure & options):
             {manual}
 
             DIALOGUE AND MECHANICAL GUIDELINES:
             1. ALWAYS respond to the player in French.
             2. Ask ONLY ONE question at a time.
-            3. TECHNICAL PREPARATION: Before asking a question, consult the CODEX (RAG) to know ALL constraints and benefits related to the current choice (e.g., "How many weapons can they master?", "What are the benefits of this race?").
-            4. PEDAGOGY: ALWAYS explain to the player the technical consequences of their choice in French (e.g., "En choisissant cette classe, tu as droit à 3 maîtrises d'armes qui te donneront un bonus de +2 aux jets d'attaque").
-            5. For statistics/attributes: ALWAYS ask the player if they want you to roll the dice for them (according to the Codex method) or if they prefer to do it themselves.
-            6. For Race and Class choices: Query the CODEX (RAG) to get the complete and exact list of available options and present them concisely to the player.
-            7. Calculate derived statistics (hit_points, AC, modifiers) scrupulously following the formulas from the CODEX.
+            3. TECHNICAL PREPARATION: Before asking a question, consult the CHARACTER CREATION MANUAL and CODEX to know ALL constraints and benefits related to the current choice.
+            4. PEDAGOGY: ALWAYS explain to the player the technical consequences of their choice in French.
+            5. For statistics/attributes/pools: follow the exact method from the CHARACTER CREATION MANUAL or CODEX (rolling dice or distributing points).
+            6. For character options (such as Types, Descriptors, Foci, or Races and Classes depending on the system): use the options listed in the CHARACTER CREATION MANUAL if provided, or query the CODEX (RAG), and present them clearly to the player.
+            7. Calculate derived statistics and pools scrupulously following the formulas from the CHARACTER CREATION MANUAL and CODEX.
 
             STILL MISSING FIELDS (You must guide the player to fill these):
             {missing_fields}
@@ -49,7 +52,7 @@ class CharacterCreator(BaseAgent):
             CURRENT CHARACTER STATE (for your information):
             {current_character}
 
-            CODEX (Details of the rules to query for each choice):
+            CODEX & GLOSSARY (Details of the rules and expected sheet fields):
             {context}
             """),
             MessagesPlaceholder(variable_name="history"),
@@ -58,6 +61,18 @@ class CharacterCreator(BaseAgent):
         self.chain = self.prompt | self.llm
 
     def get_context(self, query):
+        parts = []
+        if self.pack and self.pack.character_schema and self.pack.character_schema.glossary:
+            glossary_lines = ["EXPECTED SHEET FIELDS (GLOSSARY):"]
+            for entry in self.pack.character_schema.glossary:
+                glossary_lines.append(f"- {entry.path}: {entry.description}")
+            parts.append("\n".join(glossary_lines))
+
+        if self.pack and self.pack.creation_manual and self.pack.creation_manual.steps:
+            # Pack provides a self-contained creation manual; no RAG lookup required if parts exist
+            if parts:
+                return "\n\n".join(parts)
+
         try:
             # Slightly reduce RAG depth for creation to optimize context window
             k = max(1, config.RAG_K_CREATION - 3)
@@ -65,12 +80,15 @@ class CharacterCreator(BaseAgent):
             print(f"[CharacterCreator] DEBUG: Contextual search for '{query}' -> {len(docs)} docs found.")
             if docs:
                 print(f"[CharacterCreator] DEBUG: First excerpt: {docs[0].page_content[:200]}...")
-            return "\n\n".join([doc.page_content for doc in docs])
+                parts.append("\n\n".join([doc.page_content for doc in docs]))
         except Exception as e:
             print(f"[CharacterCreator] DEBUG: RAG Error: {e}")
-            return "No context found."
+
+        return "\n\n".join(parts) if parts else "No context found."
 
     def _load_manual(self):
+        if self.pack and self.pack.creation_manual:
+            return json.dumps(self.pack.creation_manual.model_dump(exclude_none=True), ensure_ascii=False, indent=2)
         path = "Memory/creation_manual.json"
         if os.path.exists(path):
             try:
@@ -141,21 +159,27 @@ class ChronicleAgent(BaseAgent):
         return response.content
 
 class SheetManagerAgent(BaseAgent):
-    def __init__(self, vector_store, verbose=False):
+    LEGACY_GLOSSARY_INSTRUCTION = (
+        'Use the exact keys from the glossary: "name", "race", "class", "statistics", '
+        '"equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").'
+    )
+
+    def __init__(self, vector_store, verbose=False, pack=None):
         super().__init__(model=config.SHEET_MANAGER_MODEL, temperature=config.SHEET_MANAGER_TEMP, verbose=verbose)
         self.vector_store = vector_store
+        self.pack = pack
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the Character Sheet Manager.
             Your role is to update the JSON character sheet for NARRATIVE aspects only (equipment, status, description).
             You receive the current sheet, the player's action, the narrator's response, and relevant rules.
 
-            ⚠️ CRITICAL RULE: You must NEVER modify Hit Points (hit_points), XP, level, spells, or resources (rage, etc.). These elements are managed deterministically by the GameStateEngine.
+            ⚠️ CRITICAL RULE: You must NEVER modify Hit Points (hit_points), XP, level, spells, or resources (pools, effort, edge, recovery_step, etc.). These elements are managed deterministically by the GameStateEngine.
 
             CONSIGNES:
             - Add or remove items from the equipment list if necessary.
             - Ensure the JSON is valid and complete.
-            - Never modify base statistics unless a permanent event demands it.
-            - Use the exact keys from the glossary: "name", "race", "class", "statistics", "equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").
+            - Never modify base statistics or resource pools unless a permanent event demands it.
+            - {glossary_instructions}
             - Reply ONLY with the JSON block enclosed between ```json and ```.
 
             CODEX RULES (Context):
@@ -172,7 +196,23 @@ class SheetManagerAgent(BaseAgent):
         ])
         self.chain = self.prompt | self.llm
 
+    def _format_glossary(self) -> str:
+        if self.pack and self.pack.character_schema:
+            schema_cfg = self.pack.character_schema
+            if schema_cfg.glossary:
+                lines = ["Use the exact keys and structure from the system pack glossary:"]
+                for entry in schema_cfg.glossary:
+                    lines.append(f"  * \"{entry.path}\": {entry.description}")
+                lines.append("  * \"status\": \"en_cours\" during creation or \"complet\" when finished.")
+                return "\n".join(lines)
+            elif schema_cfg.required_fields:
+                paths = [f'"{f.path}"' for f in schema_cfg.required_fields]
+                return f"Use the exact keys from the system schema: {', '.join(paths)}, \"status\"."
+        return self.LEGACY_GLOSSARY_INSTRUCTION
+
     def get_context(self, query):
+        if self.pack and self.pack.creation_manual and self.pack.creation_manual.steps:
+            return json.dumps(self.pack.creation_manual.model_dump(exclude_none=True), ensure_ascii=False, indent=2)
         try:
             docs = self.vector_store.similarity_search(query, k=config.RAG_K_ADVENTURE)
             return "\n\n".join([doc.page_content for doc in docs])
@@ -181,6 +221,7 @@ class SheetManagerAgent(BaseAgent):
 
     def update_sheet(self, character_sheet, user_input, narrator_response, mode="ADVENTURE"):
         context = self.get_context(f"Rules for: {user_input} {narrator_response}")
+        glossary_instructions = self._format_glossary()
 
         llm = self.llm
 
@@ -190,13 +231,14 @@ class SheetManagerAgent(BaseAgent):
                 Your role is to extract information from the conversation to update the JSON character sheet.
 
                 CONSIGNES:
-                - Analyze the player's action and the GM's response to identify new choices (name, race, class, statistics, equipment, etc.).
-                - Update all necessary fields.
+                - Analyze the player's action and the GM's response to identify new choices and calculated values.
+                - Update all necessary fields according to the system rules and options in the context.
+                - For resource pools, always use "current" and "max" (never "total"), with "current" equal to "max" at creation.
                 - If the GM mentions that creation is complete (keyword "CREATION_COMPLETED"), set the "status" field to "complet".
-                - Use the exact keys from the glossary: "name", "race", "class", "statistics", "equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").
+                - {glossary_instructions}
                 - Reply ONLY with the complete JSON block.
 
-                CODEX RULES (Context):
+                CODEX RULES & CREATION OPTIONS (Context):
                 {context}
                 """),
                 ("human", """CURRENT SHEET:
@@ -211,6 +253,7 @@ class SheetManagerAgent(BaseAgent):
             chain = creation_prompt | llm
             inputs = {
                 "context": context,
+                "glossary_instructions": glossary_instructions,
                 "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2) if character_sheet else "{}",
                 "user_input": user_input,
                 "narrator_response": narrator_response
@@ -228,6 +271,7 @@ class SheetManagerAgent(BaseAgent):
         else:
             inputs = {
                 "context": context,
+                "glossary_instructions": glossary_instructions,
                 "character_sheet": json.dumps(character_sheet, ensure_ascii=False, indent=2),
                 "user_input": user_input,
                 "narrator_response": narrator_response
@@ -248,12 +292,13 @@ class SheetManagerAgent(BaseAgent):
 
     def audit_and_complete(self, character_data: dict, messages: list, schema: dict) -> dict | None:
         context = self.get_context("statistiques, points de vie, équipement, armes, armures, ressources")
+        glossary_instructions = self._format_glossary()
         audit_prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the Character Sheet Manager, performing a FINAL AUDIT of character creation.
 Review the ENTIRE creation conversation below and produce the most complete and faithful JSON character sheet possible, based on the provided required fields schema.
 Search in particular for values mentioned in the conversation but missing from the current sheet (often forgotten by incremental turn-by-turn updates).
 Do not modify fields that are already correct and do not change their existing name/structure.
-Use the exact keys from the glossary: "name", "race", "class", "statistics", "equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").
+{glossary_instructions}
 Reply ONLY with the complete JSON block of the sheet.
 
 REQUIRED FIELDS SCHEMA: {schema}
@@ -266,6 +311,7 @@ CODEX RULES: {context}
         try:
             response = chain.invoke({
                 "schema": json.dumps(schema, ensure_ascii=False),
+                "glossary_instructions": glossary_instructions,
                 "context": context,
                 "history": messages,
                 "character_sheet": json.dumps(character_data, ensure_ascii=False, indent=2),
@@ -349,14 +395,6 @@ class RPGAgent(BaseAgent):
             embedding_function=self.embeddings
         )
 
-        self.character_creator = CharacterCreator(self.core_store, verbose=verbose)
-        self.narrator = Narrator(verbose=verbose)
-        self.chronicle_agent = ChronicleAgent(verbose=verbose)
-        self.sheet_manager = SheetManagerAgent(self.core_store, verbose=verbose)
-
-        # Setup Agent
-        self.scenario_extractor_agent = ScenarioExtractorAgent(self.scenario_store, verbose=verbose)
-
         from game_state_engine import GameStateEngine
         from systems.loader import load_pack
         pack = None
@@ -364,6 +402,14 @@ class RPGAgent(BaseAgent):
         if pack_id:
             pack = load_pack(pack_id)
         self.gse = GameStateEngine(pack=pack)
+
+        self.character_creator = CharacterCreator(self.core_store, verbose=verbose, pack=pack)
+        self.narrator = Narrator(verbose=verbose)
+        self.chronicle_agent = ChronicleAgent(verbose=verbose)
+        self.sheet_manager = SheetManagerAgent(self.core_store, verbose=verbose, pack=pack)
+
+        # Setup Agent
+        self.scenario_extractor_agent = ScenarioExtractorAgent(self.scenario_store, verbose=verbose)
 
         # Scenario data & progression
         self.scenario_structure = None
@@ -545,8 +591,64 @@ class RPGAgent(BaseAgent):
     def roll_dice(self, sides=20):
         return random.randint(1, sides)
 
+    def _finalize_pack_character(self, sheet: dict, apply_defaults: bool = False) -> dict:
+        """
+        Deterministically normalizes a character sheet according to the loaded SystemPack:
+        - Optionally applies `pack.character_schema.defaults` for missing/None fields.
+        - Normalizes pool objects (`total` -> `max`, `restants` -> `current`).
+        - Ensures `current` is initialized to `max` when `max` is defined and `current` is missing.
+        """
+        if not isinstance(sheet, dict):
+            return sheet
+
+        pack = self.gse.pack if self.gse else None
+        if not pack:
+            return sheet
+
+        result = copy.deepcopy(sheet)
+        if apply_defaults and pack.character_schema:
+            result = apply_schema_defaults(result, pack.character_schema)
+
+        if pack.resources and pack.resources.pools:
+            for pool in pack.resources.pools:
+                if "." in pool.current_path:
+                    parent_path, cur_key = pool.current_path.rsplit(".", 1)
+                    parent_obj = get_by_path(result, parent_path)
+                    if isinstance(parent_obj, dict):
+                        if "total" in parent_obj and "max" not in parent_obj:
+                            parent_obj["max"] = parent_obj.pop("total")
+                        elif "total" in parent_obj:
+                            parent_obj.pop("total")
+
+                        if "restants" in parent_obj and cur_key not in parent_obj:
+                            parent_obj[cur_key] = parent_obj.pop("restants")
+                        elif "restants" in parent_obj:
+                            parent_obj.pop("restants")
+
+                max_val = pool.max_value
+                if max_val is None and pool.max_path:
+                    max_val = get_by_path(result, pool.max_path)
+
+                cur_val = get_by_path(result, pool.current_path)
+                if isinstance(max_val, (int, float)) and not isinstance(max_val, bool):
+                    if cur_val is None or (cur_val == 0 and max_val > 0):
+                        set_by_path(result, pool.current_path, max_val)
+
+        return result
+
     def _extract_and_add_resources(self):
         """Extracts class resources (spells, rage, etc.) and adds them to the character sheet."""
+        if self.gse and self.gse.pack is not None:
+            self.log("Applying deterministic system pack character finalization...")
+            self.character_data = self._finalize_pack_character(self.character_data or {}, apply_defaults=True)
+            self.gse.state = self.character_data
+            self.gse.synchronize_and_recalculate()
+            self.character_data = self.gse.state
+            os.makedirs("Memory", exist_ok=True)
+            with open("Memory/character.json", "w", encoding="utf-8") as f:
+                json.dump(self.character_data, f, indent=4, ensure_ascii=False)
+            return
+
         self.log("Extracting class resources and abilities...")
         classe = self.character_data.get("class", "Inconnu")
         niveau = self.character_data.get("level", 1)
@@ -729,6 +831,8 @@ Reply ONLY with the JSON block:
         return data
 
     def _load_character_schema(self):
+        if self.gse and self.gse.pack and self.gse.pack.character_schema:
+            return schema_as_legacy_dict(self.gse.pack.character_schema)
         path = "Memory/character_schema.json"
         if os.path.exists(path):
             try:
@@ -797,6 +901,8 @@ Reply ONLY with this JSON:
 
     def chat(self, user_input):
         if self.game_state == "CREATION":
+            self.character_creator.pack = self.gse.pack if self.gse else None
+            self.sheet_manager.pack = self.gse.pack if self.gse else None
             # 1. Narrative Step: Interact with player
             try:
                 response = self.character_creator.generate_response(
@@ -810,6 +916,9 @@ Reply ONLY with this JSON:
 
             # 2. Technical Step (silent): Update sheet via SheetManager
             try:
+                ending_announced = any(
+                    kw in response.upper() for kw in ["TERMIN", "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE", "CREATION_TERMIN_E", "CREATION_COMPLETED"]
+                )
                 new_sheet = self.sheet_manager.update_sheet(
                     self.character_data,
                     user_input,
@@ -818,6 +927,10 @@ Reply ONLY with this JSON:
                 )
                 if new_sheet and isinstance(new_sheet, dict):
                     self.character_data = self._unwrap_character_data(new_sheet)
+                    if self.gse and self.gse.pack is not None:
+                        self.character_data = self._finalize_pack_character(
+                            self.character_data, apply_defaults=ending_announced
+                        )
                     self.gse.state = self.character_data
                     self.gse.synchronize_and_recalculate()
                     self.character_data = self.gse.state
@@ -825,14 +938,16 @@ Reply ONLY with this JSON:
                 schema = self._load_character_schema()
                 is_complete, missing_fields = validate_character_sheet(self.character_data, schema)
 
-                if not is_complete and any(
-                    kw in response.upper() for kw in ["TERMIN", "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE", "CREATION_TERMIN_E", "CREATION_COMPLETED"]
-                ):
+                if not is_complete and ending_announced:
                     audited = self.sheet_manager.audit_and_complete(
                         self.character_data, self.history.messages, schema
                     )
                     if audited and isinstance(audited, dict):
                         self.character_data = self._unwrap_character_data(audited)
+                        if self.gse and self.gse.pack is not None:
+                            self.character_data = self._finalize_pack_character(
+                                self.character_data, apply_defaults=True
+                            )
                         self.gse.state = self.character_data
                         self.gse.synchronize_and_recalculate()
                         self.character_data = self.gse.state
@@ -1400,6 +1515,8 @@ SCENARIO CONTEXT STRUCTURED (Lookup):
         if pack_id:
             pack = load_pack(pack_id)
         self.gse = GameStateEngine(pack=pack)
+        self.character_creator.pack = pack
+        self.sheet_manager.pack = pack
 
         for file in ["character.json", "Chronicle.json", "progression.json"]:
             path = os.path.join("Memory", file)

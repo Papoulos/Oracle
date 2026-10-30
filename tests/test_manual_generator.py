@@ -6,11 +6,6 @@ from unittest import mock
 from scenario_agents import ManualGeneratorAgent, DISCOVERY_PROMPT, SCHEMA_PROMPT
 import config
 
-def setup_module():
-    if os.path.exists("Memory"):
-        shutil.rmtree("Memory")
-    os.makedirs("Memory", exist_ok=True)
-
 
 def test_manual_generator_below_threshold(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

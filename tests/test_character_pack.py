@@ -162,8 +162,6 @@ def test_validate_pack_manual_steps(tmp_path):
 def test_synchronize_and_recalculate_hit_points_logic(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
-    monkeypatch.chdir(tmp_path)
-    import os; os.makedirs("Memory", exist_ok=True)
     # Pack with hp kind health but no hit_points id
     pools1 = [{
         "id": "hp",
@@ -204,18 +202,17 @@ def test_synchronize_and_recalculate_hit_points_logic(tmp_path, monkeypatch):
     engine3.state = {"pv": 10}
     engine3.synchronize_and_recalculate()
     assert "hit_points" in engine3.state["resources"]
+    assert engine3.state["resources"]["hit_points"]["max"] == 10
 
 
 def test_synchronize_hit_points_regression_139(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    import os; os.makedirs("Memory", exist_ok=True)
-    monkeypatch.chdir(tmp_path)
-    import os; os.makedirs("Memory", exist_ok=True)
     """
     Test pour la régression #139 : la normalisation des points de vie (hit_points) doit
     se déclencher UNIQUEMENT si le pack gère explicitement "resources.hit_points" dans ses
     chemins de pools ou pool_groups, ou s'il n'y a pas de pack.
     """
+    monkeypatch.chdir(tmp_path)
+    import os; os.makedirs("Memory", exist_ok=True)
     from systems.loader import load_pack
     from pathlib import Path
 
@@ -297,3 +294,129 @@ def test_synchronize_hit_points_regression_139(tmp_path, monkeypatch):
     engine_no_pack.synchronize_and_recalculate()
     assert "hit_points" in engine_no_pack.state["resources"]
     assert engine_no_pack.state["resources"]["hit_points"]["max"] == 10
+
+
+def test_cypher_pack_character_schema_and_manual_loaded():
+    """Vérifie que le pack cypher_system charge son character_schema.json et creation_manual.json avec options."""
+    pack = load_pack("cypher_system")
+    assert pack.character_schema is not None
+    assert pack.creation_manual is not None
+
+    # Options (types, descriptors, foci)
+    options = pack.creation_manual.options
+    assert "types" in options and len(options["types"]) == 4
+    assert "descriptors" in options and len(options["descriptors"]) >= 10
+    assert "foci" in options and len(options["foci"]) >= 10
+
+    # Validation stricte du pack
+    from pathlib import Path
+    pack_dir = Path(__file__).parent.parent / "systems" / "cypher_system"
+    issues = validate_pack(str(pack_dir))
+    assert not issues, f"Issues found in cypher_system: {issues}"
+
+
+def test_character_creator_and_sheet_manager_use_pack(tmp_path, monkeypatch):
+    """Vérifie que CharacterCreator et SheetManagerAgent utilisent le pack sans lire Memory/creation_manual.json."""
+    monkeypatch.chdir(tmp_path)
+    from unittest.mock import MagicMock, patch
+    from agent import CharacterCreator, SheetManagerAgent
+
+    pack = load_pack("cypher_system")
+    mock_store = MagicMock()
+
+    with patch("agent.get_llm", return_value=MagicMock()):
+        creator = CharacterCreator(mock_store, pack=pack)
+        manual_str = creator._load_manual()
+        manual_data = json.loads(manual_str)
+        assert manual_data is not None
+        assert len(manual_data["steps"]) == 6
+        assert "types" in manual_data["options"]
+        assert "Warrior (Guerrier)" in manual_str
+
+        ctx = creator.get_context("Je veux créer un Warrior Tough")
+        assert "EXPECTED SHEET FIELDS (GLOSSARY):" in ctx
+        assert "resources.might.max" in ctx
+        # Aucun appel RAG nécessaire puisque le pack porte le manuel et le glossaire
+        mock_store.similarity_search.assert_not_called()
+
+        sheet_mgr = SheetManagerAgent(mock_store, pack=pack)
+        glossary_str = sheet_mgr._format_glossary()
+        assert "resources.might.current" in glossary_str
+        assert "edge.might" in glossary_str
+        assert "damage_track" in glossary_str
+
+
+def test_finalize_pack_character_deterministic_and_no_llm(tmp_path, monkeypatch):
+    """Vérifie que _extract_and_add_resources utilise la finalisation déterministe du pack (sans appel LLM)."""
+    monkeypatch.chdir(tmp_path)
+    from unittest.mock import MagicMock, patch
+    from agent import RPGAgent
+
+    pack = load_pack("cypher_system")
+
+    with patch("agent.get_llm", return_value=MagicMock()), \
+         patch("agent.get_embeddings", return_value=MagicMock()), \
+         patch("agent.Chroma"), \
+         patch("agent.CharacterCreator"), \
+         patch("agent.Narrator"), \
+         patch("agent.ChronicleAgent"), \
+         patch("agent.SheetManagerAgent"), \
+         patch("agent.ScenarioExtractorAgent"):
+        agent = RPGAgent(verbose=False)
+        agent.gse = GameStateEngine(pack=pack)
+        agent.llm = MagicMock()
+
+        raw_sheet = {
+            "name": "Kaelen",
+            "descriptor": "Tough",
+            "type": "Warrior",
+            "focus": "Masters Weaponry",
+            "resources": {
+                "might": {"total": 12},
+                "speed": {"max": 10, "current": 0},
+                "intellect": {"restants": 8, "total": 8}
+            },
+            "abilities": ["Bash", "Weapon Master"]
+        }
+
+        agent.character_data = raw_sheet
+        agent._extract_and_add_resources()
+        final_sheet = agent.character_data
+
+        # Aucun appel LLM ne doit avoir eu lieu
+        agent.llm.invoke.assert_not_called()
+
+        # Normalisation total -> max et initialisation current = max
+        assert final_sheet["resources"]["might"] == {"current": 12, "max": 12}
+        assert final_sheet["resources"]["speed"] == {"current": 10, "max": 10}
+        assert final_sheet["resources"]["intellect"] == {"current": 8, "max": 8}
+
+        # Application des defaults du character_schema Cypher
+        assert final_sheet["tier"] == 1
+        assert final_sheet["effort"] == 1
+        assert final_sheet["armor"] == 0
+        assert final_sheet["damage_track"] == "hale"
+        assert final_sheet["recovery_step"] == 0
+        assert final_sheet["edge"] == {"might": 0, "speed": 0, "intellect": 0}
+        assert final_sheet["skills"] == []
+        assert final_sheet["equipment"] == []
+
+        # La fiche finalisée doit valider le schéma du pack Cypher
+        schema = agent._load_character_schema()
+        is_complete, missing = validate_character_sheet(final_sheet, schema)
+        assert is_complete, f"Sheet should be complete, missing: {missing}"
+
+        # Et elle doit fonctionner directement avec execute_task du moteur Cypher
+        agent.gse.state = final_sheet
+        res = agent.gse.execute_task(
+            action_id="task",
+            pool_id="might",
+            difficulty=3,
+            step_adjustments={"skill": -1},
+            effort_levels=1
+        )
+        assert res.success
+        # Coût d'1 niveau d'effort sans edge = 3 points de might
+        assert res.state_changes["effort"]["cost"] == 3
+        assert agent.gse.state["resources"]["might"]["current"] == 9
+

@@ -4,11 +4,6 @@ import shutil
 from agent import RPGAgent
 from unittest import mock
 
-def setup_module():
-    if os.path.exists("Memory"):
-        shutil.rmtree("Memory")
-    os.makedirs("Memory", exist_ok=True)
-
 def test_incremental_creation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
@@ -79,7 +74,3 @@ def test_incremental_creation(tmp_path, monkeypatch):
     # Restore
     agent.character_creator.generate_response = original_generate
     print("Test incremental creation passed!")
-
-if __name__ == "__main__":
-    setup_module()
-    test_incremental_creation()

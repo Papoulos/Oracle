@@ -33,29 +33,43 @@ def prevent_draft_pollution():
             if new_entries:
                 pytest.fail(f"Test polluted {real_draft_dir} with new entries: {new_entries}")
 
-@pytest.fixture(autouse=True, scope="function")
-def prevent_character_json_pollution():
-    """
-    Ensures that no test modifies the versioned Memory files.
-    Compares their byte content before and after each test.
-    """
+def _check_memory_files(initial_states: dict, scope_label: str):
+    for f, before in initial_states.items():
+        content_after = f.read_bytes() if f.exists() else None
+        if before != content_after:
+            pytest.fail(
+                f"Test ({scope_label}) modified {f.name}. Tests should use tmp_path for GameStateEngine and Memory/."
+            )
+
+
+def _snapshot_memory_files() -> dict:
     from pathlib import Path
     base_dir = Path(__file__).resolve().parent.parent / "Memory"
     files_to_monitor = [
         base_dir / "character.json",
         base_dir / "creation_manual.json",
-        base_dir / "scenario.json"
+        base_dir / "scenario.json",
     ]
+    return {f: (f.read_bytes() if f.exists() else None) for f in files_to_monitor}
 
-    # Store initial state
-    initial_states = {}
-    for f in files_to_monitor:
-        initial_states[f] = f.read_bytes() if f.exists() else None
 
+@pytest.fixture(autouse=True, scope="module")
+def prevent_module_memory_pollution():
+    """
+    Module-level guard that catches setup_module()/teardown_module() modifying versioned Memory files.
+    """
+    initial_states = _snapshot_memory_files()
     yield
+    _check_memory_files(initial_states, "module")
 
-    # Check final state
-    for f in files_to_monitor:
-        content_after = f.read_bytes() if f.exists() else None
-        if initial_states[f] != content_after:
-            pytest.fail(f"Test modified {f.name}. Tests should use tmp_path for GameStateEngine.")
+
+@pytest.fixture(autouse=True, scope="function")
+def prevent_character_json_pollution(monkeypatch):
+    """
+    Ensures that no test modifies the versioned Memory files, and isolates tests
+    from the developer's local SYSTEM_PACK environment variable in .env.
+    """
+    monkeypatch.delenv("SYSTEM_PACK", raising=False)
+    initial_states = _snapshot_memory_files()
+    yield
+    _check_memory_files(initial_states, "function")

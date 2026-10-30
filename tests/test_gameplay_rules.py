@@ -7,6 +7,12 @@ from game_state_engine import GameStateEngine
 from agent import RPGAgent
 from scenario_agents import GameplayRulesAgent, EXTRACTION_RECOVERY_PROMPT
 
+@pytest.fixture(autouse=True)
+def isolated_memory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    os.makedirs("Memory", exist_ok=True)
+    yield tmp_path
+
 @pytest.fixture
 def temp_character_file(tmp_path):
     char_file = tmp_path / "character.json"

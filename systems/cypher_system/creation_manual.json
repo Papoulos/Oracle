@@ -1,0 +1,371 @@
+{
+  "steps": [
+    {
+      "step": 1,
+      "name": "Concept et Phrase identitaire",
+      "description": "Définir le nom du personnage et sa phrase conceptuelle Cypher System : « Je suis un [Type] [Descripteur] qui [Focus] » (ex. « Je suis un Warrior Tough qui Masters Weaponry »)."
+    },
+    {
+      "step": 2,
+      "name": "Choix du Type et Réserves de départ",
+      "description": "Choisir l'un des 4 Types (Warrior, Adept, Explorer, Speaker). Appliquer les réserves de base (Might, Speed, Intellect), l'Edge de départ, le Tier (1), l'Effort (1), et répartir les 6 points supplémentaires librement entre les trois réserves."
+    },
+    {
+      "step": 3,
+      "name": "Choix du Descripteur",
+      "description": "Choisir un Descripteur dans la liste fournie. Appliquer ses bonus de réserves (resources.might.max, resources.speed.max, resources.intellect.max), ses compétences entraînées (skills) et ses éventuelles incapacités (inabilities)."
+    },
+    {
+      "step": 4,
+      "name": "Choix du Focus",
+      "description": "Choisir un Focus dans la liste fournie. Ajouter sa capacité de Tier 1 dans abilities, ainsi que ses bonus de réserves, d'armure (armor), de compétences ou d'équipement."
+    },
+    {
+      "step": 5,
+      "name": "Capacités spéciales de Tier 1 et Compétences",
+      "description": "Sélectionner les capacités spéciales de Tier 1 propres au Type choisi (4 capacités pour Warrior/Explorer/Speaker, 4 sorts/capacités pour Adept) et les enregistrer dans abilities."
+    },
+    {
+      "step": 6,
+      "name": "Équipement, Armure et Finalisation",
+      "description": "Déterminer l'équipement de départ (equipment), calculer le score d'Armure (armor, ex. armure légère = 1, moyenne = 2, lourde = 3 + bonus éventuels) et vérifier que chaque réserve (resources.might, resources.speed, resources.intellect) possède bien current égal à max."
+    }
+  ],
+  "general_rules": "Dans Cypher System (CSRD), un personnage débutant commence au Tier 1 avec un Effort de 1 et un état sur la piste de dégâts à 'hale'. Ses trois statistiques sont des réserves dépensables : Might (Puissance), Speed (Vitesse) et Intellect, enregistrées sous resources.might, resources.speed et resources.intellect avec les sous-champs 'current' et 'max' (à la création, current = max). Chaque Type donne des valeurs de départ pour les 3 réserves + 6 points libres à répartir, ainsi qu'un score d'Edge dans edge.might, edge.speed et edge.intellect.",
+  "options": {
+    "types": [
+      {
+        "id": "warrior",
+        "name": "Warrior (Guerrier)",
+        "description": "Combattant physique maître des armes et de l'action directe, aussi à l'aise en mêlée qu'à distance.",
+        "effects": {
+          "base_pools": {"might": 10, "speed": 10, "intellect": 8},
+          "bonus_pool_points": 6,
+          "edge": {"might": 1, "speed": 0, "intellect": 0},
+          "edge_choice": "might_or_speed",
+          "tier": 1,
+          "effort": 1,
+          "cypher_limit": 2,
+          "abilities_to_choose": 4,
+          "sample_abilities": ["Bash", "Combat Prowess", "Control the Field", "No Need for Weapons", "Overwatch", "Physical Skills", "Practiced in Armor", "Quick Throw", "Swipe", "Trained Without Armor"]
+        }
+      },
+      {
+        "id": "adept",
+        "name": "Adept (Adepte)",
+        "description": "Maître des pouvoirs surnaturels, arcaniques, psychiques ou technologiques avancés.",
+        "effects": {
+          "base_pools": {"might": 7, "speed": 9, "intellect": 12},
+          "bonus_pool_points": 6,
+          "edge": {"might": 0, "speed": 0, "intellect": 1},
+          "tier": 1,
+          "effort": 1,
+          "cypher_limit": 3,
+          "abilities_to_choose": 4,
+          "sample_abilities": ["Distortion", "Erase Memories", "Far Step", "Hedge Magic", "Magic Training", "Onslaught", "Push", "Resonance Field", "Scan", "Shatter", "Ward"]
+        }
+      },
+      {
+        "id": "explorer",
+        "name": "Explorer (Explorateur)",
+        "description": "Aventurier polyvalent, survivant intrépide et investigateur de terrains hostiles et de ruines oubliées.",
+        "effects": {
+          "base_pools": {"might": 10, "speed": 9, "intellect": 9},
+          "bonus_pool_points": 6,
+          "edge": {"might": 1, "speed": 0, "intellect": 0},
+          "tier": 1,
+          "effort": 1,
+          "cypher_limit": 2,
+          "abilities_to_choose": 4,
+          "sample_abilities": ["Block", "Danger Sense", "Decipher", "Endurance", "Find the Way", "Fleet of Foot", "Improved Edge", "Muscles of Iron", "No Need for Weapons", "Physical Skills", "Practiced With Medium Weapons", "Surging Confidence", "Trained Without Armor"]
+        }
+      },
+      {
+        "id": "speaker",
+        "name": "Speaker (Orateur)",
+        "description": "Spécialiste des interactions sociales, du commandement, de l'inspiration et de la manipulation.",
+        "effects": {
+          "base_pools": {"might": 8, "speed": 9, "intellect": 11},
+          "bonus_pool_points": 6,
+          "edge": {"might": 0, "speed": 0, "intellect": 1},
+          "tier": 1,
+          "effort": 1,
+          "cypher_limit": 2,
+          "abilities_to_choose": 4,
+          "sample_abilities": ["Anecdote", "Babel", "Demeanor of Command", "Encouragement", "Enthrall", "Erase Memories", "Fast Talk", "Inspire Aggression", "Interaction Skills", "Practiced With Medium Weapons", "Spin Identity", "Terrifying Presence", "Understanding"]
+        }
+      }
+    ],
+    "descriptors": [
+      {
+        "id": "charming",
+        "name": "Charming (Charmant)",
+        "description": "Charismatique et persuasif, vous savez mettre les autres dans votre poche.",
+        "effects": {
+          "pool_modifiers": {"intellect": 2},
+          "trained_skills": ["Interactions sociales positives (persuasion, séduction)", "Tâches impliquant les capacités spéciales d'influence mentale"],
+          "inabilities": ["Étudier ou retenir des faits arides (Lore/Connaissances)", "Résister aux attaques mentales"]
+        }
+      },
+      {
+        "id": "clever",
+        "name": "Clever (Astucieux)",
+        "description": "Vif d'esprit, vous évaluez rapidement les situations et déjouez les tromperies.",
+        "effects": {
+          "pool_modifiers": {"intellect": 2},
+          "trained_skills": ["Mensonge, ruse et tromperie", "Défense contre les effets mentaux", "Identifier ou évaluer un danger, un mensonge ou la valeur d'un objet"],
+          "inabilities": ["Retenir des connaissances académiques ou historiques"]
+        }
+      },
+      {
+        "id": "graceful",
+        "name": "Graceful (Gracieux)",
+        "description": "Doté d'un sens parfait de l'équilibre, vous bougez avec fluidité et précision.",
+        "effects": {
+          "pool_modifiers": {"speed": 2},
+          "trained_skills": ["Équilibre et mouvements délicats", "Acrobaties et danse", "Esquive (Speed defense)"],
+          "inabilities": []
+        }
+      },
+      {
+        "id": "learned",
+        "name": "Learned (Érudit)",
+        "description": "Vous avez consacré votre vie à l'étude des livres, de l'histoire et des savoirs anciens.",
+        "effects": {
+          "pool_modifiers": {"intellect": 2},
+          "trained_skills": ["Trois domaines de connaissances au choix (histoire, géographie, sciences, occultisme, etc.)"],
+          "inabilities": ["Charme, persuasion et étiquette sociale"]
+        }
+      },
+      {
+        "id": "mystical",
+        "name": "Mystical (Mystique)",
+        "description": "Sensible à l'étrange et au surnaturel, vous dégagez une aura surnaturelle.",
+        "effects": {
+          "pool_modifiers": {"intellect": 2},
+          "trained_skills": ["Perception et identification du surnaturel ou de la magie"],
+          "extra_abilities": ["Sense Magic (sentir la magie à courte portée)"],
+          "inabilities": ["Charme, persuasion et tromperie"]
+        }
+      },
+      {
+        "id": "perceptive",
+        "name": "Perceptive (Perspicace)",
+        "description": "Rien ne vous échappe : vous remarquez les détails cachés et les motifs dissimulés.",
+        "effects": {
+          "pool_modifiers": {"intellect": 2},
+          "trained_skills": ["Perception (repérer des détails cachés, écouter)", "Fouille et investigation", "Intimidation"],
+          "inabilities": ["Interactions sociales positives"]
+        }
+      },
+      {
+        "id": "resilient",
+        "name": "Resilient (Résilient)",
+        "description": "Vous encaissez les épreuves physiques et mentales dont d'autres ne se relèveraient pas.",
+        "effects": {
+          "pool_modifiers": {"might": 2, "intellect": 2},
+          "trained_skills": ["Défense de Might (Might defense)", "Défense d'Intellect (Intellect defense)"],
+          "inabilities": ["Tâches de mouvement et d'agilité", "Connaissances et résolution d'énigmes"]
+        }
+      },
+      {
+        "id": "rugged",
+        "name": "Rugged (Robuste / Aguerri)",
+        "description": "Habitué à la vie sauvage et aux intempéries, vous êtes taillé pour la survie.",
+        "effects": {
+          "pool_modifiers": {},
+          "trained_skills": ["Escalade, saut, course et natation", "Dressage, monte et apaisement des animaux", "Pistage, survie et identification de la flore/faune"],
+          "inabilities": ["Charme, persuasion, étiquette et tromperie"]
+        }
+      },
+      {
+        "id": "stealthy",
+        "name": "Stealthy (Furtif)",
+        "description": "Discret et insaisissable, vous savez vous fondre dans les ombres.",
+        "effects": {
+          "pool_modifiers": {"speed": 2},
+          "trained_skills": ["Furtivité et dissimulation", "Mensonges et ruses", "Illusions et prestidigitation"],
+          "inabilities": ["Tâches de mouvement pur (course de vitesse, poursuite)"]
+        }
+      },
+      {
+        "id": "strong",
+        "name": "Strong (Fort)",
+        "description": "Doté d'une musculature impressionnante, vous excellez dans les exploits de force pure.",
+        "effects": {
+          "pool_modifiers": {"might": 4},
+          "trained_skills": ["Briser des objets inanimés", "Saut"],
+          "inabilities": []
+        }
+      },
+      {
+        "id": "swift",
+        "name": "Swift (Rapide)",
+        "description": "Toujours le premier à agir et à se déplacer, vous êtes d'une rapidité fulgurante.",
+        "effects": {
+          "pool_modifiers": {"speed": 4},
+          "trained_skills": ["Initiative", "Course"],
+          "inabilities": ["Équilibre"]
+        }
+      },
+      {
+        "id": "tough",
+        "name": "Tough (Coriace)",
+        "description": "Votre corps endurci encaisse les coups sans broncher et récupère vite.",
+        "effects": {
+          "pool_modifiers": {},
+          "armor_bonus": 1,
+          "recovery_bonus": 1,
+          "trained_skills": ["Défense de Might (Might defense)"],
+          "inabilities": []
+        }
+      }
+    ],
+    "foci": [
+      {
+        "id": "bears_a_halo_of_fire",
+        "name": "Bears a Halo of Fire (Porte un Halo de Feu)",
+        "description": "Vous enveloppez votre corps et vos attaques de flammes ardentes.",
+        "effects": {
+          "tier_1_ability": "Shroud of Flame (+1 Armor contre le feu ; sur action, halo infligeant 2 dégâts de feu en mêlée ou +2 dégâts sur vos pouvoirs)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": [],
+          "equipment": []
+        }
+      },
+      {
+        "id": "commands_mental_powers",
+        "name": "Commands Mental Powers (Commande les Pouvoirs Mentaux)",
+        "description": "Télépathie et psychokinésie émanent de votre esprit éveillé.",
+        "effects": {
+          "tier_1_ability": "Telepathic (contact télépathique à courte portée : 1+ point d'Intellect)",
+          "pool_modifiers": {"intellect": 3},
+          "armor_bonus": 0,
+          "trained_skills": [],
+          "equipment": []
+        }
+      },
+      {
+        "id": "controls_beasts",
+        "name": "Controls Beasts (Contrôle les Bêtes)",
+        "description": "Accompagné d'une créature loyale, vous comprenez et dirigez la faune.",
+        "effects": {
+          "tier_1_ability": "Beast Companion (un compagnon animal de niveau 2 vous accompagne et vous aide)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": ["Apaiser et comprendre les animaux naturels"],
+          "equipment": ["Nourriture et harnais pour compagnon animal"]
+        }
+      },
+      {
+        "id": "crafts_illusions",
+        "name": "Crafts Illusions (Façonne des Illusions)",
+        "description": "Vous tissez la lumière et le son pour créer des mirages indiscernables de la réalité.",
+        "effects": {
+          "tier_1_ability": "Minor Illusion (1 point d'Intellect : crée une image ou un son simple à portée immédiate)",
+          "pool_modifiers": {"intellect": 3},
+          "armor_bonus": 0,
+          "trained_skills": ["Psychologie et tromperie visuelle"],
+          "equipment": []
+        }
+      },
+      {
+        "id": "defends_the_weak",
+        "name": "Defends the Weak (Défend les Faibles)",
+        "description": "Protecteur dévoué, vous vous interposez entre le danger et vos alliés.",
+        "effects": {
+          "tier_1_ability": "Courageous (+2 Might Pool, entraîné en défense de Speed lorsqu'il protège quelqu'un et en initiative) & Warding Shield (+1 aux défenses avec bouclier)",
+          "pool_modifiers": {"might": 2},
+          "armor_bonus": 0,
+          "trained_skills": ["Initiative", "Défense de Speed en protégeant un allié"],
+          "equipment": ["Bouclier"]
+        }
+      },
+      {
+        "id": "explores_dark_places",
+        "name": "Explores Dark Places (Explore les Lieux Sombres)",
+        "description": "Fouilleur de ruines, de souterrains et de tombeaux oubliés.",
+        "effects": {
+          "tier_1_ability": "Trained Explorer (entraîné en fouille, écoute, escalade, équilibre et saut) & Nightstrike (attaque sans malus dans la pénombre/obscurité)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": ["Fouille", "Écoute", "Escalade", "Équilibre", "Saut"],
+          "equipment": ["Pack d'explorateur (corde, grappin, lanterne, outils)"]
+        }
+      },
+      {
+        "id": "fights_dirty",
+        "name": "Fights Dirty (Se Bat Déloyalement)",
+        "description": "Vous utilisez toutes les ruses, feintes et coups bas pour gagner un combat.",
+        "effects": {
+          "tier_1_ability": "Tracker & Stalker (entraîné en pistage, furtivité, tromperie et intimidation ; attaque surprise facilitée)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": ["Pistage", "Furtivité", "Tromperie", "Intimidation"],
+          "equipment": ["Arme légère dissimulée"]
+        }
+      },
+      {
+        "id": "masters_defense",
+        "name": "Masters Defense (Maîtrise la Défense)",
+        "description": "Tel un rempart inébranlable, vous parez et encaissez les assauts les plus violents.",
+        "effects": {
+          "tier_1_ability": "Shield Master (avec un bouclier, l'atout s'applique à toutes les défenses de Speed) & Armor (+1 Armor permanent)",
+          "pool_modifiers": {},
+          "armor_bonus": 1,
+          "trained_skills": [],
+          "equipment": ["Bouclier"]
+        }
+      },
+      {
+        "id": "masters_weaponry",
+        "name": "Masters Weaponry (Maîtrise les Armes)",
+        "description": "Virtuose d'une catégorie d'armes de prédilection, vos frappes sont meurtrières.",
+        "effects": {
+          "tier_1_ability": "Weapon Master (+1 dégât avec le type d'arme choisi) & Rapid Attack (3 points de Speed pour porter une attaque supplémentaire)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": [],
+          "equipment": ["Arme de haute qualité au choix"]
+        }
+      },
+      {
+        "id": "moves_like_a_cat",
+        "name": "Moves Like a Cat (Bouge Comme un Chat)",
+        "description": "Acrobate félin doté de réflexes prodigieux, vous retombez toujours sur vos pieds.",
+        "effects": {
+          "tier_1_ability": "Greater Enhanced Speed (+5 Speed Pool) & Balance (entraîné en équilibre et réceptions de chute)",
+          "pool_modifiers": {"speed": 5},
+          "armor_bonus": 0,
+          "trained_skills": ["Équilibre", "Acrobaties"],
+          "equipment": []
+        }
+      },
+      {
+        "id": "wields_two_weapons_at_once",
+        "name": "Wields Two Weapons at Once (Manie Deux Armes à la Fois)",
+        "description": "Une lame dans chaque main, vous submergez vos ennemis sous une pluie de coups.",
+        "effects": {
+          "tier_1_ability": "Dual Light Wield (peut manier deux armes légères et infliger +1 dégât ou faciliter l'attaque)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": [],
+          "equipment": ["Deux armes légères"]
+        }
+      },
+      {
+        "id": "works_miracles",
+        "name": "Works Miracles (Accomplit des Miracles)",
+        "description": "Canal d'énergie vitale, vous guérissez les blessures par simple imposition des mains.",
+        "effects": {
+          "tier_1_ability": "Healing Touch (1 point d'Intellect : jet Intellect de difficulté égale aux points déjà soignés aujourd'hui sur la cible pour lui rendre 1d6 points de réserve)",
+          "pool_modifiers": {},
+          "armor_bonus": 0,
+          "trained_skills": ["Soins et guérison"],
+          "equipment": []
+        }
+      }
+    ]
+  }
+}

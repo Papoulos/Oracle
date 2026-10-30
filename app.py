@@ -58,23 +58,46 @@ def display_character_info(character_data):
     race = get_val("race")
     niveau = get_val(["niveau", "level"])
     pv = get_val(["points_de_vie", "pv", "hp", "health"])
-    ca = get_val(["ca", "ac", "armure"])
+    ca = get_val(["ca", "ac", "armure", "armor"])
+
+    # Champs Cypher System
+    char_type = get_val("type")
+    descriptor = get_val(["descriptor", "descripteur"])
+    focus = get_val("focus")
+    tier = get_val("tier")
+    effort = get_val("effort")
+    damage_track = get_val("damage_track")
+    edge = get_val("edge", None)
 
     st.markdown(f"### 👤 {nom}")
+    if char_type != "N/A" or descriptor != "N/A" or focus != "N/A":
+        st.caption(f"*{char_type} {descriptor} qui {focus}*")
 
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown(f"**Classe :** {classe}")
-        if race != "N/A": st.markdown(f"**Race :** {race}")
+        if char_type != "N/A":
+            st.markdown(f"**Type :** {char_type}")
+            if descriptor != "N/A": st.markdown(f"**Descripteur :** {descriptor}")
+            if focus != "N/A": st.markdown(f"**Focus :** {focus}")
+        else:
+            st.markdown(f"**Classe :** {classe}")
+            if race != "N/A": st.markdown(f"**Race :** {race}")
         if niveau != "N/A": st.markdown(f"**Niveau :** {niveau}")
+        if tier != "N/A": st.markdown(f"**Tier :** {tier}")
 
     with col2:
+        if effort != "N/A": st.markdown(f"**Effort :** {effort}")
         if pv != "N/A": st.markdown(f"**PV :** {pv}")
-        if ca != "N/A": st.markdown(f"**CA :** {ca}")
+        if ca != "N/A": st.markdown(f"**Armure / CA :** {ca}")
+        if damage_track != "N/A": st.markdown(f"**Piste de dégâts :** `{damage_track}`")
 
-    # Essayer de trouver les stats (souvent dans 'statistiques', 'stats' ou 'abilities')
+    if isinstance(edge, dict) and edge:
+        edge_str = ", ".join(f"{k.capitalize()}: {v}" for k, v in edge.items())
+        st.markdown(f"**Edge :** {edge_str}")
+
+    # Essayer de trouver les stats (souvent dans 'statistiques', 'stats' ou 'abilities' si dict)
     stats = None
-    stats_keys = ["statistiques", "stats", "abilities", "caractéristiques", "caracteristiques", "attributs", "attributes"]
+    stats_keys = ["statistiques", "stats", "caractéristiques", "caracteristiques", "attributs", "attributes"]
     for k in stats_keys:
         val = get_val(k, None)
         if isinstance(val, dict):
@@ -110,11 +133,20 @@ def display_character_info(character_data):
             for j, (k, v) in enumerate(batch):
                 cols[j].metric(label=k, value=str(v))
 
+    # Capacités spéciales (abilities sous forme de liste, ex. Cypher)
+    abilities = get_val(["capacités", "capacites", "abilities"], None)
+    if abilities:
+        if isinstance(abilities, list):
+            st.markdown(f"**Capacités :** {', '.join(map(str, abilities))}")
+        elif isinstance(abilities, dict) and not stats:
+            items = [f"{k}: {v}" for k, v in abilities.items()]
+            st.markdown(f"**Capacités :** {', '.join(items)}")
+
     # Compétences
     skills = get_val(["compétences", "competences", "skills"], None)
     if skills:
         if isinstance(skills, list):
-            st.markdown(f"**Compétences :** {', '.join(skills)}")
+            st.markdown(f"**Compétences :** {', '.join(map(str, skills))}")
         elif isinstance(skills, dict):
             items = [f"{k}: {v}" for k, v in skills.items()]
             st.markdown(f"**Compétences :** {', '.join(items)}")
@@ -124,12 +156,12 @@ def display_character_info(character_data):
     equip = get_val(["équipement", "equipement", "equipment", "inventaire"], None)
     if equip:
         if isinstance(equip, list):
-            st.markdown(f"**Équipement :** {', '.join(equip)}")
+            st.markdown(f"**Équipement :** {', '.join(map(str, equip))}")
         elif isinstance(equip, dict):
             # Si l'équipement est un dict (ex: armes, armure)
             items = []
             for k, v in equip.items():
-                if isinstance(v, list): items.extend(v)
+                if isinstance(v, list): items.extend(map(str, v))
                 else: items.append(str(v))
             st.markdown(f"**Équipement :** {', '.join(items)}")
         else:
@@ -139,24 +171,37 @@ def display_character_info(character_data):
     spells = get_val(["sorts", "spells"], None)
     if spells:
         if isinstance(spells, list):
-            st.markdown(f"**Sorts :** {', '.join(spells)}")
+            st.markdown(f"**Sorts :** {', '.join(map(str, spells))}")
         else:
             st.markdown(f"**Sorts :** {spells}")
 
-    # Ressources (compteurs)
+    # Ressources (compteurs : current/max ou restants/total)
     ressources = get_val(["ressources", "resources"], None)
     if ressources and isinstance(ressources, dict):
         st.markdown("**Ressources :**")
         for res_name, res_data in ressources.items():
-            if isinstance(res_data, dict) and "total" in res_data and "restants" in res_data:
-                total = res_data["total"]
-                rest = res_data["restants"]
-                # Couleur selon le ratio
-                ratio = rest / total if total > 0 else 0
-                color = "green" if ratio > 0.5 else "orange" if ratio > 0.2 else "red"
-                st.markdown(f"- {res_name} : :{color}[{rest} / {total}]")
+            if isinstance(res_data, dict):
+                total = res_data.get("max", res_data.get("total"))
+                rest = res_data.get("current", res_data.get("restants"))
+                if total is not None and rest is not None:
+                    ratio = rest / total if total > 0 else 0
+                    color = "green" if ratio > 0.5 else "orange" if ratio > 0.2 else "red"
+                    st.markdown(f"- **{res_name}** : :{color}[{rest} / {total}]")
+                else:
+                    # Sous-groupe (ex. spell_slots)
+                    sub_items = []
+                    for sub_k, sub_v in res_data.items():
+                        if isinstance(sub_v, dict):
+                            s_max = sub_v.get("max", sub_v.get("total"))
+                            s_cur = sub_v.get("current", sub_v.get("restants"))
+                            if s_max is not None and s_cur is not None:
+                                sub_items.append(f"{sub_k}: {s_cur}/{s_max}")
+                    if sub_items:
+                        st.markdown(f"- **{res_name}** : {', '.join(sub_items)}")
+                    else:
+                        st.markdown(f"- **{res_name}** : {res_data}")
             else:
-                st.markdown(f"- {res_name} : {res_data}")
+                st.markdown(f"- **{res_name}** : {res_data}")
 
     # Section Catch-all pour les informations non affichées
     other_info = {k: v for k, v in character_data.items() if k not in displayed_keys and k.lower() not in ["nom", "name", "image", "portrait"]}
@@ -186,7 +231,13 @@ with st.sidebar:
         st.session_state.pop("game_loaded", None)
         st.rerun()
 
-    st.info(f"Modèle : {config.OLLAMA_MODEL}")
+    active_pack = getattr(getattr(st.session_state.agent, "gse", None), "pack", None)
+    if active_pack and getattr(active_pack, "manifest", None):
+        st.info(f"Système : {active_pack.manifest.name} (`{active_pack.manifest.id}`)")
+    else:
+        st.info("Système : Aucun pack (Mode RAG)")
+
+    st.info(f"Modèle : {config.LLM_MODEL or config.OLLAMA_MODEL}")
     st.info(f"Interface : http://{config.SERVER_ADDRESS}:{config.SERVER_PORT}")
 
     if st.session_state.agent.character_data:

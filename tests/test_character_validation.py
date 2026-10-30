@@ -7,11 +7,6 @@ from validation import validate_character_sheet
 from agent import RPGAgent, SheetManagerAgent
 from scenario_agents import ManualGeneratorAgent
 
-def setup_module():
-    if os.path.exists("Memory"):
-        shutil.rmtree("Memory")
-    os.makedirs("Memory", exist_ok=True)
-
 
 def test_pure_validation_add_like(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

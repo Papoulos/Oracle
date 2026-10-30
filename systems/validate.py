@@ -433,6 +433,8 @@ def validate_pack(pack_path: str) -> list[Issue]:
                     if not is_covered:
                         issues.append(Issue(severity="warning", file="character_schema.json", path="/required_fields", message=f"pool '{pool.id}' ({pool.current_path}) is not covered by any required field"))
 
+            check_for_todos(schema_data, "character_schema.json", "", issues)
+
         except ValidationError as e:
             for err in e.errors():
                 loc = err.get("loc", [])
@@ -464,6 +466,15 @@ def validate_pack(pack_path: str) -> list[Issue]:
                     if step.step != expected_step:
                         issues.append(Issue(severity="error", file="creation_manual.json", path=f"/steps/{idx}/step", message=f"Expected step {expected_step}, got {step.step}"))
                     expected_step += 1
+
+            for category, opt_list in manual.options.items():
+                seen_opt_ids = set()
+                for idx, opt in enumerate(opt_list):
+                    if opt.id in seen_opt_ids:
+                        issues.append(Issue(severity="error", file="creation_manual.json", path=f"/options/{category}/{idx}/id", message=f"Duplicate option id '{opt.id}' in category '{category}'"))
+                    seen_opt_ids.add(opt.id)
+
+            check_for_todos(manual_data, "creation_manual.json", "", issues)
 
         except ValidationError as e:
             for err in e.errors():

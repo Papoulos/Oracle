@@ -1,0 +1,58 @@
+{
+  "required_fields": [
+    {"path": "name", "type": "string"},
+    {"path": "descriptor", "type": "string"},
+    {"path": "type", "type": "string"},
+    {"path": "focus", "type": "string"},
+    {"path": "tier", "type": "number"},
+    {"path": "effort", "type": "number"},
+    {"path": "armor", "type": "number"},
+    {"path": "edge", "type": "object", "sub_fields": ["might", "speed", "intellect"]},
+    {"path": "resources.might", "type": "object", "sub_fields": ["current", "max"]},
+    {"path": "resources.speed", "type": "object", "sub_fields": ["current", "max"]},
+    {"path": "resources.intellect", "type": "object", "sub_fields": ["current", "max"]},
+    {"path": "skills", "type": "list", "non_empty": false},
+    {"path": "abilities", "type": "list", "non_empty": true},
+    {"path": "equipment", "type": "list", "non_empty": false}
+  ],
+  "glossary": [
+    {"path": "name", "description": "Nom du personnage (chaîne de caractères)."},
+    {"path": "descriptor", "description": "Descripteur Cypher (ex. 'Tough', 'Graceful', 'Clever', 'Learned')."},
+    {"path": "type", "description": "Type de personnage Cypher ('Warrior', 'Adept', 'Explorer' ou 'Speaker')."},
+    {"path": "focus", "description": "Focus Cypher (ex. 'Masters Weaponry', 'Bears a Halo of Fire', 'Explores Dark Places')."},
+    {"path": "tier", "description": "Rang (Tier) du personnage (entier de 1 à 6, vaut 1 à la création)."},
+    {"path": "effort", "description": "Score d'Effort maximal du personnage (entier de 1 à 6, vaut 1 à la création)."},
+    {"path": "armor", "description": "Score d'Armure (Armor) réduisant les dégâts physiques subis (entier >= 0)."},
+    {"path": "damage_track", "description": "État sur la piste de dégâts : 'hale' (indemne), 'impaired' (affaibli), 'debilitated' (neutralisé) ou 'dead' (mort)."},
+    {"path": "recovery_step", "description": "Indice du prochain jet de récupération de la journée (0 = 1 action, 1 = 10 min, 2 = 1 heure, 3 = 10 heures)."},
+    {"path": "edge.might", "description": "Avantage (Edge) de Puissance (Might) réduisant le coût des dépenses de Might et de l'Effort sur Might."},
+    {"path": "edge.speed", "description": "Avantage (Edge) de Vitesse (Speed) réduisant le coût des dépenses de Speed et de l'Effort sur Speed."},
+    {"path": "edge.intellect", "description": "Avantage (Edge) d'Intellect réduisant le coût des dépenses d'Intellect et de l'Effort sur Intellect."},
+    {"path": "resources.might.current", "description": "Points actuels de la réserve de Puissance (Might Pool)."},
+    {"path": "resources.might.max", "description": "Valeur maximale de la réserve de Puissance (Might Pool). N'utilisez jamais 'total'."},
+    {"path": "resources.speed.current", "description": "Points actuels de la réserve de Vitesse (Speed Pool)."},
+    {"path": "resources.speed.max", "description": "Valeur maximale de la réserve de Vitesse (Speed Pool). N'utilisez jamais 'total'."},
+    {"path": "resources.intellect.current", "description": "Points actuels de la réserve d'Intellect (Intellect Pool)."},
+    {"path": "resources.intellect.max", "description": "Valeur maximale de la réserve d'Intellect (Intellect Pool). N'utilisez jamais 'total'."},
+    {"path": "skills", "description": "Liste des compétences (chaînes ou objets avec nom et niveau 'trained' / 'specialized' / 'inability')."},
+    {"path": "abilities", "description": "Liste des capacités spéciales de Type et de Focus (au moins une capacité requise)."},
+    {"path": "cyphers", "description": "Liste des cyphers (objets à usage unique) portés par le personnage."},
+    {"path": "equipment", "description": "Liste des armes, armures et équipements du personnage."}
+  ],
+  "defaults": {
+    "tier": 1,
+    "effort": 1,
+    "armor": 0,
+    "damage_track": "hale",
+    "recovery_step": 0,
+    "edge": {
+      "might": 0,
+      "speed": 0,
+      "intellect": 0
+    },
+    "skills": [],
+    "abilities": [],
+    "cyphers": [],
+    "equipment": []
+  }
+}

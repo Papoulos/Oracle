@@ -5,6 +5,12 @@ from unittest import mock
 from scenario_agents import ScenarioExtractorAgent, SceneGraphAgent
 from agent import RPGAgent
 
+@pytest.fixture(autouse=True)
+def isolated_memory(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    os.makedirs("Memory", exist_ok=True)
+    yield tmp_path
+
 class MockDocument:
     def __init__(self, page_content, metadata=None):
         self.page_content = page_content
