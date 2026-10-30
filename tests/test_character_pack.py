@@ -316,16 +316,15 @@ def test_cypher_pack_character_schema_and_manual_loaded():
 
 
 def test_character_creator_and_sheet_manager_use_pack(tmp_path, monkeypatch):
-    """Vérifie que CharacterCreator et SheetManagerAgent utilisent le pack sans lire Memory/creation_manual.json."""
+    """Vérifie que CharacterCreator et SheetManagerAgent utilisent uniquement le pack."""
     monkeypatch.chdir(tmp_path)
     from unittest.mock import MagicMock, patch
     from agent import CharacterCreator, SheetManagerAgent
 
     pack = load_pack("cypher_system")
-    mock_store = MagicMock()
 
     with patch("agent.get_llm", return_value=MagicMock()):
-        creator = CharacterCreator(mock_store, pack=pack)
+        creator = CharacterCreator(pack=pack)
         manual_str = creator._load_manual()
         manual_data = json.loads(manual_str)
         assert manual_data is not None
@@ -336,10 +335,8 @@ def test_character_creator_and_sheet_manager_use_pack(tmp_path, monkeypatch):
         ctx = creator.get_context("Je veux créer un Warrior Tough")
         assert "EXPECTED SHEET FIELDS (GLOSSARY):" in ctx
         assert "resources.might.max" in ctx
-        # Aucun appel RAG nécessaire puisque le pack porte le manuel et le glossaire
-        mock_store.similarity_search.assert_not_called()
 
-        sheet_mgr = SheetManagerAgent(mock_store, pack=pack)
+        sheet_mgr = SheetManagerAgent(pack=pack)
         glossary_str = sheet_mgr._format_glossary()
         assert "resources.might.current" in glossary_str
         assert "edge.might" in glossary_str

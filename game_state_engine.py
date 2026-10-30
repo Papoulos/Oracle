@@ -316,17 +316,6 @@ class GameStateEngine:
             msg += " — LEVEL UP available !"
         return ActionResult(success=True, message=msg, state_changes={"xp": {"avant": current_xp, "apres": new_xp}, "level_up": level_up})
 
-    def _load_recovery_rules(self) -> dict:
-        path = "Memory/recovery_rules.json"
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {"recovery_tiers": []}
-
-
     def next_rest(self, sequence_id: str) -> ActionResult:
         """
         Advances and applies the next rest in a defined recovery sequence.
@@ -381,10 +370,6 @@ class GameStateEngine:
         if self.pack:
             if "pending_allocation" in self.state:
                 return ActionResult(success=False, message="Cannot rest while there is a pending recovery allocation.")
-
-            # Check if recovery_rules.json exists and log warning
-            if os.path.exists("Memory/recovery_rules.json"):
-                logger.info("Memory/recovery_rules.json exists but is ignored because a system pack is loaded.")
 
             # Validate trigger_id
             triggers = self.pack.resources.recovery_triggers
@@ -605,72 +590,9 @@ class GameStateEngine:
                 state_changes=final_changes
             )
 
-        # Experimental Mode
-        recovery_rules = self._load_recovery_rules()
-        palier = next((p for p in recovery_rules.get("recovery_tiers", []) if p["id"] == trigger_id), None)
-
-        # Fallback to legacy resting logic if palier is not found but it is a standard legacy type (long or short)
-        if not palier:
-            if trigger_id in ("long", "short"):
-                return self._legacy_rest(trigger_id)
-            return ActionResult(success=False, message=f"Unknown recovery tier '{trigger_id}'.")
-
-        resources = self.state.get("resources", {})
-        restored = []
-
-        for effect in palier.get("effects", []):
-            path = effect.get("resource", "")
-            parts = path.split(".", 1)
-            key = parts[1] if len(parts) > 1 and parts[0] == "resources" else path
-            res = resources.get(key, {})
-
-            # Handle nested sub-dicts
-            if isinstance(res, dict) and "max" not in res:
-                is_sub_dict = any(isinstance(v, dict) and "max" in v for v in res.values())
-                if is_sub_dict:
-                    for sub_key, sub_res in res.items():
-                        if isinstance(sub_res, dict) and "max" in sub_res:
-                            action = effect.get("action")
-                            val_key = "current"
-                            if action == "restore_full":
-                                sub_res[val_key] = sub_res["max"]
-                            elif action == "restore_percentage":
-                                gain = max(1, sub_res["max"] * effect.get("value", 100) // 100)
-                                sub_res[val_key] = min(sub_res["max"], sub_res.get(val_key, 0) + gain)
-                            elif action == "restore_fixed_value":
-                                gain = effect.get("value", 0)
-                                sub_res[val_key] = min(sub_res["max"], sub_res.get(val_key, 0) + gain)
-                    restored.append(key)
-                    continue
-
-            if not isinstance(res, dict) or "max" not in res:
-                continue
-
-            val_key = "current"
-            action = effect.get("action")
-            if action == "restore_full":
-                res[val_key] = res["max"]
-            elif action == "restore_percentage":
-                gain = max(1, res["max"] * effect.get("value", 100) // 100)
-                res[val_key] = min(res["max"], res.get(val_key, 0) + gain)
-            elif action == "restore_fixed_value":
-                gain = effect.get("value", 0)
-                res[val_key] = min(res["max"], res.get(val_key, 0) + gain)
-            else:
-                continue
-            restored.append(key)
-
-        if "hit_points" in resources:
-            self.state["pv"] = resources.get("hit_points", {}).get("current", self.state.get("pv", 0))
-
-        self.state["resources"] = resources
-        self.save()
-        return ActionResult(
-            success=True,
-            message=f"Rest '{palier['name']}' completed. Restored: {', '.join(restored) if restored else 'nothing'}.",
-            state_changes={"rest": trigger_id, "restored": restored}
-        )
-
+        if trigger_id in ("long", "short"):
+            return self._legacy_rest(trigger_id)
+        return ActionResult(success=False, message=f"Unknown recovery tier '{trigger_id}'.")
 
     def allocate_recovery(self, allocation: dict[str, int]) -> ActionResult:
         """
@@ -1140,17 +1062,11 @@ class GameStateEngine:
                 return action.rule_id
             return None
 
-        # Experimental Mode
         def normalize(t):
             t = t.lower()
             return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
 
         text = normalize(user_input)
-        recovery_rules = self._load_recovery_rules()
-        for palier in recovery_rules.get("recovery_tiers", []):
-            if any(kw.lower() in text for kw in palier.get("text_triggers", [])):
-                return f"rest:{palier['id']}"
-
         if any(w in text for w in ["lance", "utilise", "sort", "magie", "spell", "incantation"]):
             return "spell"
         if any(w in text for w in ["rage", "berserk", "fureur"]):

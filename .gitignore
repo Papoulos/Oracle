@@ -6,11 +6,7 @@ __pycache__/
 venv/
 ENV/
 chroma_db/
-data/codex/*.pdf
-data/intrigue/*.pdf
+data/
 memory.json
 indexer_debug.log
 streamlit.log
-
-data/core/*.pdf
-data/scenario/*.pdf

@@ -7,7 +7,6 @@ from unittest import mock
 def test_incremental_creation(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
-    # Write a test schema before initializing the agent
     schema = {
         "required_fields": [
             {"path": "name", "type": "string"},
@@ -15,11 +14,9 @@ def test_incremental_creation(tmp_path, monkeypatch):
             {"path": "class", "type": "string"}
         ]
     }
-    os.makedirs("Memory", exist_ok=True)
-    with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
-        json.dump(schema, f)
 
     agent = RPGAgent()
+    agent._load_character_schema = mock.Mock(return_value=schema)
 
     # Mock sheet manager update_sheet behavior to avoid calling actual LLM/connection
     def mock_update_sheet(char_sheet, user_input, response, mode="ADVENTURE"):

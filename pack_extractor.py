@@ -351,13 +351,13 @@ class PackExtractorAgent(BaseAgent):
         selected_pages = all_pages
         if full_text_len > config.PACK_CONTEXT_MAX_CHARS:
             if self.store is None:
-                 raise ValueError("Text exceeds PACK_CONTEXT_MAX_CHARS and Chroma store is not initialized. Run `python indexer.py --core` first.")
+                 raise ValueError("Text exceeds PACK_CONTEXT_MAX_CHARS and no vector store is initialized.")
             logging.info(f"Text too long ({full_text_len} chars). Selecting pages via RAG...")
             queries = self.queries_fr + self.queries_en
             selected_pages = select_pages(self.store, queries, all_pages, config.PACK_CONTEXT_MAX_CHARS, k=20, neighbors=1)
 
         if not selected_pages:
-            raise ValueError("Core index is empty or does not contain these PDFs. Run `python indexer.py --core` first.")
+            raise ValueError("No pages could be selected from the provided PDFs.")
 
         context_str = format_pages(selected_pages)
         context_pages_meta = [ContextPage(source=p.source, page=p.page) for p in selected_pages]

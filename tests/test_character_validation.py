@@ -5,7 +5,6 @@ import pytest
 from unittest import mock
 from validation import validate_character_sheet
 from agent import RPGAgent, SheetManagerAgent
-from scenario_agents import ManualGeneratorAgent
 
 
 def test_pure_validation_add_like(tmp_path, monkeypatch):
@@ -119,16 +118,13 @@ def test_orchestration_audit_triggered(tmp_path, monkeypatch):
     import os; os.makedirs("Memory", exist_ok=True)
     agent = RPGAgent()
 
-    # 1. Write schema in Memory
     schema = {
         "required_fields": [
             {"path": "name", "type": "string"},
             {"path": "race", "type": "string"}
         ]
     }
-    os.makedirs("Memory", exist_ok=True)
-    with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
-        json.dump(schema, f)
+    agent._load_character_schema = mock.Mock(return_value=schema)
 
     agent.sheet_manager.update_sheet = mock.Mock(
         return_value={"name": "Aragorn"}  # Incomplete, "race" missing
@@ -166,9 +162,7 @@ def test_orchestration_transition_no_audit_when_already_complete(tmp_path, monke
             {"path": "race", "type": "string"}
         ]
     }
-    os.makedirs("Memory", exist_ok=True)
-    with open("Memory/character_schema.json", "w", encoding="utf-8") as f:
-        json.dump(schema, f)
+    agent._load_character_schema = mock.Mock(return_value=schema)
 
     agent.sheet_manager.update_sheet = mock.Mock(
         return_value={"name": "Aragorn", "race": "Humain"}  # Already complete
@@ -182,35 +176,3 @@ def test_orchestration_transition_no_audit_when_already_complete(tmp_path, monke
     agent.chat("Je choisis l'Humain")
     assert not agent.sheet_manager.audit_and_complete.called
     assert agent.game_state == "SUMMARY"
-
-
-def test_manual_generator_agent_schema_fallback(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    import os; os.makedirs("Memory", exist_ok=True)
-    # Test where ManualGeneratorAgent's LLM call mocked for schema returns invalid/empty JSON
-    # -> check fallback on {"required_fields": []} and check that character_schema.json is written.
-
-    schema_path = "Memory/character_schema.json"
-    if os.path.exists(schema_path):
-        os.remove(schema_path)
-
-    mock_store = mock.Mock()
-    mock_store.get.return_value = {
-        "documents": ["Règles de création de personnage."],
-        "metadatas": [{"page": 1}]
-    }
-    mock_store.similarity_search.return_value = [mock.Mock(page_content="Règles de création de personnage.")]
-
-    agent = ManualGeneratorAgent(mock_store)
-
-    with mock.patch.object(agent.llm.__class__, "invoke", side_effect=[
-        mock.Mock(content='{"steps": [{"step": 1, "name": "Step 1", "description": "Desc"}, {"step": 2, "name": "Step 2", "description": "Desc"}, {"step": 3, "name": "Step 3", "description": "Desc"}, {"step": 4, "name": "Step 4", "description": "Desc"}]}'),
-        Exception("LLM crash")
-    ]):
-        res = agent.generate()
-
-    assert len(res.get("steps", [])) == 4
-    assert os.path.exists(schema_path)
-    with open(schema_path, "r", encoding="utf-8") as f:
-        written_schema = json.load(f)
-    assert written_schema == {"required_fields": []}

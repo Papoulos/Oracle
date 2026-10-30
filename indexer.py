@@ -5,14 +5,11 @@ import json
 import logging
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_ollama import OllamaEmbeddings
-from langchain_openai import OpenAIEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 import chromadb
 import config
 import re
-from scenario_agents import ManualGeneratorAgent, GameplayRulesAgent
 from pack_extractor import PackExtractorAgent
 from systems.promote import get_draft_dir
 
@@ -134,21 +131,19 @@ def index_scenes(scenes_path, collection_name, client, embeddings):
 def main():
     parser = argparse.ArgumentParser(description="Index documents for the Oracle RPG.")
     parser.add_argument("--clear", action="store_true", help="Clear DB before indexing.")
-    parser.add_argument("--core", action="store_true", help="Index only rules files.")
     parser.add_argument("--scenario", action="store_true", help="Index only scenario files.")
-    parser.add_argument("--pj", action="store_true", help="Generate character creation manual.")
     parser.add_argument("--reset", action="store_true", help="Wipe all data (ChromaDB + Memory) and start over.")
     parser.add_argument("--log", action="store_true",
                         help="Activate detailed logging (sent prompts and raw LLM responses) in indexer_debug.log")
     parser.add_argument("--pack", action="store_true", help="Generate draft pack for a system.")
     parser.add_argument("--pack-id", type=str, help="The id of the pack to draft (alphanumeric and underscore only).")
-    parser.add_argument("--pdf", type=str, action="append", help="Specific PDF(s) to process for the pack.")
+    parser.add_argument("--pdf", type=str, action="append", help="Specific PDF file path(s) to process for the pack.")
     parser.add_argument("--force", action="store_true", help="Force overwrite of existing draft pack.")
     parser.add_argument("--language", type=str, help="ISO 639-1 language code to use (overrides detection).")
     args = parser.parse_args()
 
-    # If no specific mode argument is provided, we index everything and generate the manual.
-    index_all = not (args.core or args.scenario or args.pj or args.reset or args.pack)
+    # If no specific mode argument is provided, we index scenario files.
+    index_all = not (args.scenario or args.reset or args.pack)
 
     if args.reset:
         print("Complete reset requested...")
@@ -193,6 +188,16 @@ def main():
              print(f"Error: Invalid pack id '{args.pack_id}'. Must be lowercase alphanumeric and underscore.")
              return
 
+        if not args.pdf:
+             print("Error: At least one --pdf <path> is required when using --pack")
+             return
+
+        pdf_files = args.pdf
+        missing_pdfs = [p for p in pdf_files if not os.path.isfile(p)]
+        if missing_pdfs:
+             print(f"Error: PDF file(s) not found: {', '.join(missing_pdfs)}")
+             return
+
         draft_dir = get_draft_dir(args.pack_id)
         if os.path.exists(draft_dir):
              if not args.force:
@@ -202,39 +207,8 @@ def main():
                   print(f"Removing existing draft directory: {draft_dir}")
                   shutil.rmtree(draft_dir)
 
-        core_data_path = config.CORE_DATA_PATH if config.CORE_DATA_PATH else "./data/core"
-        if not os.path.isdir(core_data_path):
-             print(f"Error: Core data directory '{core_data_path}' is missing.")
-             return
-
-        if args.pdf:
-             pdf_files = [os.path.join(core_data_path, f) for f in args.pdf]
-        else:
-             pdf_files = [os.path.join(core_data_path, f) for f in os.listdir(core_data_path) if f.lower().endswith(".pdf")]
-
-        client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
-        embeddings = get_embeddings()
-
-        # We attempt to load the store
-        try:
-             collection_name = config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core"
-             try:
-                 collection = client.get_collection(collection_name)
-                 if collection.count() == 0:
-                     store = None
-                 else:
-                     store = Chroma(
-                          client=client,
-                          collection_name=collection_name,
-                          embedding_function=embeddings
-                     )
-             except Exception:
-                 store = None
-        except Exception:
-             store = None
-
         print(f"Generating draft pack '{args.pack_id}' from {len(pdf_files)} PDF(s)...")
-        agent = PackExtractorAgent(store=store, verbose=verbose)
+        agent = PackExtractorAgent(verbose=verbose)
         try:
              agent.extract(args.pack_id, pdf_files, override_language=args.language)
         except Exception as e:
@@ -244,38 +218,15 @@ def main():
     embeddings = get_embeddings()
     client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
 
-    # Create directories if needed
-    core_data_path = config.CORE_DATA_PATH if config.CORE_DATA_PATH else "./data/core"
+    # Create scenario directory if needed
     scenario_data_path = config.SCENARIO_DATA_PATH if config.SCENARIO_DATA_PATH else "./data/scenario"
-    core_coll_name = config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core"
     scenario_coll_name = config.SCENARIO_COLLECTION_NAME if config.SCENARIO_COLLECTION_NAME else "default_scenario"
 
-    os.makedirs(core_data_path, exist_ok=True)
     os.makedirs(scenario_data_path, exist_ok=True)
-
-    # Core indexing
-    if index_all or args.core or args.reset:
-        index_directory(core_data_path, core_coll_name, client, embeddings)
 
     # Scenario indexing
     if index_all or args.scenario or args.reset:
         index_directory(scenario_data_path, scenario_coll_name, client, embeddings, index_json=True)
-
-    # Character creation manual generation
-    if index_all or args.pj or args.reset:
-        print("Generating character creation manual...")
-        core_store = Chroma(
-            client=client,
-            collection_name=config.CORE_COLLECTION_NAME,
-            embedding_function=embeddings
-        )
-        generator = ManualGeneratorAgent(core_store, verbose=verbose)
-        generator.generate()
-
-        print("Generating recovery rules and action catalog...")
-        gameplay_agent = GameplayRulesAgent(core_store, verbose=verbose)
-        gameplay_agent.generate_recovery_rules()
-        gameplay_agent.generate_action_catalog()
 
 if __name__ == "__main__":
     main()

@@ -21,9 +21,8 @@ from mechanics.task_flow import build_task_analysis_prompt, sanitize_task_decisi
 logger = logging.getLogger(__name__)
 
 class CharacterCreator(BaseAgent):
-    def __init__(self, vector_store, verbose=False, pack=None):
+    def __init__(self, verbose=False, pack=None):
         super().__init__(model=config.CHARACTER_MODEL, temperature=config.CHARACTER_TEMP, verbose=verbose)
-        self.vector_store = vector_store
         self.pack = pack
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are a Game Master (GM) expert in role-playing games.
@@ -39,7 +38,7 @@ class CharacterCreator(BaseAgent):
             3. TECHNICAL PREPARATION: Before asking a question, consult the CHARACTER CREATION MANUAL and CODEX to know ALL constraints and benefits related to the current choice.
             4. PEDAGOGY: ALWAYS explain to the player the technical consequences of their choice in French.
             5. For statistics/attributes/pools: follow the exact method from the CHARACTER CREATION MANUAL or CODEX (rolling dice or distributing points).
-            6. For character options (such as Types, Descriptors, Foci, or Races and Classes depending on the system): use the options listed in the CHARACTER CREATION MANUAL if provided, or query the CODEX (RAG), and present them clearly to the player.
+            6. For character options (such as Types, Descriptors, Foci, or Races and Classes depending on the system): use the options listed in the CHARACTER CREATION MANUAL if provided, and present them clearly to the player.
             7. Calculate derived statistics and pools scrupulously following the formulas from the CHARACTER CREATION MANUAL and CODEX.
 
             STILL MISSING FIELDS (You must guide the player to fill these):
@@ -60,7 +59,7 @@ class CharacterCreator(BaseAgent):
         ])
         self.chain = self.prompt | self.llm
 
-    def get_context(self, query):
+    def get_context(self, query=None):
         parts = []
         if self.pack and self.pack.character_schema and self.pack.character_schema.glossary:
             glossary_lines = ["EXPECTED SHEET FIELDS (GLOSSARY):"]
@@ -68,44 +67,15 @@ class CharacterCreator(BaseAgent):
                 glossary_lines.append(f"- {entry.path}: {entry.description}")
             parts.append("\n".join(glossary_lines))
 
-        if self.pack and self.pack.creation_manual and self.pack.creation_manual.steps:
-            # Pack provides a self-contained creation manual; no RAG lookup required if parts exist
-            if parts:
-                return "\n\n".join(parts)
-
-        try:
-            # Slightly reduce RAG depth for creation to optimize context window
-            k = max(1, config.RAG_K_CREATION - 3)
-            docs = self.vector_store.similarity_search(query, k=k)
-            print(f"[CharacterCreator] DEBUG: Contextual search for '{query}' -> {len(docs)} docs found.")
-            if docs:
-                print(f"[CharacterCreator] DEBUG: First excerpt: {docs[0].page_content[:200]}...")
-                parts.append("\n\n".join([doc.page_content for doc in docs]))
-        except Exception as e:
-            print(f"[CharacterCreator] DEBUG: RAG Error: {e}")
-
         return "\n\n".join(parts) if parts else "No context found."
 
     def _load_manual(self):
         if self.pack and self.pack.creation_manual:
             return json.dumps(self.pack.creation_manual.model_dump(exclude_none=True), ensure_ascii=False, indent=2)
-        path = "Memory/creation_manual.json"
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.dumps(json.load(f), ensure_ascii=False, indent=2)
-            except Exception:
-                return "Manual unavailable (use Codex)."
-        return "Manual unavailable (use Codex)."
+        return "Manual unavailable."
 
     def generate_response(self, user_input, history, character_data=None, missing_fields=None):
-        # Enrich the RAG query with the previous turn to focus context retrieval
-        rag_query = user_input
-        if len(history) >= 1:
-            last_msg = history[-1].content
-            rag_query = f"{last_msg[:100]} {user_input}"
-
-        context = self.get_context(rag_query)
+        context = self.get_context()
         manual = self._load_manual()
 
         if missing_fields and isinstance(missing_fields, list):
@@ -164,9 +134,8 @@ class SheetManagerAgent(BaseAgent):
         '"equipment", "status", "resources", "hit_points" (with "current" and "max" under "hit_points").'
     )
 
-    def __init__(self, vector_store, verbose=False, pack=None):
+    def __init__(self, verbose=False, pack=None):
         super().__init__(model=config.SHEET_MANAGER_MODEL, temperature=config.SHEET_MANAGER_TEMP, verbose=verbose)
-        self.vector_store = vector_store
         self.pack = pack
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", """You are the Character Sheet Manager.
@@ -210,14 +179,10 @@ class SheetManagerAgent(BaseAgent):
                 return f"Use the exact keys from the system schema: {', '.join(paths)}, \"status\"."
         return self.LEGACY_GLOSSARY_INSTRUCTION
 
-    def get_context(self, query):
+    def get_context(self, query=None):
         if self.pack and self.pack.creation_manual and self.pack.creation_manual.steps:
             return json.dumps(self.pack.creation_manual.model_dump(exclude_none=True), ensure_ascii=False, indent=2)
-        try:
-            docs = self.vector_store.similarity_search(query, k=config.RAG_K_ADVENTURE)
-            return "\n\n".join([doc.page_content for doc in docs])
-        except Exception:
-            return "No rules found for update."
+        return "No rules found for update."
 
     def update_sheet(self, character_sheet, user_input, narrator_response, mode="ADVENTURE"):
         context = self.get_context(f"Rules for: {user_input} {narrator_response}")
@@ -381,13 +346,6 @@ class RPGAgent(BaseAgent):
         self.embeddings = get_embeddings()
         self.client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
 
-        # Core Rules collection
-        self.core_store = Chroma(
-            client=self.client,
-            collection_name=config.CORE_COLLECTION_NAME if config.CORE_COLLECTION_NAME else "default_core",
-            embedding_function=self.embeddings
-        )
-
         # Scenario collection
         self.scenario_store = Chroma(
             client=self.client,
@@ -403,10 +361,10 @@ class RPGAgent(BaseAgent):
             pack = load_pack(pack_id)
         self.gse = GameStateEngine(pack=pack)
 
-        self.character_creator = CharacterCreator(self.core_store, verbose=verbose, pack=pack)
+        self.character_creator = CharacterCreator(verbose=verbose, pack=pack)
         self.narrator = Narrator(verbose=verbose)
         self.chronicle_agent = ChronicleAgent(verbose=verbose)
-        self.sheet_manager = SheetManagerAgent(self.core_store, verbose=verbose, pack=pack)
+        self.sheet_manager = SheetManagerAgent(verbose=verbose, pack=pack)
 
         # Setup Agent
         self.scenario_extractor_agent = ScenarioExtractorAgent(self.scenario_store, verbose=verbose)
@@ -512,7 +470,6 @@ class RPGAgent(BaseAgent):
 
     def _check_collections(self):
         checks = [
-            (config.CORE_COLLECTION_NAME,     "Rules"),
             (config.SCENARIO_COLLECTION_NAME, "Scenario"),
         ]
         all_ok = True
@@ -529,15 +486,6 @@ class RPGAgent(BaseAgent):
                 print(f"✗ [{label}] Collection '{coll_name}' not found.")
                 all_ok = False
         return all_ok
-
-    def get_core_context(self, query, k=None):
-        if k is None:
-            k = config.RAG_SEARCH_K
-        try:
-            docs = self.core_store.similarity_search(query, k=k)
-            return "\n\n".join([doc.page_content for doc in docs])
-        except Exception:
-            return "No rules found."
 
     def get_scenario_context(self, query, k=None):
         if k is None:
@@ -637,7 +585,7 @@ class RPGAgent(BaseAgent):
         return result
 
     def _extract_and_add_resources(self):
-        """Extracts class resources (spells, rage, etc.) and adds them to the character sheet."""
+        """Finalizes character sheet resources deterministically using the active SystemPack."""
         if self.gse and self.gse.pack is not None:
             self.log("Applying deterministic system pack character finalization...")
             self.character_data = self._finalize_pack_character(self.character_data or {}, apply_defaults=True)
@@ -648,58 +596,6 @@ class RPGAgent(BaseAgent):
             with open("Memory/character.json", "w", encoding="utf-8") as f:
                 json.dump(self.character_data, f, indent=4, ensure_ascii=False)
             return
-
-        self.log("Extracting class resources and abilities...")
-        classe = self.character_data.get("class", "Inconnu")
-        niveau = self.character_data.get("level", 1)
-        race = self.character_data.get("race", "Inconnu")
-
-        query = f"Ressources de classe pour {classe} niveau {niveau}, race {race}. Emplacements de sorts, points de rage, capacités limitées par jour, points de vie."
-        context = self.get_core_context(query, k=10)
-
-        prompt = f"""You are an expert in RPG rules.
-Based on the following CODEX excerpts, identify ALL consumable resources (spell slots per day, limited use abilities, hit points, etc.) for a character of level {niveau}, class {classe} and race {race}.
-
-CODEX EXCERPTS:
-{context}
-
-CURRENT SHEET:
-{json.dumps(self.character_data, ensure_ascii=False, indent=2)}
-
-Produce a JSON 'resources' object that can be integrated into the sheet.
-Each resource must have a 'total' and a 'current' equal to total.
-Use clear, lowercase technical French key names for custom classes resources (e.g. 'emplacements_sorts_niv1', 'points_de_rage') except for hit_points which is already 'hit_points'. Always keep the main wrapper as 'resources'.
-If the character has spells, also list known spells if mentioned or suggested for this level.
-
-Reply ONLY with the JSON block:
-{{
-  "resources": {{
-    "nom_ressource": {{ "total": X, "current": X }},
-    ...
-  }},
-  "spells": ["spell_name_1", "spell_name_2"]
-}}
-"""
-        try:
-            response = self.llm.invoke(prompt).content
-            data = extract_json(response)
-            if data:
-                if "resources" in data and data["resources"]:
-                    if "resources" not in self.character_data:
-                        self.character_data["resources"] = {}
-                    self.character_data["resources"].update(data["resources"])
-
-                if "spells" in data and data["spells"]:
-                    existing_spells = self.character_data.get("spells", [])
-                    if not existing_spells or len(existing_spells) < len(data["spells"]):
-                        self.character_data["spells"] = data["spells"]
-
-                os.makedirs("Memory", exist_ok=True)
-                with open("Memory/character.json", "w", encoding="utf-8") as f:
-                    json.dump(self.character_data, f, indent=4, ensure_ascii=False)
-                self.log("✓ Resources and spells updated in character sheet.")
-        except Exception as e:
-            self.log(f"⚠ Error during resources extraction: {e}")
 
     def setup_world(self) -> bool:
         """
@@ -833,24 +729,7 @@ Reply ONLY with the JSON block:
     def _load_character_schema(self):
         if self.gse and self.gse.pack and self.gse.pack.character_schema:
             return schema_as_legacy_dict(self.gse.pack.character_schema)
-        path = "Memory/character_schema.json"
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
         return {"required_fields": [{"path": "name", "type": "string"}]}
-
-    def _load_action_catalog(self) -> dict:
-        path = "Memory/action_catalog.json"
-        if os.path.exists(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {"common_actions": []}
 
     def _check_resources(self, action):
         """Checks if player's action consumes any limited resource and whether it is available."""
@@ -1071,80 +950,41 @@ Reply ONLY with this JSON:
                         mechanical_context += f"\n⚠ ACTION BLOQUÉE : {result.blocked_reason} — {result.message}"
 
             else:
-                # Catalog lookups before system-wide RAG
-                action_catalog = self._load_action_catalog()
                 analysis_json = None
+                analysis_prompt = f"""Analyze the player's action: "{user_input}"
 
-                if action_catalog.get("common_actions"):
-                    catalog_prompt = f"""Analyze the player's action: "{user_input}"
+                Adventure history (Chronicle):
+                {chronicle_text}
 
-COMMON ACTIONS CATALOG FOR THIS SYSTEM:
-{json.dumps(action_catalog, ensure_ascii=False, indent=2)}
+                Present NPCs and their secrets (if relevant):
+                {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
 
-Adventure history (Chronicle):
-{chronicle_text}
+                MECHANICAL STATE: {state_summary}
+                {mechanical_context}
 
-Present NPCs and their secrets (if relevant):
-{json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
+                According to the character ({json.dumps(self.character_data, ensure_ascii=False)}), is a dice roll required?
+                If so, identify the appropriate bonus from the player's character sheet.
+                Also determine if this action or its immediate consequences result in damage, healing, or XP gain.
 
-MECHANICAL STATE: {state_summary}
-{mechanical_context}
-
-Does this action correspond to an entry in the catalog above? If yes, apply its resolution to the character sheet ({json.dumps(self.character_data, ensure_ascii=False)}).
-If the action does not correspond to ANY entry, reply "covered_by_catalog": false WITHOUT guessing - the system will look up the complete rules.
-
-Reply in JSON format:
-{{
-    "covered_by_catalog": boolean,
-    "need_roll": boolean, "stat": "stat_name_or_null", "bonus": integer_or_null,
-    "calculation_breakdown": "...", "dc": integer_or_null, "reason": "...",
-    "mechanical_decision": {{"action": "damage" | "heal" | "xp" | null, "amount": integer_or_null}}
-}}
-"""
-                    try:
-                        analysis_response = self.llm.invoke(catalog_prompt).content
-                        analysis_json = extract_json(analysis_response, expected_type=dict)
-                    except Exception as e:
-                        print(f"[RPGAgent] Error during catalog analysis: {e}")
-
-                if not analysis_json or analysis_json.get("covered_by_catalog") is False:
-                    core_context = self.get_core_context(user_input, k=config.RAG_K_ADVENTURE)
-                    analysis_prompt = f"""Analyze the player's action: "{user_input}"
-                    Based on the following CODEX RULES:
-                    {core_context}
-
-                    Adventure history (Chronicle):
-                    {chronicle_text}
-
-                    Present NPCs and their secrets (if relevant):
-                    {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
-
-                    MECHANICAL STATE: {state_summary}
-                    {mechanical_context}
-
-                    According to the character ({json.dumps(self.character_data, ensure_ascii=False)}), is a dice roll required?
-                    If so, identify the appropriate bonus by RIGOROUSLY applying the CODEX rules above to the player's character sheet.
-                    Also determine if this action or its immediate consequences result in damage, healing, or XP gain.
-
-                    Reply in JSON format:
-                    {{
-                        "need_roll": boolean,
-                        "stat": "stat_name_or_null",
-                        "bonus": integer_or_null,
-                        "calculation_breakdown": "bonus explanation (e.g., +3 Strength, +2 Athletics)",
-                        "dc": integer_or_null,
-                        "reason": "short explanation",
-                        "mechanical_decision": {{
-                            "action": "damage" | "heal" | "xp" | null,
-                            "amount": integer_or_null
-                        }}
+                Reply in JSON format:
+                {{
+                    "need_roll": boolean,
+                    "stat": "stat_name_or_null",
+                    "bonus": integer_or_null,
+                    "calculation_breakdown": "bonus explanation (e.g., +3 Strength, +2 Athletics)",
+                    "dc": integer_or_null,
+                    "reason": "short explanation",
+                    "mechanical_decision": {{
+                        "action": "damage" | "heal" | "xp" | null,
+                        "amount": integer_or_null
                     }}
-                    """
-                    try:
-                        analysis_response = self.llm.invoke(analysis_prompt).content
-                        analysis_json = extract_json(analysis_response, expected_type=dict)
-                    except Exception as e:
-                        print(f"[RPGAgent] Error during Codex analysis: {e}")
+                }}
+                """
+                try:
+                    analysis_response = self.llm.invoke(analysis_prompt).content
+                    analysis_json = extract_json(analysis_response, expected_type=dict)
+                except Exception as e:
+                    print(f"[RPGAgent] Error during action analysis: {e}")
 
                 try:
                     if not analysis_json:

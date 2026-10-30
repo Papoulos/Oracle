@@ -86,7 +86,7 @@ def test_pack_extractor_empty_selected_pages(mock_invoke, test_pdfs, tmp_path):
 
             with patch('pack_extractor.select_pages', return_value=[]):
                 with patch('pack_extractor.config.PACK_CONTEXT_MAX_CHARS', 1):
-                    with pytest.raises(ValueError, match="Core index is empty or does not contain these PDFs. Run `python indexer.py --core` first."):
+                    with pytest.raises(ValueError, match="No pages could be selected from the provided PDFs."):
                         agent.extract("test_empty", test_pdfs)
     finally:
         os.chdir(old_cwd)

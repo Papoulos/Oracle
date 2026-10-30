@@ -47,7 +47,6 @@ def _snapshot_memory_files() -> dict:
     base_dir = Path(__file__).resolve().parent.parent / "Memory"
     files_to_monitor = [
         base_dir / "character.json",
-        base_dir / "creation_manual.json",
         base_dir / "scenario.json",
     ]
     return {f: (f.read_bytes() if f.exists() else None) for f in files_to_monitor}

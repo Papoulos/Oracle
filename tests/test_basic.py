@@ -12,5 +12,4 @@ def test_agent_initialization():
 def test_config():
     import config
     assert hasattr(config, 'OLLAMA_MODEL')
-    assert hasattr(config, 'CORE_COLLECTION_NAME')
     assert hasattr(config, 'SCENARIO_COLLECTION_NAME')

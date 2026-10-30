@@ -206,7 +206,6 @@ def test_transition_deterministic_logic():
     # Mock RAG calls
     agent.get_current_scene = mock.Mock(return_value="Scène de l'auberge")
     agent.get_scenario_context = mock.Mock(return_value="Contexte RAG")
-    agent.get_core_context = mock.Mock(return_value="Règles")
 
     # Mock LLM for mechanical analysis
     mock_mech = mock.Mock()
@@ -261,7 +260,6 @@ def test_transition_invalid_fallback_to_improvisation():
 
     agent.get_current_scene = mock.Mock(return_value="Scène de l'auberge")
     agent.get_scenario_context = mock.Mock(return_value="Contexte RAG")
-    agent.get_core_context = mock.Mock(return_value="Règles")
 
     mock_mech = mock.Mock()
     mock_mech.content = '{"need_roll": false, "mechanical_decision": null}'
@@ -311,7 +309,6 @@ def test_contournement_non_blocking():
 
     agent.get_current_scene = mock.Mock(return_value="Scène de l'auberge")
     agent.get_scenario_context = mock.Mock(return_value="Contexte RAG")
-    agent.get_core_context = mock.Mock(return_value="Règles")
 
     mock_mech = mock.Mock()
     mock_mech.content = '{"need_roll": false, "mechanical_decision": null}'
@@ -359,7 +356,6 @@ def test_clock_trigger_consequence_injection():
 
     agent.get_current_scene = mock.Mock(return_value="Scène")
     agent.get_scenario_context = mock.Mock(return_value="Contexte RAG")
-    agent.get_core_context = mock.Mock(return_value="Règles")
 
     mock_mech = mock.Mock()
     mock_mech.content = '{"need_roll": false, "mechanical_decision": null}'
