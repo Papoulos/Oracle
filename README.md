@@ -39,24 +39,13 @@ The system uses specialized agents, each with dedicated prompts, LLM configurati
 *   **Role**: The historian. Maintains a factual, concise chronicle of the adventure.
 *   **Key Functions**:
     *   Updates `Memory/Chronicle.json` after every player action.
-    *   Records clock consequences, major milestones, and `ecart_notable` (notable game-state deviations) as part of the persistent log.
+    *   Records clock consequences, major milestones, and `notable_deviation` as part of the persistent log.
 
-### 6. Manual Generator (`ManualGeneratorAgent`)
-*   **Role**: Ruleset extraction pipeline (one-shot).
-*   **Key Functions**:
-    *   Dynamically scans the Core vector store using rule-agnostic queries (e.g. searching for descriptors, playbooks, aspects, attributes instead of assuming generic D&D classes/races).
-    *   Generates a structural creation handbook (`Memory/creation_manual.json`) and a rules-specific schema (`Memory/character_schema.json`) to validate completed character sheets.
-
-### 7. Setup Agent (`ScenarioExtractorAgent`)
+### 6. Setup Agent (`ScenarioExtractorAgent`)
 *   **Role**: Unified scenario compiler.
 *   **Key Functions**:
     *   Processes PDF adventure modules via a 5-pass sequential extraction (Entities, Scene Nodes, Macro-structure, Global Clocks, and Metadata).
     *   Generates the deterministic reference file `Memory/scenario_structure.json`.
-
-### 8. Scene Graph Agent (`SceneGraphAgent`)
-*   **Role**: Scene mapper.
-*   **Key Functions**:
-    *   Extracts logical scene nodes and formats scene links, logical outputs, objectives, and anticipated NPC reactions into `Memory/scenes.json`.
 
 ---
 
@@ -102,30 +91,30 @@ python -m systems.validate systems/my_d20_game --strict
 
 ---
 
-## ⚡ Agnostic Character Creation & Gameplay Systems
+## ⚡ Pack-Driven Character Creation & Validation
 
-Traditional TTRPG digital assistants are hardcoded to specific systems (like D&D 5e). RPG Oracle is **entirely ruleset-agnostic**, using a dual-stage extraction and dynamic validation pipeline.
+Traditional TTRPG digital assistants are hardcoded to specific systems. RPG Oracle is **ruleset-agnostic**, relying on each System Pack's `creation_manual.json` and `character_schema.json`:
 
 ```mermaid
 graph TD
-    A[Core Rules PDFs in data/core/] --> B[ManualGeneratorAgent]
-    B -->|1. Discovery Phase| C[Identify unique ruleset components e.g. Aspects, Playbooks]
-    B -->|2. Generation Phase| D[Create Memory/creation_manual.json]
-    B -->|3. Schema Extraction| E[Create Memory/character_schema.json]
-    F[CharacterCreator Chat] --> G[SheetManagerAgent Audit]
-    G --> H[Validate sheet against Memory/character_schema.json]
-    H -->|Complete| I[Transition to SUMMARY State]
-    H -->|Missing Fields| F
+    A[System Pack systems/<id>/] --> B[creation_manual.json]
+    A --> C[character_schema.json]
+    B -->|Steps & Predefined Options| D[CharacterCreator Chat]
+    C -->|Glossary & Field Paths| E[SheetManagerAgent]
+    D --> E
+    E --> F[Deterministic Pack Finalization]
+    F --> G[Validate sheet against character_schema.json]
+    G -->|Complete| H[Transition to SUMMARY State]
+    G -->|Missing Fields| D
 ```
 
-1.  **Component Discovery**: `ManualGeneratorAgent` uses a specialized discovery prompt to scan raw rules documents. It detects the exact terminology used by the ruleset (whether it uses D&D-style Classes/Races, Numenera-style Type/Descriptor/Focus, or Powered by the Apocalypse Playbooks) and bypasses hardcoded templates.
-2.  **Dynamic Handbooks & Schemas**: It compiles these rules into:
-    *   `Memory/creation_manual.json`: The technical steps and limits (e.g., "Choose 3 skills", "Distribute 15 points") used to guide the player.
-    *   `Memory/character_schema.json`: A dynamically compiled JSON schema defining the fields (and nested properties) required for a complete character sheet in this ruleset.
-3.  **Two-Step Decoupled Creation**:
-    *   The `CharacterCreator` guides the player narratively without halting to produce complex JSON blocks.
-    *   When the player finishes, the `SheetManagerAgent` executes an `audit_and_complete` call, reviewing the whole chat transcript to extract stats, items, and attributes.
-4.  **Schema-Based Validation**: The Orchestrator calls `validate_character_sheet()`, checking the extracted sheet against the ruleset's dynamic `character_schema.json`. If missing fields are found, the creator prompts the player for them; otherwise, the state transitions cleanly to `SUMMARY`.
+1.  **Pack Creation Manual (`creation_manual.json`)**: Defines the ordered creation steps (`steps`), global system rules (`general_rules`), and structured catalogs of predefined character options (`options`, such as Cypher Types/Descriptors/Foci or D&D 5e Races/Classes) with their mechanical effects and bonuses.
+2.  **Pack Character Schema (`character_schema.json`)**: Defines `required_fields` (with dot-notation paths and sub-fields), a `glossary` injected into `CharacterCreator` and `SheetManagerAgent` prompts so the LLM writes to the exact paths expected by the engine, and `defaults` applied deterministically.
+3.  **Two-Step Decoupled Creation & Deterministic Finalization**:
+    *   `CharacterCreator` guides the player narratively in French using the pack's manual and glossary.
+    *   `SheetManagerAgent` updates the structured JSON sheet after each turn and runs `audit_and_complete` when creation concludes.
+    *   `_finalize_pack_character()` deterministically normalizes resource pools (`total` → `max`, `restants` → `current`, sets `current = max` when missing/0) and applies `character_schema.defaults` without any extra LLM call.
+4.  **Schema-Based Validation**: The Orchestrator calls `validate_character_sheet()` against the pack's `character_schema.json`. Once all required fields are present, the state transitions cleanly to `SUMMARY`.
 
 ---
 
@@ -134,22 +123,13 @@ graph TD
 To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle separates narration from mathematics. The `GameStateEngine` (`game_state_engine.py`) is a pure-Python, zero-LLM engine that acts as the absolute source of truth for stats and resources.
 
 ### Key Capabilities
-*   **Resource Tracking**: Manages HP, XP, generic consumable pools (e.g., Rage, Inspiration), and structured spell slots (e.g., `niveau_1` to `niveau_9`).
-*   **Automatic Action Detection**: Analyzes player input for mechanical keywords (e.g., "cast", "rage", "rest") to flag action consumption or trigger restoration before generating responses.
-*   **Derived Stat Recalculation**: The `synchronize_and_recalculate()` method handles stat dependencies (e.g., normalizing legacy HP fields, converting base attributes to modifiers, and capping current pools at maximums).
-*   **Resting Mechanics**: Supports both ruleset-agnostic dynamic resting and standard/legacy fallbacks:
-    *   *Dynamic Recovery (Agnostic)*: Loads recovery tiers and triggers from `Memory/recovery_rules.json` and updates stats/resources dynamically based on the rule definition (e.g., full recovery, percentage recovery, flat recovery).
-    *   *Standard Fallbacks*: Restores 100% of all resource pools and HP on a legacy `long` rest, and 25% HP on a legacy `short` rest if no custom recovery rules are present.
-*   **System Packs**: Full mechanical decoupling. The Engine now natively supports "System Packs" (`systems/<id>/`) containing `manifest.yaml`, `resolution.json`, `resources.json`, and the new `triggers.json`. Setting `SYSTEM_PACK=id` in your `.env` forces the engine to dynamically pull its health pools, spell groups, resting rules, and localized action keywords directly from the pack. Available packs include `dnd5e_srd` and `cypher_system`. The legacy "experimental mode" (with hardcoded strings and fallback recovery rules) is kept for backwards compatibility but triggers a warning if no pack is loaded.
-    *   **Formula Recovery Context**: System packs support `formula` recovery modes. The formulas are evaluated using a context (`ctx`) that includes:
-        *   `character`: the full character sheet (`self.state`).
-        *   `pool.current`: the current value of the pool being recovered.
-        *   `pool.max`: the maximum value of the pool being recovered (from `max_value`, `max_path` or group sub-dict key).
-        *   `pool.min`: the minimum value defined in the pool configuration (`min_value`, default 0).
-    *   **Actions (`actions.json`)**: System packs optionally support defining task actions (e.g. attack, defend, climb) with dynamic effort mechanics and difficulty scales. The engine provides `execute_task(action_id, pool_id, difficulty, effort_levels)` which evaluates complex cost formulas (using `effort.levels`, `effort.edge`, and `effort.impaired`), verifies resources atomically, applies step adjustments, resolves the check against the configured `StepTargetD20` family, and directly returns an `ActionResult` with structured `state_changes` and a technical message. `ActionResult.success` indicates the mechanical operation completed (whether the check succeeded or failed).
-*   **Orchestrator Coordination**: Receives deterministic action triggers directly from the Orchestrator (e.g., `apply_damage(amount)`, `add_xp(amount)`) to ensure the state is persisted to `Memory/character.json` before any storytelling occurs.
-*   **Task Flow module**: `mechanics/task_flow.py` offers pure functions for the orchestrator to build prompts, sanitize decisions, format narrative outcomes based on `state_changes`, and enforce state safety.
-*   `TriggerRule.sequence` allows triggering a recovery sequence defined in `resources.recovery_sequences`. `DetectedAction.sequence` carries this ID if detected. Allocation flows (e.g., `build_allocation_prompt`, `sanitize_allocation` in `mechanics/task_flow.py`) govern user choice for shared point pools.
+*   **Resource Tracking**: Manages health pools, XP, consumable pools, and structured pool groups (such as spell slots `level_1` to `level_9`).
+*   **Automatic Action Detection**: Analyzes player input against localized trigger rules in `triggers.json` to consume resources or trigger recovery sequences before generating narrative responses.
+*   **Derived Stat Recalculation**: `synchronize_and_recalculate()` keeps sheet values consistent and only normalizes `resources.hit_points` if the active pack explicitly manages `resources.hit_points`, preserving system-specific pool structures (such as Cypher's `might`, `speed`, and `intellect`).
+*   **System Packs (`systems/<id>/`)**: Configured via `SYSTEM_PACK=<id>` in `.env`. Built-in packs include `cypher_system` and `dnd5e_srd`.
+    *   **Formula & Pooled Recovery**: Supports `full`, `fixed`, `percent`, and `formula` recovery modes (evaluated safely via `mechanics/expr.py` with `character` and `pool` context), as well as `pooled_recoveries` (shared recovery rolls allocated by the player across pools) and `recovery_sequences` (such as Cypher's 4-step daily rest cycle).
+    *   **Actions (`actions.json`)**: Supports task actions (e.g. attack, defend, climb) with dynamic effort mechanics and difficulty scales. `execute_task(action_id, pool_id, difficulty, step_adjustments, effort_levels, impaired)` evaluates cost formulas (using `effort.levels`, `effort.edge`, and `effort.impaired`), verifies resources atomically, resolves the check, and returns an `ActionResult` with structured `state_changes`.
+*   **Task Flow & State Guard (`mechanics/task_flow.py`)**: Provides prompt builders, decision sanitizers, narrative outcome formatters, and `enforce_engine_owned_fields()` to prevent the Sheet Manager LLM from overwriting engine-managed pools and state paths.
 
 ---
 
@@ -322,31 +302,28 @@ Le `GameStateEngine` intercepte de façon transparente les intentions des joueur
 
 ---
 
-## 📚 RAG & Indexing
+## 📚 Scenario RAG & Indexing
 
-RPG Oracle runs a bilingual dual-path vector store system to split system rules from story plots.
+RPG Oracle uses ChromaDB to index adventure scenarios (`data/scenario/`) while system rules are handled deterministically through System Packs (`systems/<id>/`).
 
 ### Directory Structure
-*   `data/core/`: Place PDFs containing system mechanics, world setting guidelines, and bestiaries.
-*   `data/scenario/`: Place PDFs containing adventure structures, scenario books, or campaign logs.
+*   `systems/<pack_id>/`: System Pack definitions (`manifest.yaml`, `resolution.json`, `resources.json`, `triggers.json`, `actions.json`, `character_schema.json`, `creation_manual.json`).
+*   `data/scenario/`: Place PDFs or structured JSON files containing adventure modules and scenarios.
 
 ### Using the Indexer
-Run the custom CLI script `indexer.py` to index rules, compile character handbooks, and reset databases:
+Run `indexer.py` to index scenario documents or extract a draft system pack from rulebook PDFs:
 ```bash
-# Basic indexing of core and scenario folders
+# Index scenario documents
 python indexer.py
 
-# Wipe Chroma DB, clear Memory/, re-index rules, and generate manuals
+# Wipe Chroma DB, clear Memory/, and re-index scenario documents
 python indexer.py --reset
-
-# Index rules only
-python indexer.py --core
 
 # Index scenario documents only
 python indexer.py --scenario
 
-# Re-run character handbook generation only
-python indexer.py --pj
+# Extract a draft system pack from rulebook PDFs
+python indexer.py --pack my_system --pdf path/to/rules.pdf
 ```
 
 ---
@@ -357,25 +334,24 @@ Adjust settings and models individually per agent:
 
 | Variable | Description |
 | :--- | :--- |
+| `SYSTEM_PACK` | **Required.** The ID of the system pack to load from `systems/` (e.g. `cypher_system`, `dnd5e_srd`). |
 | `LLM_PROVIDER` | `ollama`, `openai`, `anthropic`, or `gemini` (Google) |
-| `LLM_REASONING` | Enable reasoning for all agents (e.g. `true`, `false`, `default`). Optional. |
+| `LLM_REASONING` | Enable reasoning for all agents (`true`, `false`, `default`). Optional. |
 | `LLM_KEEP_ALIVE` | Duration to keep the model loaded in Ollama (e.g. `30m`). Optional. |
 | `PACK_NUM_CTX` | Context window size for `PackExtractorAgent` (default: 32768) |
 | `PACK_NUM_PREDICT` | Output token limit for `PackExtractorAgent` (default: 16384) |
-| `PACK_REASONING` | Enable reasoning specifically for `PackExtractorAgent`. Default is `false` to avoid length truncation, but overrides `LLM_REASONING` unless set to `default`. |
+| `PACK_REASONING` | Enable reasoning specifically for `PackExtractorAgent` (default: `false`). |
 | `PACK_EXTRACTOR_TEMP` | Temperature specifically used by `PackExtractorAgent` (default: 0.1) |
 | `EMBEDDING_PROVIDER` | `ollama`, `openai`, or `gemini` |
 | `LLM_MODEL` | Default fallback model name |
-| `SYSTEM_PACK` | The id of the system pack to load from the `systems/` directory. If missing or empty, defaults to legacy experimental mode. |
 | `OPENAI_API_KEY` | OpenAI API key (required if using `openai` provider) |
 | `ANTHROPIC_API_KEY` | Anthropic API key (required if using `anthropic` provider) |
 | `GEMINI_API_KEY` | Google Gemini API key (required if using `gemini` provider) |
-| `CHARACTER_MODEL` | Specialized rules model for character creation |
-| `NARRATOR_MODEL` | Creative model for immersive narrative prose |
-| `ORCHESTRATOR_MODEL` | High-reasoning model for MJ state logic |
-| `RAG_SEARCH_K` | Number of rules chunks to retrieve (default: 12) |
+| `CHARACTER_MODEL` | Model for character creation |
+| `NARRATOR_MODEL` | Model for narrative prose |
+| `ORCHESTRATOR_MODEL` | Model for GM state and task logic |
+| `RAG_SEARCH_K` | Number of scenario chunks to retrieve (default: 12) |
 | `SCENARIO_FULLTEXT_THRESHOLD_CHARS` | Threshold under which the full scenario text is processed directly (default: 40000) |
-| `CORE_FULLTEXT_THRESHOLD_CHARS` | Threshold under which the full core rules text is processed directly (default: 40000) |
 | `SERVER_PORT` | Streamlit server port (default: 8501) |
 
 ---

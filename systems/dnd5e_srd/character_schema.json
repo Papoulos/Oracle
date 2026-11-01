@@ -1,0 +1,51 @@
+{
+  "required_fields": [
+    {"path": "name", "type": "string"},
+    {"path": "race", "type": "string"},
+    {"path": "class", "type": "string"},
+    {"path": "level", "type": "number"},
+    {"path": "ac", "type": "number"},
+    {
+      "path": "statistics",
+      "type": "object",
+      "sub_fields": ["strength", "dexterity", "constitution", "intelligence", "wisdom", "charisma"]
+    },
+    {"path": "resources.hit_points", "type": "object", "sub_fields": ["current", "max"]},
+    {"path": "skills", "type": "list", "non_empty": true},
+    {"path": "equipment", "type": "list", "non_empty": true}
+  ],
+  "glossary": [
+    {"path": "name", "description": "Nom du personnage (chaîne de caractères)."},
+    {"path": "race", "description": "Race du personnage D&D 5e (ex. 'Humain', 'Elfe', 'Nain', 'Halfelin', 'Drakéide', 'Gnome', 'Demi-Elfe', 'Demi-Orc', 'Tieffelin')."},
+    {"path": "class", "description": "Classe du personnage D&D 5e (ex. 'Guerrier', 'Magicien', 'Clerc', 'Roublard', 'Barbare', 'Barde', 'Druide', 'Moine', 'Paladin', 'Rôdeur', 'Ensorceleur', 'Occultiste')."},
+    {"path": "background", "description": "Historique du personnage (ex. 'Acolyte', 'Criminel', 'Héros du peuple', 'Sage', 'Soldat')."},
+    {"path": "level", "description": "Niveau du personnage (entier de 1 à 20, vaut 1 à la création)."},
+    {"path": "xp", "description": "Points d'expérience du personnage (vaut 0 à la création)."},
+    {"path": "proficiency_bonus", "description": "Bonus de maîtrise (vaut 2 au niveau 1)."},
+    {"path": "ac", "description": "Classe d'Armure (Armor Class, entier >= 10)."},
+    {"path": "statistics.strength", "description": "Valeur de Force (Strength, entier typiquement entre 8 et 20)."},
+    {"path": "statistics.dexterity", "description": "Valeur de Dextérité (Dexterity, entier typiquement entre 8 et 20)."},
+    {"path": "statistics.constitution", "description": "Valeur de Constitution (Constitution, entier typiquement entre 8 et 20)."},
+    {"path": "statistics.intelligence", "description": "Valeur d'Intelligence (Intelligence, entier typiquement entre 8 et 20)."},
+    {"path": "statistics.wisdom", "description": "Valeur de Sagesse (Wisdom, entier typiquement entre 8 et 20)."},
+    {"path": "statistics.charisma", "description": "Valeur de Charisme (Charisma, entier typiquement entre 8 et 20)."},
+    {"path": "resources.hit_points.current", "description": "Points de vie actuels du personnage."},
+    {"path": "resources.hit_points.max", "description": "Points de vie maximums du personnage. N'utilisez jamais 'total'."},
+    {"path": "resources.spells_per_day.level_1.current", "description": "Emplacements de sorts de niveau 1 restants (pour les lanceurs de sorts)."},
+    {"path": "resources.spells_per_day.level_1.max", "description": "Emplacements de sorts de niveau 1 maximums (2 au niveau 1 pour Barde, Clerc, Druide, Ensorceleur, Magicien ; 1 pour Occultiste)."},
+    {"path": "skills", "description": "Liste des compétences maîtrisées par le personnage (au moins une compétence requise)."},
+    {"path": "abilities", "description": "Liste des traits raciaux et capacités de classe."},
+    {"path": "spells", "description": "Liste des sorts mineurs (cantrips) et sorts de niveau 1 connus ou préparés."},
+    {"path": "equipment", "description": "Liste des armes, armures et équipements portés par le personnage (au moins un équipement requis)."}
+  ],
+  "defaults": {
+    "level": 1,
+    "xp": 0,
+    "proficiency_bonus": 2,
+    "ac": 10,
+    "skills": [],
+    "abilities": [],
+    "spells": [],
+    "equipment": []
+  }
+}

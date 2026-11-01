@@ -197,9 +197,13 @@ def validate_character_sheet(character_data: dict, schema: dict) -> tuple[bool, 
                     missing.append(f"{chemin} ({', '.join(absents)})")
 
         elif ftype == "list":
+            min_items = field.get("min_items", 0) or (1 if field.get("non_empty", False) else 0)
             if not isinstance(value, list):
                 missing.append(chemin)
-            elif field.get("non_empty", False) and len(value) == 0:
-                missing.append(chemin)
+            elif len(value) < min_items:
+                if min_items > 1:
+                    missing.append(f"{chemin} ({len(value)}/{min_items})")
+                else:
+                    missing.append(chemin)
 
     return (len(missing) == 0), missing

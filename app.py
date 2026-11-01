@@ -235,7 +235,7 @@ with st.sidebar:
     if active_pack and getattr(active_pack, "manifest", None):
         st.info(f"Système : {active_pack.manifest.name} (`{active_pack.manifest.id}`)")
     else:
-        st.info("Système : Aucun pack (Mode RAG)")
+        st.warning("Système : Aucun pack chargé (`SYSTEM_PACK` manquant)")
 
     st.info(f"Modèle : {config.LLM_MODEL or config.OLLAMA_MODEL}")
     st.info(f"Interface : http://{config.SERVER_ADDRESS}:{config.SERVER_PORT}")
@@ -355,17 +355,29 @@ if not st.session_state.agent.history.messages and st.session_state.agent.game_s
 if st.session_state.agent.game_state == "SUMMARY":
     st.success("✅ La création de votre personnage est terminée !")
     st.info("Vous pouvez maintenant lancer l'aventure. Le Maître du Jeu va extraire le scénario et préparer l'introduction.")
-    if st.button("🚀 Lancer l'aventure"):
-        with st.spinner("Génération du scénario et introduction... (cela peut prendre environ 30-40 secondes)"):
-            try:
-                intro = st.session_state.agent.start_adventure()
-                if "Erreur" in intro:
-                    st.error(intro)
-                else:
-                    st.session_state.show_logs = True
-                    st.rerun()
-            except Exception as e:
-                st.error(f"Une erreur critique est survenue : {e}")
+    col_adv, col_cont = st.columns(2)
+    with col_adv:
+        if st.button("🚀 Lancer l'aventure"):
+            with st.spinner("Génération du scénario et introduction... (cela peut prendre environ 30-40 secondes)"):
+                try:
+                    intro = st.session_state.agent.start_adventure()
+                    if "Erreur" in intro:
+                        st.error(intro)
+                    else:
+                        st.session_state.show_logs = True
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Une erreur critique est survenue : {e}")
+    with col_cont:
+        if st.button("✏️ Poursuivre / Modifier la création"):
+            st.session_state.agent.game_state = "CREATION"
+            if os.path.exists("Memory/character.json"):
+                with open("Memory/character.json", "r", encoding="utf-8") as f:
+                    st.session_state.agent.character_data = json.load(f)
+                st.session_state.agent.gse.reload()
+            if isinstance(st.session_state.agent.character_data, dict):
+                st.session_state.agent.character_data.pop("status", None)
+            st.rerun()
 
 if st.session_state.get("show_logs"):
     if st.session_state.agent.setup_logs:

@@ -34,19 +34,20 @@ class CharacterCreator(BaseAgent):
 
             DIALOGUE AND MECHANICAL GUIDELINES:
             1. ALWAYS respond to the player in French.
-            2. Ask ONLY ONE question at a time.
-            3. TECHNICAL PREPARATION: Before asking a question, consult the CHARACTER CREATION MANUAL and CODEX to know ALL constraints and benefits related to the current choice.
-            4. PEDAGOGY: ALWAYS explain to the player the technical consequences of their choice in French.
-            5. For statistics/attributes/pools: follow the exact method from the CHARACTER CREATION MANUAL or CODEX (rolling dice or distributing points).
-            6. For character options (such as Types, Descriptors, Foci, or Races and Classes depending on the system): use the options listed in the CHARACTER CREATION MANUAL if provided, and present them clearly to the player.
-            7. Calculate derived statistics and pools scrupulously following the formulas from the CHARACTER CREATION MANUAL and CODEX.
+            2. Ask ONLY ONE question at a time, and follow the steps of the CHARACTER CREATION MANUAL strictly in sequential order (Step 1, then Step 2, then Step 3, etc.) without skipping any step.
+            3. NEVER make choices on behalf of the player: never distribute bonus pool/attribute points yourself, never choose Type/Class abilities or spells yourself, and never choose equipment yourself. Always ask the player to choose.
+            4. TECHNICAL PREPARATION: Before asking a question, consult the CHARACTER CREATION MANUAL and CODEX to know ALL constraints and benefits related to the current choice.
+            5. PEDAGOGY: ALWAYS explain to the player the technical consequences of their choice in French.
+            6. For statistics/attributes/pools: follow the exact method from the CHARACTER CREATION MANUAL (including asking the player how they want to distribute any bonus points).
+            7. For character options (such as Types, Descriptors, Foci, Abilities, or Races and Classes depending on the system): use the options listed in the CHARACTER CREATION MANUAL and present them clearly to the player.
+            8. Calculate derived statistics and pools scrupulously following the formulas from the CHARACTER CREATION MANUAL.
 
             STILL MISSING FIELDS (You must guide the player to fill these):
             {missing_fields}
 
             CONSIGNES DE FIN DE CRÉATION (In French for player):
-            If all steps of the manual are completed, congratulate the player and tell them their character is ready for adventure.
-            Use the keyword "CREATION_COMPLETED" in your text only when ALL steps are validated.
+            Only when ALL steps of the manual have been answered by the player AND no fields are missing AND you have no further question to ask, congratulate the player and tell them their character is ready for adventure.
+            Use the keyword "CREATION_COMPLETED" ONLY in that final message (NEVER output "CREATION_COMPLETED" or say creation is finished in a message where you are still asking the player a question).
 
             CURRENT CHARACTER STATE (for your information):
             {current_character}
@@ -197,7 +198,7 @@ class SheetManagerAgent(BaseAgent):
 
                 CONSIGNES:
                 - Analyze the player's action and the GM's response to identify new choices and calculated values.
-                - Update all necessary fields according to the system rules and options in the context.
+                - Update ONLY the fields that have actually been chosen or determined so far; do NOT pre-fill empty lists or placeholder values for future steps (e.g. equipment, abilities, skills not yet chosen).
                 - For resource pools, always use "current" and "max" (never "total"), with "current" equal to "max" at creation.
                 - If the GM mentions that creation is complete (keyword "CREATION_COMPLETED"), set the "status" field to "complet".
                 - {glossary_instructions}
@@ -262,6 +263,7 @@ class SheetManagerAgent(BaseAgent):
             ("system", """You are the Character Sheet Manager, performing a FINAL AUDIT of character creation.
 Review the ENTIRE creation conversation below and produce the most complete and faithful JSON character sheet possible, based on the provided required fields schema.
 Search in particular for values mentioned in the conversation but missing from the current sheet (often forgotten by incremental turn-by-turn updates).
+CRITICAL RULE: NEVER invent, guess, or hallucinate abilities, skills, equipment, or character choices that were NOT explicitly chosen by the player or automatically granted by their chosen options in the conversation history. If a field has not been chosen yet in the conversation, leave it as-is.
 Do not modify fields that are already correct and do not change their existing name/structure.
 {glossary_instructions}
 Reply ONLY with the complete JSON block of the sheet.
@@ -582,6 +584,28 @@ class RPGAgent(BaseAgent):
                     if cur_val is None or (cur_val == 0 and max_val > 0):
                         set_by_path(result, pool.current_path, max_val)
 
+        if pack.resources and pack.resources.pool_groups:
+            for group in pack.resources.pool_groups:
+                group_obj = get_by_path(result, group.path)
+                if isinstance(group_obj, dict):
+                    for sub_key, sub_obj in group_obj.items():
+                        if isinstance(sub_obj, dict):
+                            if "total" in sub_obj and "max" not in sub_obj:
+                                sub_obj["max"] = sub_obj.pop("total")
+                            elif "total" in sub_obj:
+                                sub_obj.pop("total")
+
+                            if "restants" in sub_obj and "current" not in sub_obj:
+                                sub_obj["current"] = sub_obj.pop("restants")
+                            elif "restants" in sub_obj:
+                                sub_obj.pop("restants")
+
+                            s_max = sub_obj.get("max")
+                            s_cur = sub_obj.get("current")
+                            if isinstance(s_max, (int, float)) and not isinstance(s_max, bool):
+                                if s_cur is None or (s_cur == 0 and s_max > 0):
+                                    sub_obj["current"] = s_max
+
         return result
 
     def _extract_and_add_resources(self):
@@ -795,8 +819,13 @@ Reply ONLY with this JSON:
 
             # 2. Technical Step (silent): Update sheet via SheetManager
             try:
+                resp_upper = response.upper()
                 ending_announced = any(
-                    kw in response.upper() for kw in ["TERMIN", "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE", "CREATION_TERMIN_E", "CREATION_COMPLETED"]
+                    kw in resp_upper for kw in [
+                        "TERMINÉ", "TERMINEE", "TERMINÉE",
+                        "PRET POUR L'AVENTURE", "PRÊT POUR L'AVENTURE",
+                        "CREATION_TERMIN_E", "CREATION_COMPLETED"
+                    ]
                 )
                 new_sheet = self.sheet_manager.update_sheet(
                     self.character_data,
@@ -836,7 +865,10 @@ Reply ONLY with this JSON:
                 with open("Memory/character.json", "w", encoding="utf-8") as f:
                     json.dump(self.character_data, f, indent=4, ensure_ascii=False)
 
-                if is_complete:
+                has_pack_manual = bool(self.gse and self.gse.pack and self.gse.pack.creation_manual)
+                ready_to_finish = is_complete and (ending_announced if has_pack_manual else True)
+
+                if ready_to_finish:
                     if not self.character_data:
                         self.character_data = {}
                     self.character_data["status"] = "complet"

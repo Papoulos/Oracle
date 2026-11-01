@@ -11,9 +11,9 @@
     {"path": "resources.might", "type": "object", "sub_fields": ["current", "max"]},
     {"path": "resources.speed", "type": "object", "sub_fields": ["current", "max"]},
     {"path": "resources.intellect", "type": "object", "sub_fields": ["current", "max"]},
-    {"path": "skills", "type": "list", "non_empty": false},
-    {"path": "abilities", "type": "list", "non_empty": true},
-    {"path": "equipment", "type": "list", "non_empty": false}
+    {"path": "skills", "type": "list", "non_empty": true},
+    {"path": "abilities", "type": "list", "non_empty": true, "min_items": 5},
+    {"path": "equipment", "type": "list", "non_empty": true}
   ],
   "glossary": [
     {"path": "name", "description": "Nom du personnage (chaîne de caractères)."},

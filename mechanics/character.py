@@ -7,6 +7,7 @@ class FieldSpec(BaseModel):
     type: Literal["string", "number", "object", "list"]
     sub_fields: list[str] = Field(default_factory=list)
     non_empty: bool = False
+    min_items: int = 0
 
 class GlossaryEntry(BaseModel):
     path: str

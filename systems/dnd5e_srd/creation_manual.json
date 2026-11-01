@@ -1,0 +1,305 @@
+{
+  "steps": [
+    {
+      "step": 1,
+      "name": "Concept et Nom du personnage",
+      "description": "Choisir le nom du personnage (name) et définir son concept général d'aventurier."
+    },
+    {
+      "step": 2,
+      "name": "Choix de la Race",
+      "description": "Choisir une race parmi celles du SRD 5.1 (race). Noter ses bonus de caractéristiques et ajouter ses traits raciaux dans abilities."
+    },
+    {
+      "step": 3,
+      "name": "Choix de la Classe",
+      "description": "Choisir une classe parmi les 12 du SRD 5.1 (class). Noter son dé de vie, ses capacités de niveau 1 dans abilities, et si c'est un lanceur de sorts de niveau 1, choisir ses sorts (spells) et initialiser resources.spells_per_day.level_1 ({current, max})."
+    },
+    {
+      "step": 4,
+      "name": "Répartition des Caractéristiques",
+      "description": "Répartir la série standard (15, 14, 13, 12, 10, 8) entre Force (statistics.strength), Dextérité (statistics.dexterity), Constitution (statistics.constitution), Intelligence (statistics.intelligence), Sagesse (statistics.wisdom) et Charisme (statistics.charisma), puis appliquer les bonus raciaux."
+    },
+    {
+      "step": 5,
+      "name": "Historique et Compétences maîtrisées",
+      "description": "Choisir un historique (background) et sélectionner les compétences maîtrisées (skills) offertes par la classe et l'historique."
+    },
+    {
+      "step": 6,
+      "name": "Points de Vie, Classe d'Armure et Équipement",
+      "description": "Calculer les points de vie maximums au niveau 1 (resources.hit_points.max = valeur maximale du dé de vie de la classe + modificateur de Constitution, avec current = max), déterminer l'équipement de départ (equipment) et calculer la Classe d'Armure (ac)."
+    }
+  ],
+  "general_rules": "Dans D&D 5e (SRD 5.1), un personnage débute au niveau 1 (level = 1) avec un bonus de maîtrise de +2 (proficiency_bonus = 2). Le modificateur d'une caractéristique vaut (score - 10) // 2. Les six caractéristiques sont enregistrées dans statistics.{strength, dexterity, constitution, intelligence, wisdom, charisma}. Les points de vie au niveau 1 valent le maximum du dé de vie de la classe + le modificateur de Constitution et sont enregistrés dans resources.hit_points.{current, max} (current = max à la création). Pour les classes lançant des sorts dès le niveau 1, les emplacements de sorts sont enregistrés dans resources.spells_per_day.level_1.{current, max}.",
+  "options": {
+    "races": [
+      {
+        "id": "human",
+        "name": "Humain (Human)",
+        "description": "Polyvalent et ambitieux, l'humain s'adapte à toutes les vocations.",
+        "effects": {
+          "ability_bonuses": {"strength": 1, "dexterity": 1, "constitution": 1, "intelligence": 1, "wisdom": 1, "charisma": 1},
+          "speed": "9 m",
+          "traits": ["Polyvalence (+1 à toutes les caractéristiques)", "Langue supplémentaire"]
+        }
+      },
+      {
+        "id": "elf",
+        "name": "Elfe (Elf - Haut Elfe)",
+        "description": "Gracieux et longévif, doté de sens aiguisés et d'une affinité innée avec la magie.",
+        "effects": {
+          "ability_bonuses": {"dexterity": 2, "intelligence": 1},
+          "speed": "9 m",
+          "traits": ["Vision dans le noir (18 m)", "Sens aiguisés (maîtrise de Perception)", "Ascendance féerique", "Transe", "Sort mineur de magicien"]
+        }
+      },
+      {
+        "id": "dwarf",
+        "name": "Nain (Dwarf - Nain des collines)",
+        "description": "Robuste et endurant, façonné par la pierre et les traditions ancestrales.",
+        "effects": {
+          "ability_bonuses": {"constitution": 2, "wisdom": 1},
+          "speed": "7,50 m",
+          "traits": ["Vision dans le noir (18 m)", "Résistance naine (contre le poison)", "Connaissance de la pierre", "Ténacité naine (+1 PV max par niveau)"]
+        }
+      },
+      {
+        "id": "halfling",
+        "name": "Halfelin (Halfling - Pied-léger)",
+        "description": "Petit, agile et incroyablement chanceux, capable de se faufiler partout.",
+        "effects": {
+          "ability_bonuses": {"dexterity": 2, "charisma": 1},
+          "speed": "7,50 m",
+          "traits": ["Chanceux (relance les 1 naturels au d20)", "Brave (avantage contre la peur)", "Agilité halfeline", "Discrétion naturelle"]
+        }
+      },
+      {
+        "id": "dragonborn",
+        "name": "Drakéide (Dragonborn)",
+        "description": "Fier descendant des dragons, doté d'un souffle élémentaire dévastateur.",
+        "effects": {
+          "ability_bonuses": {"strength": 2, "charisma": 1},
+          "speed": "9 m",
+          "traits": ["Ascendance draconique", "Souffle destructeur (2d6 dégâts)", "Résistance aux dégâts du type draconique"]
+        }
+      },
+      {
+        "id": "gnome",
+        "name": "Gnome (Gnome des roches)",
+        "description": "Inventif, curieux et résistant aux illusions et à la magie mentale.",
+        "effects": {
+          "ability_bonuses": {"intelligence": 2, "constitution": 1},
+          "speed": "7,50 m",
+          "traits": ["Vision dans le noir (18 m)", "Ruse gnome (avantage aux JS Int/Sag/Cha contre la magie)", "Connaissance de l'artificier"]
+        }
+      },
+      {
+        "id": "half_elf",
+        "name": "Demi-Elfe (Half-Elf)",
+        "description": "Alliant la grâce elfique et le charisme humain, diplomate né.",
+        "effects": {
+          "ability_bonuses": {"charisma": 2, "choice_two_others": 1},
+          "speed": "9 m",
+          "traits": ["Vision dans le noir (18 m)", "Ascendance féerique", "Polyvalence (maîtrise de 2 compétences au choix)"]
+        }
+      },
+      {
+        "id": "half_orc",
+        "name": "Demi-Orc (Half-Orc)",
+        "description": "Combattant farouche dont la férocité lui permet de rester debout face à la mort.",
+        "effects": {
+          "ability_bonuses": {"strength": 2, "constitution": 1},
+          "speed": "9 m",
+          "traits": ["Vision dans le noir (18 m)", "Menace (maîtrise d'Intimidation)", "Endurance implacable (tombe à 1 PV au lieu de 0 une fois par repos long)", "Attaques sauvages"]
+        }
+      },
+      {
+        "id": "tiefling",
+        "name": "Tieffelin (Tiefling)",
+        "description": "Marqué par un héritage infernal, résistant au feu et doté de magie innée.",
+        "effects": {
+          "ability_bonuses": {"charisma": 2, "intelligence": 1},
+          "speed": "9 m",
+          "traits": ["Vision dans le noir (18 m)", "Résistance infernale (résistance aux dégâts de feu)", "Héritage infernal (sort mineur Thaumaturgie)"]
+        }
+      }
+    ],
+    "classes": [
+      {
+        "id": "barbarian",
+        "name": "Barbare (Barbarian)",
+        "description": "Guerrier féroce animé par une rage primale dévastatrice.",
+        "effects": {
+          "hit_die": 12,
+          "primary_abilities": ["strength", "constitution"],
+          "saving_throws": ["strength", "constitution"],
+          "skills_to_choose": 2,
+          "skill_options": ["Athlétisme", "Dressage", "Intimidation", "Nature", "Perception", "Survie"],
+          "level_1_features": ["Rage (2/repos long, +2 dégâts en mêlée, résistance contondant/perforant/tranchant)", "Défense sans armure (CA = 10 + mod Dex + mod Con)"],
+          "starting_equipment": ["Grande hache", "Deux hachettes", "Paquetage d'explorateur", "4 javelines"]
+        }
+      },
+      {
+        "id": "bard",
+        "name": "Barde (Bard)",
+        "description": "Artiste et magicien inspirant ses alliés par la musique et le verbe.",
+        "effects": {
+          "hit_die": 8,
+          "primary_abilities": ["charisma", "dexterity"],
+          "saving_throws": ["dexterity", "charisma"],
+          "skills_to_choose": 3,
+          "skill_options": ["Toutes les compétences"],
+          "spell_slots_level_1": 2,
+          "level_1_features": ["Incantation (Charisme, 2 sorts mineurs, 4 sorts connus, 2 emplacements niv 1)", "Inspiration bardique (d6)"],
+          "starting_equipment": ["Rapière", "Armure de cuir (CA 11 + mod Dex)", "Luth", "Paquetage de diplomate", "Dague"]
+        }
+      },
+      {
+        "id": "cleric",
+        "name": "Clerc (Cleric)",
+        "description": "Champion divin canalisant la puissance des dieux pour soigner et châtier.",
+        "effects": {
+          "hit_die": 8,
+          "primary_abilities": ["wisdom", "constitution"],
+          "saving_throws": ["wisdom", "charisma"],
+          "skills_to_choose": 2,
+          "skill_options": ["Histoire", "Intuition", "Médecine", "Persuasion", "Religion"],
+          "spell_slots_level_1": 2,
+          "level_1_features": ["Incantation divine (Sagesse, 3 sorts mineurs, 2 emplacements niv 1)", "Domaine divin (ex. Domaine de la Vie : maîtrise des armures lourdes, Disciple de la vie)"],
+          "starting_equipment": ["Masse d'armes", "Cotte de mailles (CA 16) ou Armure d'écailles (CA 14 + mod Dex max 2)", "Bouclier (+2 CA)", "Symbole sacré", "Paquetage d'ecclésiastique"]
+        }
+      },
+      {
+        "id": "druid",
+        "name": "Druide (Druid)",
+        "description": "Gardien mystique de la nature maîtrisant les éléments et la faune.",
+        "effects": {
+          "hit_die": 8,
+          "primary_abilities": ["wisdom", "constitution"],
+          "saving_throws": ["intelligence", "wisdom"],
+          "skills_to_choose": 2,
+          "skill_options": ["Arcanes", "Dressage", "Intuition", "Médecine", "Nature", "Perception", "Religion", "Survie"],
+          "spell_slots_level_1": 2,
+          "level_1_features": ["Druidique", "Incantation primordiale (Sagesse, 2 sorts mineurs, 2 emplacements niv 1)"],
+          "starting_equipment": ["Cimeterre", "Bouclier en bois (+2 CA)", "Armure de cuir (CA 11 + mod Dex)", "Focaliseur druidique", "Paquetage d'explorateur"]
+        }
+      },
+      {
+        "id": "fighter",
+        "name": "Guerrier (Fighter)",
+        "description": "Maître d'armes aguerri maîtrisant toutes les armures et tous les styles de combat.",
+        "effects": {
+          "hit_die": 10,
+          "primary_abilities": ["strength", "constitution"],
+          "saving_throws": ["strength", "constitution"],
+          "skills_to_choose": 2,
+          "skill_options": ["Acrobaties", "Athlétisme", "Dressage", "Histoire", "Intimidation", "Intuition", "Perception", "Survie"],
+          "level_1_features": ["Style de combat (Défense, Duel, Arme à deux mains ou Archerie)", "Second souffle (1d10 + niveau PV en action bonus, 1/repos)"],
+          "starting_equipment": ["Cotte de mailles (CA 16)", "Épée longue", "Bouclier (+2 CA)", "Arbalète légère et 20 carreaux", "Paquetage d'explorateur des souterrains"]
+        }
+      },
+      {
+        "id": "monk",
+        "name": "Moine (Monk)",
+        "description": "Artiste martial canalisant l'énergie corporelle avec une vitesse foudroyante.",
+        "effects": {
+          "hit_die": 8,
+          "primary_abilities": ["dexterity", "wisdom"],
+          "saving_throws": ["strength", "dexterity"],
+          "skills_to_choose": 2,
+          "skill_options": ["Acrobaties", "Athlétisme", "Discrétion", "Histoire", "Intuition", "Religion"],
+          "level_1_features": ["Défense sans armure (CA = 10 + mod Dex + mod Sag)", "Arts martiaux (d4 à mains nues, attaque bonus à mains nues)"],
+          "starting_equipment": ["Épée courte", "10 fléchettes", "Paquetage d'explorateur des souterrains"]
+        }
+      },
+      {
+        "id": "paladin",
+        "name": "Paladin (Paladin)",
+        "description": "Chevalier sacré lié par un serment, protégeant les justes et terrassant le mal.",
+        "effects": {
+          "hit_die": 10,
+          "primary_abilities": ["strength", "charisma"],
+          "saving_throws": ["wisdom", "charisma"],
+          "skills_to_choose": 2,
+          "skill_options": ["Athlétisme", "Intimidation", "Intuition", "Médecine", "Persuasion", "Religion"],
+          "level_1_features": ["Sens divin", "Imposition des mains (réserve de 5 PV de soins au niveau 1)"],
+          "starting_equipment": ["Cotte de mailles (CA 16)", "Épée longue", "Bouclier (+2 CA)", "5 javelines", "Symbole sacré", "Paquetage d'ecclésiastique"]
+        }
+      },
+      {
+        "id": "ranger",
+        "name": "Rôdeur (Ranger)",
+        "description": "Traqueur et chasseur émérite des terres sauvages et des confins.",
+        "effects": {
+          "hit_die": 10,
+          "primary_abilities": ["dexterity", "wisdom"],
+          "saving_throws": ["strength", "dexterity"],
+          "skills_to_choose": 3,
+          "skill_options": ["Athlétisme", "Discrétion", "Dressage", "Intuition", "Investigation", "Nature", "Perception", "Survie"],
+          "level_1_features": ["Ennemi juré", "Explorateur né"],
+          "starting_equipment": ["Armure d'écailles (CA 14 + mod Dex max 2) ou Armure de cuir", "Deux épées courtes", "Arc long et 20 flèches", "Paquetage d'explorateur"]
+        }
+      },
+      {
+        "id": "rogue",
+        "name": "Roublard (Rogue)",
+        "description": "Spécialiste de la furtivité, des pièges et des frappes chirurgicales.",
+        "effects": {
+          "hit_die": 8,
+          "primary_abilities": ["dexterity", "intelligence"],
+          "saving_throws": ["dexterity", "intelligence"],
+          "skills_to_choose": 4,
+          "skill_options": ["Acrobaties", "Athlétisme", "Discrétion", "Escamotage", "Intimidation", "Intuition", "Investigation", "Perception", "Persuasion", "Représentation", "Tromperie"],
+          "level_1_features": ["Expertise (Bonus de maîtrise doublé sur 2 compétences)", "Attaque sournoise (+1d6 dégâts)", "Jargon des voleurs"],
+          "starting_equipment": ["Rapière", "Arc court et 20 flèches", "Armure de cuir (CA 11 + mod Dex)", "Deux dagues", "Outils de voleur", "Paquetage de cambrioleur"]
+        }
+      },
+      {
+        "id": "sorcerer",
+        "name": "Ensorceleur (Sorcerer)",
+        "description": "Prodige dont le sang charrie une puissance arcanique innée.",
+        "effects": {
+          "hit_die": 6,
+          "primary_abilities": ["charisma", "constitution"],
+          "saving_throws": ["constitution", "charisma"],
+          "skills_to_choose": 2,
+          "skill_options": ["Arcanes", "Intimidation", "Intuition", "Persuasion", "Religion", "Tromperie"],
+          "spell_slots_level_1": 2,
+          "level_1_features": ["Incantation (Charisme, 4 sorts mineurs, 2 sorts connus, 2 emplacements niv 1)", "Origine magique (Lignée draconique : +1 PV/niv et CA = 13 + mod Dex sans armure)"],
+          "starting_equipment": ["Arbalète légère et 20 carreaux", "Focaliseur arcanique", "Deux dagues", "Paquetage d'explorateur des souterrains"]
+        }
+      },
+      {
+        "id": "warlock",
+        "name": "Occultiste (Warlock)",
+        "description": "Détenteur d'un pacte surnaturel conclu avec une entité d'outre-monde.",
+        "effects": {
+          "hit_die": 8,
+          "primary_abilities": ["charisma", "constitution"],
+          "saving_throws": ["wisdom", "charisma"],
+          "skills_to_choose": 2,
+          "skill_options": ["Arcanes", "Histoire", "Intimidation", "Investigation", "Nature", "Religion", "Tromperie"],
+          "spell_slots_level_1": 1,
+          "level_1_features": ["Protecteur d'outre-monde (ex. Le Fiélon : Bénédiction du Ténébreux)", "Magie de pacte (Charisme, 2 sorts mineurs dont Décharge occulte, 2 sorts connus, 1 emplacement niv 1)"],
+          "starting_equipment": ["Arbalète légère et 20 carreaux", "Armure de cuir (CA 11 + mod Dex)", "Focaliseur arcanique", "Deux dagues", "Paquetage d'érudit"]
+        }
+      },
+      {
+        "id": "wizard",
+        "name": "Magicien (Wizard)",
+        "description": "Érudit des arcanes déchiffrant les lois fondamentales de l'univers dans son grimoire.",
+        "effects": {
+          "hit_die": 6,
+          "primary_abilities": ["intelligence", "constitution"],
+          "saving_throws": ["intelligence", "wisdom"],
+          "skills_to_choose": 2,
+          "skill_options": ["Arcanes", "Histoire", "Intuition", "Investigation", "Médecine", "Religion"],
+          "spell_slots_level_1": 2,
+          "level_1_features": ["Incantation (Intelligence, 3 sorts mineurs, 6 sorts niv 1 dans le grimoire, 2 emplacements niv 1)", "Restauration magique (1/jour lors d'un repos court)"],
+          "starting_equipment": ["Bâton", "Focaliseur arcanique", "Grimoire", "Paquetage d'érudit"]
+        }
+      }
+    ]
+  }
+}

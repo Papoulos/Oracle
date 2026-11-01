@@ -328,7 +328,7 @@ def test_character_creator_and_sheet_manager_use_pack(tmp_path, monkeypatch):
         manual_str = creator._load_manual()
         manual_data = json.loads(manual_str)
         assert manual_data is not None
-        assert len(manual_data["steps"]) == 6
+        assert len(manual_data["steps"]) == 7
         assert "types" in manual_data["options"]
         assert "Warrior (Guerrier)" in manual_str
 
@@ -373,7 +373,9 @@ def test_finalize_pack_character_deterministic_and_no_llm(tmp_path, monkeypatch)
                 "speed": {"max": 10, "current": 0},
                 "intellect": {"restants": 8, "total": 8}
             },
-            "abilities": ["Bash", "Weapon Master"]
+            "skills": ["Might defense"],
+            "abilities": ["Weapon Master", "Bash", "Swipe", "Control the Field", "Practiced in Armor"],
+            "equipment": ["Épée longue", "Armure moyenne"]
         }
 
         agent.character_data = raw_sheet
@@ -395,11 +397,18 @@ def test_finalize_pack_character_deterministic_and_no_llm(tmp_path, monkeypatch)
         assert final_sheet["damage_track"] == "hale"
         assert final_sheet["recovery_step"] == 0
         assert final_sheet["edge"] == {"might": 0, "speed": 0, "intellect": 0}
-        assert final_sheet["skills"] == []
-        assert final_sheet["equipment"] == []
+        assert final_sheet["skills"] == ["Might defense"]
+        assert final_sheet["equipment"] == ["Épée longue", "Armure moyenne"]
 
-        # La fiche finalisée doit valider le schéma du pack Cypher
+        # Une fiche à l'étape 4 (1 seule capacité de Focus et équipement vide) ne doit PAS être complète
         schema = agent._load_character_schema()
+        step4_sheet = dict(final_sheet, abilities=["Minor Illusion"], equipment=[])
+        is_step4_complete, step4_missing = validate_character_sheet(step4_sheet, schema)
+        assert not is_step4_complete
+        assert "abilities (1/5)" in step4_missing
+        assert "equipment" in step4_missing
+
+        # La fiche finalisée complète doit valider le schéma du pack Cypher
         is_complete, missing = validate_character_sheet(final_sheet, schema)
         assert is_complete, f"Sheet should be complete, missing: {missing}"
 
@@ -416,4 +425,130 @@ def test_finalize_pack_character_deterministic_and_no_llm(tmp_path, monkeypatch)
         # Coût d'1 niveau d'effort sans edge = 3 points de might
         assert res.state_changes["effort"]["cost"] == 3
         assert agent.gse.state["resources"]["might"]["current"] == 9
+
+
+def test_dnd5e_pack_character_schema_and_manual(tmp_path, monkeypatch):
+    """Vérifie que le pack dnd5e_srd possède un schéma et un manuel complets et finalise correctement une fiche."""
+    monkeypatch.chdir(tmp_path)
+    from pathlib import Path
+    from unittest.mock import MagicMock, patch
+    from agent import RPGAgent
+
+    pack = load_pack("dnd5e_srd")
+    assert pack.character_schema is not None
+    assert pack.creation_manual is not None
+    assert len(pack.creation_manual.steps) == 6
+    assert len(pack.creation_manual.options["races"]) == 9
+    assert len(pack.creation_manual.options["classes"]) == 12
+
+    pack_dir = Path(__file__).parent.parent / "systems" / "dnd5e_srd"
+    issues = validate_pack(str(pack_dir))
+    assert not issues, f"Issues found in dnd5e_srd: {issues}"
+
+    with patch("agent.get_llm", return_value=MagicMock()), \
+         patch("agent.get_embeddings", return_value=MagicMock()), \
+         patch("agent.Chroma"), \
+         patch("agent.CharacterCreator"), \
+         patch("agent.Narrator"), \
+         patch("agent.ChronicleAgent"), \
+         patch("agent.SheetManagerAgent"), \
+         patch("agent.ScenarioExtractorAgent"):
+        agent = RPGAgent(verbose=False)
+        agent.gse = GameStateEngine(pack=pack)
+        agent.llm = MagicMock()
+
+        # Une fiche avec seulement le nom ne doit PAS être complète
+        schema = agent._load_character_schema()
+        is_complete_partial, missing_partial = validate_character_sheet({"name": "Elminster"}, schema)
+        assert not is_complete_partial
+        assert "race" in missing_partial
+        assert "class" in missing_partial
+
+        # Fiche complète de magicien avec total/restants sur PV et emplacements de sorts
+        raw_dnd_sheet = {
+            "name": "Elminster",
+            "race": "Humain",
+            "class": "Magicien",
+            "ac": 12,
+            "statistics": {
+                "strength": 9,
+                "dexterity": 14,
+                "constitution": 13,
+                "intelligence": 16,
+                "wisdom": 13,
+                "charisma": 11
+            },
+            "resources": {
+                "hit_points": {"total": 7},
+                "spells_per_day": {
+                    "level_1": {"total": 2}
+                }
+            },
+            "skills": ["Arcanes", "Histoire"],
+            "equipment": ["Bâton", "Grimoire"]
+        }
+
+        agent.character_data = raw_dnd_sheet
+        agent._extract_and_add_resources()
+        final_dnd = agent.character_data
+
+        assert final_dnd["level"] == 1
+        assert final_dnd["proficiency_bonus"] == 2
+        assert final_dnd["resources"]["hit_points"] == {"current": 7, "max": 7}
+        assert final_dnd["resources"]["spells_per_day"]["level_1"] == {"current": 2, "max": 2}
+
+        is_complete, missing = validate_character_sheet(final_dnd, schema)
+        assert is_complete, f"D&D sheet should be complete, missing: {missing}"
+
+
+def test_terminer_verb_does_not_trigger_premature_summary(tmp_path, monkeypatch):
+    """
+    Régression : le verbe 'terminer' dans 'Pour terminer le profil d'Hector...'
+    ne doit PAS déclencher ending_announced ni audit_and_complete ni basculer en SUMMARY.
+    """
+    monkeypatch.chdir(tmp_path)
+    from unittest.mock import MagicMock, patch
+    from agent import RPGAgent
+
+    pack = load_pack("cypher_system")
+
+    with patch("agent.get_llm", return_value=MagicMock()), \
+         patch("agent.get_embeddings", return_value=MagicMock()), \
+         patch("agent.Chroma"), \
+         patch("agent.CharacterCreator"), \
+         patch("agent.Narrator"), \
+         patch("agent.ChronicleAgent"), \
+         patch("agent.SheetManagerAgent"), \
+         patch("agent.ScenarioExtractorAgent"):
+        agent = RPGAgent(verbose=False)
+        agent.gse = GameStateEngine(pack=pack)
+
+        agent.character_creator.generate_response = MagicMock(
+            return_value="Pour terminer le profil d'Hector, quel équipement principal souhaitez-vous porter ?"
+        )
+        agent.sheet_manager.update_sheet = MagicMock(
+            return_value={
+                "name": "Hector",
+                "descriptor": "Stealthy",
+                "type": "Explorer",
+                "focus": "Fights Dirty",
+                "resources": {
+                    "might": {"current": 10, "max": 10},
+                    "speed": {"current": 11, "max": 11},
+                    "intellect": {"current": 9, "max": 9}
+                },
+                "skills": ["Furtivité"],
+                "abilities": ["Tracker & Stalker"],
+                "equipment": ["Arme légère dissimulée"]
+            }
+        )
+        agent.sheet_manager.audit_and_complete = MagicMock()
+
+        agent.chat("Je choisis Fights Dirty")
+
+        # audit_and_complete ne doit PAS avoir été appelé et on reste en CREATION
+        agent.sheet_manager.audit_and_complete.assert_not_called()
+        assert agent.game_state == "CREATION"
+
+
 

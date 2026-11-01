@@ -2,33 +2,38 @@
   "steps": [
     {
       "step": 1,
-      "name": "Concept et Phrase identitaire",
-      "description": "Définir le nom du personnage et sa phrase conceptuelle Cypher System : « Je suis un [Type] [Descripteur] qui [Focus] » (ex. « Je suis un Warrior Tough qui Masters Weaponry »)."
+      "name": "Nom et Concept du personnage",
+      "description": "Demander le nom du personnage (name) et présenter brièvement le concept Cypher System : « Je suis un [Type] [Descripteur] qui [Focus] »."
     },
     {
       "step": 2,
-      "name": "Choix du Type et Réserves de départ",
-      "description": "Choisir l'un des 4 Types (Warrior, Adept, Explorer, Speaker). Appliquer les réserves de base (Might, Speed, Intellect), l'Edge de départ, le Tier (1), l'Effort (1), et répartir les 6 points supplémentaires librement entre les trois réserves."
+      "name": "Choix du Type",
+      "description": "Présenter les 4 Types (Warrior, Adept, Explorer, Speaker) avec leurs réserves de base et leur Edge, et demander au joueur lequel il choisit (pour un Warrior, lui demander aussi s'il préfère +1 Edge en Might ou en Speed)."
     },
     {
       "step": 3,
-      "name": "Choix du Descripteur",
-      "description": "Choisir un Descripteur dans la liste fournie. Appliquer ses bonus de réserves (resources.might.max, resources.speed.max, resources.intellect.max), ses compétences entraînées (skills) et ses éventuelles incapacités (inabilities)."
+      "name": "Répartition des 6 points bonus de Réserves",
+      "description": "Indiquer au joueur les valeurs de base de ses 3 réserves (Might, Speed, Intellect) selon son Type, et lui demander comment il souhaite répartir ses 6 points supplémentaires entre Might, Speed et Intellect. Ne répartissez JAMAIS ces 6 points à sa place."
     },
     {
       "step": 4,
-      "name": "Choix du Focus",
-      "description": "Choisir un Focus dans la liste fournie. Ajouter sa capacité de Tier 1 dans abilities, ainsi que ses bonus de réserves, d'armure (armor), de compétences ou d'équipement."
+      "name": "Choix du Descripteur",
+      "description": "Présenter les Descripteurs disponibles dans le manuel et demander au joueur d'en choisir un. Appliquer ses modificateurs de réserves, ses compétences entraînées (skills) et ses incapacités (inabilities)."
     },
     {
       "step": 5,
-      "name": "Capacités spéciales de Tier 1 et Compétences",
-      "description": "Sélectionner les capacités spéciales de Tier 1 propres au Type choisi (4 capacités pour Warrior/Explorer/Speaker, 4 sorts/capacités pour Adept) et les enregistrer dans abilities."
+      "name": "Choix du Focus",
+      "description": "Présenter les Focus disponibles dans le manuel et demander au joueur d'en choisir un. Ajouter sa capacité de Tier 1 dans abilities, ainsi que ses bonus de réserves, d'armure, de compétences et d'équipement."
     },
     {
       "step": 6,
-      "name": "Équipement, Armure et Finalisation",
-      "description": "Déterminer l'équipement de départ (equipment), calculer le score d'Armure (armor, ex. armure légère = 1, moyenne = 2, lourde = 3 + bonus éventuels) et vérifier que chaque réserve (resources.might, resources.speed, resources.intellect) possède bien current égal à max."
+      "name": "Choix des 4 Capacités spéciales de Tier 1 du Type",
+      "description": "Présenter la liste sample_abilities correspondant au Type du personnage et demander au joueur de choisir lui-même ses 4 capacités spéciales de Tier 1 (qui s'ajoutent à la capacité de son Focus dans abilities, pour un total d'au moins 5 capacités). Ne choisissez JAMAIS ces capacités à sa place."
+    },
+    {
+      "step": 7,
+      "name": "Choix de l'Équipement, de l'Armure et Finalisation",
+      "description": "Demander au joueur quel équipement principal et quelle armure il souhaite porter (equipment), calculer son score d'Armure (armor : sans armure = 0, légère = 1, moyenne = 2, lourde = 3 + bonus éventuels), vérifier que toutes les étapes précédentes ont été choisies par le joueur, puis conclure avec CREATION_COMPLETED."
     }
   ],
   "general_rules": "Dans Cypher System (CSRD), un personnage débutant commence au Tier 1 avec un Effort de 1 et un état sur la piste de dégâts à 'hale'. Ses trois statistiques sont des réserves dépensables : Might (Puissance), Speed (Vitesse) et Intellect, enregistrées sous resources.might, resources.speed et resources.intellect avec les sous-champs 'current' et 'max' (à la création, current = max). Chaque Type donne des valeurs de départ pour les 3 réserves + 6 points libres à répartir, ainsi qu'un score d'Edge dans edge.might, edge.speed et edge.intellect.",
@@ -161,9 +166,11 @@
       {
         "id": "resilient",
         "name": "Resilient (Résilient)",
-        "description": "Vous encaissez les épreuves physiques et mentales dont d'autres ne se relèveraient pas.",
+        "description": "Vous encaissez les épreuves physiques et mentales dont d'autres ne se relèveraient pas, et disposez d'un jet de récupération supplémentaire par jour.",
         "effects": {
           "pool_modifiers": {"might": 2, "intellect": 2},
+          "extra_recovery_rolls": 1,
+          "extra_abilities": ["Recover (1 jet de récupération supplémentaire d'une action par jour sans décaler la séquence des repos suivants)"],
           "trained_skills": ["Défense de Might (Might defense)", "Défense d'Intellect (Intellect defense)"],
           "inabilities": ["Tâches de mouvement et d'agilité", "Connaissances et résolution d'énigmes"]
         }

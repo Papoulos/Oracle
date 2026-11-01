@@ -93,6 +93,7 @@ def check_config():
     Exits if any mandatory variable is missing.
     """
     required_vars = [
+        "SYSTEM_PACK",
         "LLM_PROVIDER", "LLM_BASE_URL", "LLM_MODEL",
         "EMBEDDING_PROVIDER", "EMBEDDING_BASE_URL", "EMBEDDING_MODEL",
         "CHARACTER_MODEL", "CHARACTER_TEMP",
