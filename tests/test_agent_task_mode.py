@@ -58,7 +58,7 @@ def test_task_mode_property(tmp_path):
     assert agent._task_mode() is True
 
     agent2 = create_agent(tmp_path, "dnd5e_srd")
-    assert agent2._task_mode() is False
+    assert agent2._task_mode() is True
 
     agent3 = create_agent(tmp_path, None)
     assert agent3._task_mode() is False
@@ -184,33 +184,26 @@ def test_safeguard(tmp_path, caplog):
         assert disk_data["resources"]["might"]["current"] == 10
         assert "equipment" in disk_data
 
-def test_historical_fallback(tmp_path):
+def test_dnd5e_task_mode_turn(tmp_path):
     agent = create_agent(tmp_path, "dnd5e_srd")
     agent.current_scene_id = None
 
     mock_llm_response = mock.Mock()
     mock_llm_response.content = json.dumps({
-        "covered_by_catalog": False,
         "need_roll": True,
+        "action_id": "attack",
+        "difficulty": 12,
         "stat": "Strength",
-        "bonus": 2,
-        "dc": 12,
-        "calculation_breakdown": "+2 STR",
-        "mechanical_decision": {}
+        "modifier": 2,
+        "base_damage": 6,
     })
     agent.llm.invoke.return_value = mock_llm_response
 
-    agent.roll_dice = mock.Mock(return_value=15)
-    agent._check_resources = mock.Mock(return_value={"ok": True})
-
     res = agent.chat("Je tape")
-
-    assert agent._check_resources.called
-    assert agent.roll_dice.called
 
     call_args = agent.narrator.generate_response.call_args[0]
     instruction = call_args[2]
 
-    assert "The roll below was resolved by the game engine" not in instruction
-    assert "TECHNICAL RESULT: Jet de Strength (DC 12) : 15 + 2 (+2 STR) = 17 → Succès" in instruction
-    assert "🎲 Jet de Strength (DC 12) : 15 + 2 (+2 STR) = 17 (Succès)" in res
+    assert "The roll below was resolved by the game engine" in instruction
+    assert "TECHNICAL RESULT: Jet d'attaque (Strength) — DD 12 :" in instruction
+    assert "🎲 Jet d'attaque (Strength) — DD 12 :" in res

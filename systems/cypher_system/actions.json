@@ -17,15 +17,91 @@
     {
       "id": "task",
       "kind": "task",
+      "role": "general",
       "name": "Tâche",
-      "description": "Toute action dont l'issue est incertaine : attaquer, se défendre, crocheter, grimper, convaincre. Le MJ choisit la réserve (Might, Speed ou Intellect) et la difficulté de l'obstacle ; le joueur peut appliquer de l'Effort.",
+      "description": "Toute action hors attaque/défense directe dont l'issue est incertaine : crocheter, grimper, convaincre, percevoir, analyser. Le MJ choisit la réserve (Might, Speed ou Intellect) et la difficulté de l'obstacle ; le joueur peut appliquer de l'Effort.",
       "guidance": "Procédure du MJ pour toute tâche (attaquer, se défendre, crocheter, grimper, convaincre). 1) Si l'action est routinière, sans chance réaliste d'échec : pas de jet. 2) Choisis la réserve : Might pour la force physique, l'endurance et la résistance ; Speed pour l'agilité, la rapidité, les réflexes et l'esquive ; Intellect pour le savoir, la perception, la persuasion et la volonté. 3) Choisis la difficulté de 0 à 10 avec l'échelle fournie ; pour attaquer ou se défendre, elle vaut le niveau de l'adversaire. 4) Facilitations : compétence du personnage pour cette tâche, seulement si elle figure sur sa fiche (formé = 1, spécialisé = 2) ; atouts réels de la situation (0 à 2) ; obstacles (+1 par pas). 5) Niveaux d'effort : uniquement si le joueur déclare explicitement appliquer de l'Effort ; sinon 0. Ne choisis jamais l'effort à sa place.",
       "pools": ["might", "speed", "intellect"],
       "effort": {
         "cost_expr": "max(0, 3 + 2*(effort.levels - 1) + (effort.levels if effort.impaired else 0) - effort.edge) if effort.levels > 0 else 0",
         "adjustment_key": "effort",
         "max_levels_path": "effort",
-        "edge_path_template": "edge.{pool}"
+        "edge_path_template": "edge.{pool}",
+        "refund_on_20": false
+      },
+      "special_rolls": {
+        "1": "gm_intrusion",
+        "19": "minor_effect",
+        "20": "major_effect"
+      },
+      "impaired_suppressed_special_rolls": ["19", "20"],
+      "special_roll_labels": {
+        "gm_intrusion": "Intrusion du MJ (1 naturel)",
+        "minor_effect": "Effet mineur (19 naturel)",
+        "major_effect": "Effet majeur (20 naturel)"
+      }
+    },
+    {
+      "id": "attack",
+      "kind": "task",
+      "role": "attack",
+      "name": "Attaque",
+      "description": "Le personnage porte une attaque (physique, à distance ou mentale/arcanique) contre un adversaire. La difficulté est égale au niveau du PNJ cible.",
+      "guidance": "Utilise 'attack' lorsque le joueur attaque un PNJ. 1) difficulty = niveau du PNJ (1 à 10). 2) pool = 'might' (mêlée lourde/force), 'speed' (mêlée fine/tir) ou 'intellect' (pouvoir mental/sort comme Onslaught). 3) base_damage = dégâts de l'arme ou capacité (arme légère = 2, arme moyenne / Onslaught = 4, arme lourde = 6). 4) target_npc = identifiant ou nom du PNJ visé. 5) effort_levels = niveaux d'effort pour faciliter le jet ; damage_effort_levels = niveaux d'effort pour augmenter les dégâts (+3 dégâts par niveau), uniquement si le joueur le demande explicitement.",
+      "pools": ["might", "speed", "intellect"],
+      "default_damage": 4,
+      "roll_damage_bonuses": {
+        "17": 1,
+        "18": 2,
+        "19": 3,
+        "20": 4
+      },
+      "impaired_max_roll_bonus": 1,
+      "impaired_suppressed_special_rolls": ["19", "20"],
+      "special_rolls": {
+        "1": "gm_intrusion",
+        "19": "minor_effect",
+        "20": "major_effect"
+      },
+      "special_roll_labels": {
+        "gm_intrusion": "Intrusion du MJ (1 naturel)",
+        "minor_effect": "Effet mineur (19 naturel)",
+        "major_effect": "Effet majeur (20 naturel)"
+      },
+      "effort": {
+        "cost_expr": "max(0, 3 + 2*(effort.levels - 1) + (effort.levels if effort.impaired else 0) - effort.edge) if effort.levels > 0 else 0",
+        "adjustment_key": "effort",
+        "max_levels_path": "effort",
+        "edge_path_template": "edge.{pool}",
+        "refund_on_20": true,
+        "damage_per_level": 3
+      }
+    },
+    {
+      "id": "defend",
+      "kind": "task",
+      "role": "defend",
+      "name": "Défense",
+      "description": "Le personnage se défend contre l'attaque d'un PNJ ou un danger immédiat. En cas d'échec, il subit les dégâts de l'attaque (réduits par son Armure).",
+      "guidance": "Utilise 'defend' lorsqu'un PNJ attaque le joueur ou que le joueur tente d'esquiver/encaisser une attaque ennemie. 1) difficulty = niveau du PNJ attaquant. 2) pool = 'speed' (esquive/parade), 'might' (encaisser/vigueur) ou 'intellect' (défense mentale). 3) incoming_damage = dégâts infligés par le PNJ en cas d'échec (par défaut égal au niveau du PNJ ou aux dégâts indiqués sur sa fiche). 4) damage_pool = réserve touchée par les dégâts ('might' par défaut, 'intellect' pour une attaque mentale avec ignore_armor=true).",
+      "pools": ["might", "speed", "intellect"],
+      "impaired_suppressed_special_rolls": ["19", "20"],
+      "special_rolls": {
+        "1": "gm_intrusion",
+        "19": "minor_effect",
+        "20": "major_effect"
+      },
+      "special_roll_labels": {
+        "gm_intrusion": "Intrusion du MJ (1 naturel)",
+        "minor_effect": "Effet mineur (19 naturel)",
+        "major_effect": "Effet majeur (20 naturel)"
+      },
+      "effort": {
+        "cost_expr": "max(0, 3 + 2*(effort.levels - 1) + (effort.levels if effort.impaired else 0) - effort.edge) if effort.levels > 0 else 0",
+        "adjustment_key": "effort",
+        "max_levels_path": "effort",
+        "edge_path_template": "edge.{pool}",
+        "refund_on_20": true
       }
     }
   ]

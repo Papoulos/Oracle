@@ -41,8 +41,8 @@ def test_gse_rest_palier_inexistant(temp_character_file):
     assert "Unknown" in res.message or "inconnu" in res.message
 
 
-def test_agent_chat_non_task_mode_roll(monkeypatch):
-    monkeypatch.delenv("SYSTEM_PACK", raising=False)
+def test_agent_chat_dnd5e_pack_roll(monkeypatch):
+    monkeypatch.setenv("SYSTEM_PACK", "dnd5e_srd")
     agent = RPGAgent()
     agent.game_state = "ADVENTURE"
     agent.chronicle_data = {"summary": "L'aventure commence."}
@@ -81,22 +81,20 @@ def test_agent_chat_non_task_mode_roll(monkeypatch):
         "xp": 0,
         "resources": {"hit_points": {"current": 10, "max": 10}}
     }
+    agent.gse.state = agent.character_data
 
     def invoke_mock(prompt, **kwargs):
         p_str = str(prompt)
-        if "RPG referee. Analyze the player's action" in p_str:
-            return mock.Mock(content=json.dumps({"consumes": False}))
-        elif "Analyze the player's action relative to the current scene" in p_str:
+        if "Analyze the player's action relative to the current scene" in p_str:
             return mock.Mock(content=json.dumps({"category": "improvisation", "next_scene": None}))
-        elif "According to the character" in p_str:
+        elif "AVAILABLE ACTIONS:" in p_str:
             return mock.Mock(content=json.dumps({
                 "need_roll": True,
+                "action_id": "ability_check",
                 "stat": "athlétisme",
-                "bonus": 1,
-                "calculation_breakdown": "+1 Force",
-                "dc": 10,
+                "modifier": 1,
+                "difficulty": 10,
                 "reason": "Escalade de la falaise",
-                "mechanical_decision": {"action": None, "amount": None}
             }))
         else:
             return mock.Mock(content="{}")
@@ -109,8 +107,8 @@ def test_agent_chat_non_task_mode_roll(monkeypatch):
 
     response = agent.chat("Je grimpe sur la falaise")
 
-    assert agent.llm.invoke.call_count == 3
-    assert "Jet de athlétisme" in response
+    assert agent.llm.invoke.call_count == 2
+    assert "Test de caractéristique (athlétisme)" in response
 
 
 def test_indexer_log_option_not_passed():

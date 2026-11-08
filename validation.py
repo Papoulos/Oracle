@@ -46,7 +46,8 @@ def validate_scenario_structure(data: dict) -> tuple[dict, list[str], list[str]]
     scene_ids = {s["scene_id"] for s in data.get("scene_nodes", []) if "scene_id" in s}
     act_ids = {a["act_id"] for a in data.get("acts", []) if "act_id" in a}
 
-    # --- NPC: usual_location ---
+    # --- NPC: usual_location & optional combat stats ---
+    import re
     for p in data.get("entities", {}).get("npcs", []):
         loc = p.get("usual_location")
         if loc not in location_ids:
@@ -55,6 +56,33 @@ def validate_scenario_structure(data: dict) -> tuple[dict, list[str], list[str]]
                     f"NPC {p.get('id')}: usual_location '{loc}' unknown -> set to null."
                 )
             p["usual_location"] = None
+
+        # Normalize optional combat stats (level, health, damage, armor) if present or inferable from stats_and_abilities
+        stats_text = str(p.get("stats_and_abilities") or "")
+        for stat_key in ("level", "health", "damage", "armor"):
+            if stat_key in p and p[stat_key] is not None:
+                try:
+                    val = int(p[stat_key])
+                    p[stat_key] = val if val >= 0 else None
+                except (ValueError, TypeError):
+                    p[stat_key] = None
+
+        if p.get("level") is None and stats_text:
+            m_lvl = re.search(r"(?:niveau|level)\s*(\d+)", stats_text, re.IGNORECASE)
+            if m_lvl:
+                p["level"] = int(m_lvl.group(1))
+
+        if isinstance(p.get("level"), int) and p["level"] > 0:
+            lvl = p["level"]
+            if p.get("health") is None:
+                m_hp = re.search(r"(?:sant[ée]|pv|hp|health)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
+                p["health"] = int(m_hp.group(1)) if m_hp else lvl * 3
+            if p.get("damage") is None:
+                m_dmg = re.search(r"(?:d[ée]g[âa]ts|damage)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
+                p["damage"] = int(m_dmg.group(1)) if m_dmg else lvl
+            if p.get("armor") is None:
+                m_arm = re.search(r"(?:armure|armor)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
+                p["armor"] = int(m_arm.group(1)) if m_arm else 0
 
     # --- Scene Nodes ---
     for s in data.get("scene_nodes", []):

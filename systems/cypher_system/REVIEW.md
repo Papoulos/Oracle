@@ -34,9 +34,9 @@ Chemins de la fiche : convention `resources.<id>.current` / `.max`.
 | G1 | **Récupération par jet** | d6 + palier, répartis librement entre les réserves, sans dépasser le maximum ; cycle de 4 repos | **Couvert** (PR #126 à #128) : formule, répartition par le joueur, cycle de repos. Détection de « je me repose » couverte (PR 5b-1) ; branchement dans l'agent : PR 5b-2 |
 | G2 | **Plafonds par catégorie** | Compétences <= 2 pas, atouts <= 2, effort <= 6 | Couvert (PR 4a) |
 | G3 | **Coût de l'effort** | 3 points le 1er niveau, 2 les suivants, moins l'Edge de la réserve (Edge utilisé une fois par action et par réserve) ; Edge 3 = 1 niveau gratuit ; +1 par niveau si Impaired ; niveaux <= score d'Effort ; réserve selon la tâche | Couvert (PR 4b) |
-| G4 | **Jets spéciaux** | 1 : intrusion du MJ (sans XP) ; 17 / 18 : +1 / +2 dégâts (attaques) ; 19 : effet mineur ou +3 dégâts ; 20 : effet majeur ou +4 dégâts, et le coût en réserve de l'action est remboursé | Le résultat n'expose ni le d20 naturel ni les effets |
-| G5 | **Piste de dégâts** | Hale / Impaired / Debilitated / Dead, avec effets (Impaired : effort +1 par niveau, effets spéciaux ignorés ; Debilitated : seulement se déplacer) | Pas de machine à états dans le format ni dans le moteur |
-| G6 | **Application des dégâts** | Ordre Might, Speed, Intellect ; l'Armor (nombre fixe) se soustrait ; l'excédent passe à la réserve suivante | Le moteur n'a que des PV |
+| G4 | **Jets spéciaux** | 1 : intrusion du MJ (sans XP) ; 17 / 18 : +1 / +2 dégâts (attaques) ; 19 : effet mineur ou +3 dégâts ; 20 : effet majeur ou +4 dégâts, et le coût en réserve de l'action est remboursé | **Couvert** (PR 5c) : `special_rolls`, `roll_damage_bonuses`, `refund_on_20` dans `actions.json` |
+| G5 | **Piste de dégâts** | Hale / Impaired / Debilitated / Dead, avec effets (Impaired : effort +1 par niveau, effets spéciaux ignorés ; Debilitated : seulement se déplacer) | **Couvert** (PR 5c) : `damage` dans `resources.json` (`damage_track_states`, `blocking_states`, `impaired_state`) + `advance_damage_track()` |
+| G6 | **Application des dégâts** | Ordre Might, Speed, Intellect ; l'Armor (nombre fixe) se soustrait ; l'excédent passe à la réserve suivante | **Couvert** (PR 5c) : `apply_damage` avec `armor_path` et `cascade_pools`, action `defend` et `apply_npc_damage` |
 | G7 | **Jet impossible** | Si même un 20 naturel ne suffit pas, aucun jet n'est fait | Couvert (PR 4a) |
 | G8 | **Modificateurs de jet** | Un total de +3 sur le jet se convertit en atout (difficulté -1) | À la charge de l'appelant ; non modélisé |
 

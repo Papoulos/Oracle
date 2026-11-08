@@ -452,12 +452,12 @@ class RPGAgent(BaseAgent):
         return mechanical_context
 
     def _task_mode(self) -> bool:
-        """Returns True if the engine's pack supports action tasks using the StepTargetD20 family."""
-        if not self.gse.pack:
+        """Returns True if the engine's pack defines task actions."""
+        if not self.gse or not self.gse.pack:
             return False
-        if not self.gse.pack.actions:
+        if not self.gse.pack.actions or not self.gse.pack.actions.actions:
             return False
-        return self.gse.pack.resolution.family == "StepTargetD20"
+        return True
 
     def log(self, message):
         timestamp = time.strftime("%H:%M:%S")
@@ -537,9 +537,6 @@ class RPGAgent(BaseAgent):
             context_lines.append(f"Parent Act: {act.get('title')} (Completion Condition: {act.get('completion_condition')})")
 
         return "\n".join(context_lines)
-
-    def roll_dice(self, sides=20):
-        return random.randint(1, sides)
 
     def _finalize_pack_character(self, sheet: dict, apply_defaults: bool = False) -> dict:
         """
@@ -755,53 +752,6 @@ class RPGAgent(BaseAgent):
             return schema_as_legacy_dict(self.gse.pack.character_schema)
         return {"required_fields": [{"path": "name", "type": "string"}]}
 
-    def _check_resources(self, action):
-        """Checks if player's action consumes any limited resource and whether it is available."""
-        if not self.character_data or "resources" not in self.character_data:
-            return {"ok": True}
-
-        prompt = f"""You are an RPG referee. Analyze the player's action and determine if it consumes a limited resource from their sheet.
-ACTION: "{action}"
-AVAILABLE RESOURCES: {json.dumps(self.character_data['resources'], ensure_ascii=False)}
-
-Reply ONLY with this JSON:
-{{
-  "consumes": boolean,
-  "resource_name": "name_of_the_key_in_the_json_or_null",
-  "quantity": integer_or_null,
-  "reason": "short explanation"
-}}
-"""
-        try:
-            response = self.llm.invoke(prompt).content
-            analysis = extract_json(response)
-            if analysis and analysis.get("consumes"):
-                res_name = analysis.get("resource_name")
-                qty = analysis.get("quantity") or 1
-
-                actual_res_name = None
-                if res_name in self.character_data["resources"]:
-                    actual_res_name = res_name
-                else:
-                    for k in self.character_data["resources"].keys():
-                        if res_name.lower() in k.lower() or k.lower() in res_name.lower():
-                            actual_res_name = k
-                            break
-
-                if actual_res_name:
-                    res = self.character_data["resources"][actual_res_name]
-                    if res.get("current", 0) >= qty or res.get("restants", 0) >= qty:
-                        return {"ok": True, "resource": actual_res_name, "cost": qty}
-                    else:
-                        cur_val = res.get("current") if "current" in res else res.get("restants", 0)
-                        max_val = res.get("max", res.get("total", 0))
-                        return {"ok": False, "reason": f"Ressource insuffisante : {actual_res_name} ({cur_val}/{max_val})"}
-
-            return {"ok": True}
-        except Exception as e:
-            print(f"[RPGAgent] Error check_resources: {e}")
-            return {"ok": True}
-
     def chat(self, user_input):
         if self.game_state == "CREATION":
             self.character_creator.pack = self.gse.pack if self.gse else None
@@ -886,46 +836,14 @@ Reply ONLY with this JSON:
             return response
 
         elif self.game_state == "ADVENTURE":
-            # 0. Resources validation
-            if not self._task_mode():
-                res_check = self._check_resources(user_input)
-                if not res_check["ok"]:
-                    msg = f"Action impossible : {res_check['reason']}"
-                    self.history.add_user_message(user_input)
-                    self.history.add_ai_message(msg)
-                    return msg
-
             scenario_context = self.get_scenario_context(user_input, k=config.RAG_K_ADVENTURE)
             npcs_summary = self.get_npcs_context()
             chronicle_text = self.chronicle_data.get("summary", "L'aventure commence.") if self.chronicle_data else "L'aventure commence."
 
-            # Mechanical detection and validation (Proactive actions)
-            if self.gse.pack is not None:
+            # Mechanical detection and validation (Proactive actions via SystemPack)
+            mechanical_context = ""
+            if self.gse and self.gse.pack is not None:
                 mechanical_context = self._pack_mechanical_step(user_input)
-                if mechanical_context is not None and "RÉPARTITION EN ATTENTE" in mechanical_context and "MECANIQUE :" not in mechanical_context and "ACTION BLOQUÉE :" not in mechanical_context:
-                    pass
-            else:
-                action_type = self.gse.detect_action_type(user_input)
-                mechanical_result = None
-
-                if action_type == "spell":
-                    spell_level = 1
-                    mechanical_result = self.gse.consume_spell_slot(spell_level)
-                elif action_type == "rage":
-                    mechanical_result = self.gse.consume_resource("points_de_rage")
-                elif action_type and action_type.startswith("rest:"):
-                    palier_id = action_type.split(":", 1)[1]
-                    mechanical_result = self.gse.rest(palier_id)
-                elif action_type == "rest":
-                    rest_type = "long" if any(w in user_input.lower() for w in ["long", "nuit", "camp"]) else "short"
-                    mechanical_result = self.gse.rest(rest_type)
-
-                mechanical_context = ""
-                if mechanical_result:
-                    if not mechanical_result.success:
-                        mechanical_context = f"\n⚠ ACTION BLOQUÉE : {mechanical_result.blocked_reason} — {mechanical_result.message}"
-                    else:
-                        mechanical_context = f"\nMECANIQUE : {mechanical_result.message}"
 
             state_summary = self.gse.get_state_summary()
             self.character_data = self.gse.state # Sync before analysis
@@ -959,89 +877,54 @@ Reply ONLY with this JSON:
                     if decision["hinder"]:
                         step_adjustments["hindrance"] = decision["hinder"]
 
+                    extra_kwargs = {}
+                    for opt_key in (
+                        "stat",
+                        "modifier",
+                        "roll_bonus",
+                        "advantage",
+                        "pool_size",
+                        "damage_effort_levels",
+                        "base_damage",
+                        "target_npc",
+                        "npc_health_max",
+                        "npc_armor",
+                        "incoming_damage",
+                        "damage_pool",
+                        "ignore_armor",
+                    ):
+                        if opt_key in decision and decision[opt_key] is not None:
+                            extra_kwargs[opt_key] = decision[opt_key]
+
+                    # Enrich NPC combat stats from npcs_data if target_npc matches
+                    target_npc = extra_kwargs.get("target_npc")
+                    if target_npc and isinstance(self.npcs_data, list):
+                        npc_entry = next(
+                            (n for n in self.npcs_data if isinstance(n, dict) and n.get("id") == target_npc),
+                            None,
+                        )
+                        if npc_entry:
+                            if "npc_health_max" not in extra_kwargs and isinstance(npc_entry.get("health"), int):
+                                extra_kwargs["npc_health_max"] = npc_entry["health"]
+                            if "npc_armor" not in extra_kwargs and isinstance(npc_entry.get("armor"), int):
+                                extra_kwargs["npc_armor"] = npc_entry["armor"]
+
                     result = self.gse.execute_task(
                         decision["action_id"],
                         decision["pool"],
                         decision["difficulty"],
                         step_adjustments=step_adjustments,
-                        effort_levels=decision["effort_levels"]
+                        effort_levels=decision["effort_levels"],
+                        **extra_kwargs,
                     )
 
                     if result.success:
                         roll_info = format_task_roll_line(result.state_changes, self.gse.pack)
-                        if result.state_changes.get("task", {}).get("impossible"):
-                            roll_result = "Impossible"
-                        else:
-                            outcome = result.state_changes.get("task", {}).get("outcome")
-                            roll_result = "Succès" if outcome == "SUCCESS" else "Échec"
-
                         mechanical_context += f"\nMECANIQUE : {result.message}"
                         self.character_data = self.gse.state
                         roll_result = None # Handled inside format_task_roll_line
                     else:
                         mechanical_context += f"\n⚠ ACTION BLOQUÉE : {result.blocked_reason} — {result.message}"
-
-            else:
-                analysis_json = None
-                analysis_prompt = f"""Analyze the player's action: "{user_input}"
-
-                Adventure history (Chronicle):
-                {chronicle_text}
-
-                Present NPCs and their secrets (if relevant):
-                {json.dumps(self.npcs_data, ensure_ascii=False, indent=2)}
-
-                MECHANICAL STATE: {state_summary}
-                {mechanical_context}
-
-                According to the character ({json.dumps(self.character_data, ensure_ascii=False)}), is a dice roll required?
-                If so, identify the appropriate bonus from the player's character sheet.
-                Also determine if this action or its immediate consequences result in damage, healing, or XP gain.
-
-                Reply in JSON format:
-                {{
-                    "need_roll": boolean,
-                    "stat": "stat_name_or_null",
-                    "bonus": integer_or_null,
-                    "calculation_breakdown": "bonus explanation (e.g., +3 Strength, +2 Athletics)",
-                    "dc": integer_or_null,
-                    "reason": "short explanation",
-                    "mechanical_decision": {{
-                        "action": "damage" | "heal" | "xp" | null,
-                        "amount": integer_or_null
-                    }}
-                }}
-                """
-                try:
-                    analysis_response = self.llm.invoke(analysis_prompt).content
-                    analysis_json = extract_json(analysis_response, expected_type=dict)
-                except Exception as e:
-                    print(f"[RPGAgent] Error during action analysis: {e}")
-
-                try:
-                    if not analysis_json:
-                        analysis_json = {"need_roll": False}
-
-                    m_decision = analysis_json.get("mechanical_decision")
-                    if m_decision and m_decision.get("action"):
-                        m_res = self.gse.apply_orchestrator_decision(m_decision)
-                        mechanical_context += f"\nDECISION MJ : {m_res.message}"
-                        self.character_data = self.gse.state # Sync after decision
-
-                    if analysis_json.get("need_roll"):
-                        die_roll = self.roll_dice(20)
-                        bonus = analysis_json.get("bonus")
-                        if bonus is None:
-                            bonus = 0
-                        total = die_roll + bonus
-                        stat_name = analysis_json.get("stat", "Inconnu")
-                        dc = analysis_json.get("dc", 10)
-                        breakdown = analysis_json.get("calculation_breakdown", f"bonus +{bonus}")
-
-                        roll_info = f"Jet de {stat_name} (DC {dc}) : {die_roll} + {bonus} ({breakdown}) = {total}"
-                        roll_result = "Succès" if total >= dc else "Échec"
-                except Exception:
-                    analysis_json = {"need_roll": False}
 
             # 2. Scene analysis from the Orchestrator (Transition / Improvisation / Bypassed)
             scene_analysis_result = {

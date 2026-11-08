@@ -50,5 +50,13 @@
       "steps": ["one_action_rest", "ten_minute_rest", "one_hour_rest", "ten_hour_rest"],
       "state_path": "recovery_step"
     }
-  ]
+  ],
+  "damage": {
+    "cascade_pools": ["might", "speed", "intellect"],
+    "armor_path": "armor",
+    "damage_track_path": "damage_track",
+    "damage_track_states": ["hale", "impaired", "debilitated", "dead"],
+    "blocking_states": ["debilitated", "dead"],
+    "impaired_state": "impaired"
+  }
 }

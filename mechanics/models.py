@@ -206,12 +206,22 @@ class RecoverySequence(BaseModel):
     state_path: str = "recovery_step"
 
 
+class DamageConfig(BaseModel):
+    cascade_pools: list[str] = Field(min_length=1)
+    armor_path: str | None = None
+    damage_track_path: str | None = None
+    damage_track_states: list[str] = Field(default_factory=list)
+    blocking_states: list[str] = Field(default_factory=list)
+    impaired_state: str | None = None
+
+
 class ResourcesConfig(BaseModel):
     recovery_triggers: list[RecoveryTrigger]
     pools: list[PoolDef]
     pool_groups: list[PoolGroupDef]
     pooled_recoveries: list[PooledRecoveryRule] = Field(default_factory=list)
     recovery_sequences: list[RecoverySequence] = Field(default_factory=list)
+    damage: DamageConfig | None = None
 
     def model_post_init(self, __context):
         # Validate that all triggers in recovery rules exist in recovery_triggers

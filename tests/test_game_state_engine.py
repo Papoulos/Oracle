@@ -76,48 +76,52 @@ def test_gse_apply_healing(temp_character_file):
     assert gse.get_hp()[0] == 8
 
 def test_gse_consume_spell_slot(temp_character_file):
-    gse = GameStateEngine(temp_character_file)
-    res = gse.consume_spell_slot(1)
+    pack = load_pack("dnd5e_srd")
+    gse = GameStateEngine(temp_character_file, pack=pack)
+    res = gse.consume_pool("spell_slots", key="level_1", amount=1)
     assert res.success is True
-    assert gse.get_resource("spells_per_day", level=1)[0] == 1
+    assert gse.state["resources"]["spells_per_day"]["level_1"]["current"] == 1
 
-    gse.consume_spell_slot(1)
-    res = gse.consume_spell_slot(1)
+    gse.consume_pool("spell_slots", key="level_1", amount=1)
+    res = gse.consume_pool("spell_slots", key="level_1", amount=1)
     assert res.success is False
-    assert res.blocked_reason == "no_spell_slot_remaining"
+    assert res.blocked_reason == "insufficient_resources"
 
 def test_gse_rest_long(temp_character_file):
-    gse = GameStateEngine(temp_character_file)
+    pack = load_pack("dnd5e_srd")
+    gse = GameStateEngine(temp_character_file, pack=pack)
     gse.apply_damage(5)
-    gse.consume_spell_slot(1)
-    gse.consume_resource("points_de_rage")
+    gse.consume_pool("spell_slots", key="level_1", amount=1)
 
-    res = gse.rest("long")
+    res = gse.rest("long_rest")
     assert res.success is True
     assert gse.get_hp()[0] == 10
-    assert gse.get_resource("spells_per_day", level=1)[0] == 2
-    assert gse.get_resource("points_de_rage")[0] == 2
+    assert gse.state["resources"]["spells_per_day"]["level_1"]["current"] == 2
 
 def test_gse_detect_action_type():
-    gse = GameStateEngine()
-    assert gse.detect_action_type("Je lance un sort") == "spell"
-    assert gse.detect_action_type("Je me repose") == "rest"
-    assert gse.detect_action_type("Je rentre en rage") == "rage"
+    pack = load_pack("dnd5e_srd")
+    gse = GameStateEngine(pack=pack)
+    assert gse.detect_action_type("Je lance un sort") == "cast_spell"
+    assert gse.detect_action_type("Je fais un repos long") == "rest:long_rest"
     assert gse.detect_action_type("Je marche") is None
 
-def test_gse_apply_orchestrator_decision(temp_character_file):
-    gse = GameStateEngine(temp_character_file)
+    gse_no_pack = GameStateEngine()
+    assert gse_no_pack.detect_action_type("Je lance un sort") is None
+
+def test_gse_xp_and_damage_healing(temp_character_file):
+    pack = load_pack("dnd5e_srd")
+    gse = GameStateEngine(temp_character_file, pack=pack)
 
     # Damage
-    gse.apply_orchestrator_decision({"action": "damage", "amount": 2})
+    gse.apply_damage(2)
     assert gse.get_hp()[0] == 8
 
     # Heal
-    gse.apply_orchestrator_decision({"action": "heal", "amount": 1})
+    gse.apply_healing(1)
     assert gse.get_hp()[0] == 9
 
     # XP
-    res = gse.apply_orchestrator_decision({"action": "xp", "amount": 100})
+    res = gse.add_xp(100)
     assert gse.state["xp"] == 100
     assert res.success is True
 

@@ -340,3 +340,62 @@ def test_enforce_engine_owned_fields_empty_and_string_parent(cypher_pack):
     corrected_str, restored_str = enforce_engine_owned_fields(sheet_str, snapshot_str, cypher_pack)
     assert corrected_str["resources"]["might"]["current"] == 10
     assert "resources.might.current" in restored_str
+
+
+def test_combat_task_flow_formatting_and_sanitization(cypher_pack, monkeypatch):
+    import random
+    from game_state_engine import GameStateEngine
+
+    raw_attack = {
+        "need_roll": True,
+        "action_id": "attack",
+        "pool": "might",
+        "difficulty": 3,
+        "ease": {"skill": 1},
+        "hinder": 0,
+        "effort_levels": 0,
+        "damage_effort_levels": 1,
+        "base_damage": 4,
+        "target_npc": "GOBELIN_01",
+        "npc_health_max": 6,
+        "npc_armor": 1,
+        "reason": "attaque lourde",
+    }
+    dec = sanitize_task_decision(raw_attack, cypher_pack)
+    assert dec is not None
+    assert dec["action_id"] == "attack"
+    assert dec["damage_effort_levels"] == 1
+    assert dec["base_damage"] == 4
+    assert dec["target_npc"] == "GOBELIN_01"
+
+    engine = GameStateEngine(pack=cypher_pack)
+    engine.state = {
+        "effort": 2,
+        "armor": 1,
+        "damage_track": "hale",
+        "edge": {"might": 1, "speed": 0, "intellect": 0},
+        "resources": {
+            "might": {"current": 10, "max": 12},
+            "speed": {"current": 8, "max": 10},
+            "intellect": {"current": 6, "max": 10},
+        },
+    }
+    monkeypatch.setattr(engine, "save", lambda: None)
+    engine.rng = random.Random(5)  # rolls 20 on d20
+
+    res = engine.execute_task(
+        "attack",
+        "might",
+        3,
+        damage_effort_levels=1,
+        base_damage=4,
+        target_npc="GOBELIN_01",
+        npc_health_max=6,
+        npc_armor=1,
+    )
+    line = format_task_roll_line(res.state_changes, cypher_pack)
+    assert line.startswith("Attaque — Puissance (Might) :")
+    assert "remboursé sur 20 naturel" in line
+    assert "Effet majeur (20 naturel) !" in line
+    assert "Dégâts infligés : 11 (GOBELIN_01 6→0 PV, vaincu)." in line
+

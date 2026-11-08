@@ -91,7 +91,11 @@ Reply ONLY with a JSON in the following format:
       "agenda_and_motivation": "What the NPC is trying to achieve",
       "fears_and_weaknesses": "What makes them give up or flee",
       "initial_attitude": "Initial attitude when met",
-      "stats_and_abilities": "Threat level, HP, key attacks or unknown"
+      "stats_and_abilities": "Threat level, HP, key attacks or unknown",
+      "level": null,
+      "health": null,
+      "damage": null,
+      "armor": null
     }}
   ],
   "locations": [

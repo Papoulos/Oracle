@@ -315,10 +315,11 @@ def validate_pack(pack_path: str) -> list[Issue]:
 
             if not os.path.isfile(resolution_path):
                 issues.append(Issue(severity="error", file="actions.json", path=actions_path, message="actions require StepTargetD20 resolution (missing resolution.json)"))
-            elif not isinstance(resolution, StepTargetD20Config):
-                issues.append(Issue(severity="error", file="actions.json", path=actions_path, message="actions require StepTargetD20 resolution"))
 
             actions = ActionsConfig.model_validate(actions_data)
+
+            if any(a.effort is not None for a in actions.actions) and not isinstance(resolution, StepTargetD20Config):
+                issues.append(Issue(severity="error", file="actions.json", path=actions_path, message="actions require StepTargetD20 resolution when effort is configured"))
 
             # Check action IDs are unique
             action_ids = set()

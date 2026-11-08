@@ -62,8 +62,31 @@ MECHANICAL STATE: {state_summary}
                 prompt += f"- {pool_id} ({pool_def.name}) : {current_str}/{max_str}\n"
         prompt += "\n"
 
+    dmg_cfg = getattr(pack.resources, "damage", None) if pack.resources else None
+    if dmg_cfg:
+        armor_val = get_by_path(sheet, dmg_cfg.armor_path) if dmg_cfg.armor_path else None
+        track_val = get_by_path(sheet, dmg_cfg.damage_track_path) if dmg_cfg.damage_track_path else None
+        default_state = dmg_cfg.damage_track_states[0] if dmg_cfg.damage_track_states else "normal"
+        if armor_val is not None or track_val is not None:
+            prompt += f"COMBAT STATUS: Armor={armor_val if armor_val is not None else 0}, Damage Track={track_val or default_state}\n\n"
+
+    family = getattr(pack.resolution, "family", "StepTargetD20") if getattr(pack, "resolution", None) else "StepTargetD20"
+    if isinstance(sheet, dict) and (sheet.get("statistics") or sheet.get("modifiers")):
+        stats_dict = sheet.get("statistics") or {}
+        mods_dict = sheet.get("modifiers") or {}
+        stat_parts = []
+        for k, v in stats_dict.items():
+            if k in mods_dict:
+                stat_parts.append(f"{k}: {v} (mod {mods_dict[k]:+d})" if isinstance(mods_dict[k], int) else f"{k}: {v}")
+            else:
+                stat_parts.append(f"{k}: {v}")
+        if stat_parts:
+            prompt += f"CHARACTER STATISTICS: {', '.join(stat_parts)}\n\n"
+
     prompt += """According to the rules and the character state, determines if a roll is required.
-If a roll is required, select the appropriate action_id, pool, difficulty, and determine effort and ease/hinder adjustments.
+If a roll is required, select the appropriate action_id, pool (if applicable), difficulty, and modifiers/adjustments.
+For attack actions (role="attack"), you may also specify "damage_effort_levels", "base_damage", "target_npc", "npc_health_max", and "npc_armor".
+For defense actions (role="defend"), you may also specify "incoming_damage", "damage_pool", and "ignore_armor".
 
 Reply in JSON format:
 {
@@ -71,9 +94,22 @@ Reply in JSON format:
     "action_id": "action_id_or_null",
     "pool": "pool_id_or_null",
     "difficulty": integer_or_null,
+    "stat": "stat_name_or_null_optional",
+    "modifier": integer_optional,
+    "roll_bonus": integer_optional,
+    "advantage": "none_or_advantage_or_disadvantage_optional",
+    "pool_size": integer_optional,
     "ease": {"skill": integer, "asset": integer},
     "hinder": integer,
     "effort_levels": integer,
+    "damage_effort_levels": integer_optional,
+    "base_damage": integer_or_null_optional,
+    "target_npc": "npc_id_or_null_optional",
+    "npc_health_max": integer_or_null_optional,
+    "npc_armor": integer_optional,
+    "incoming_damage": integer_or_null_optional,
+    "damage_pool": "pool_id_or_null_optional",
+    "ignore_armor": boolean_optional,
     "reason": "short explanation"
 }
 """
@@ -107,6 +143,8 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
     if not pack.actions or not pack.actions.actions:
         return None
 
+    family = getattr(pack.resolution, "family", "StepTargetD20") if getattr(pack, "resolution", None) else "StepTargetD20"
+
     action_id = raw.get("action_id")
     action_def = None
     if action_id:
@@ -130,23 +168,40 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
         pool_id = None
 
     diff = raw.get("difficulty")
-    if not isinstance(diff, int) or isinstance(diff, bool):
-        return None
+    if diff is None and family == "D20VsTarget" and "dc" in raw:
+        diff = raw.get("dc")
 
-    min_diff = 0
-    max_diff = 10
-    if pack.actions.difficulty_scale:
-        min_diff = min(d.level for d in pack.actions.difficulty_scale)
-        max_diff = max(d.level for d in pack.actions.difficulty_scale)
-
-    if not (min_diff <= diff <= max_diff):
+    if family == "StepTargetD20":
+        if not isinstance(diff, int) or isinstance(diff, bool):
+            return None
+        min_diff = 0
+        max_diff = 10
+        if pack.actions.difficulty_scale:
+            min_diff = min(d.level for d in pack.actions.difficulty_scale)
+            max_diff = max(d.level for d in pack.actions.difficulty_scale)
+        if not (min_diff <= diff <= max_diff):
+            return None
+    elif family == "D20VsTarget":
+        if not isinstance(diff, int) or isinstance(diff, bool) or diff < 0:
+            return None
+    elif family == "PbtA2d6":
+        if diff is None:
+            diff = 0
+        elif not isinstance(diff, int) or isinstance(diff, bool):
+            return None
+    elif family == "DicePoolSuccess":
+        if diff is None:
+            diff = 1
+        elif not isinstance(diff, int) or isinstance(diff, bool) or diff < 1:
+            return None
+    else:
         return None
 
     ease = {}
     raw_ease = raw.get("ease", {})
     if isinstance(raw_ease, dict):
         effort_key = action_def.effort.adjustment_key if action_def.effort else None
-        allowed_caps = pack.resolution.adjustment_caps.keys() if pack.resolution and pack.resolution.adjustment_caps else []
+        allowed_caps = pack.resolution.adjustment_caps.keys() if pack.resolution and getattr(pack.resolution, "adjustment_caps", None) else []
         allowed_keys = [k for k in allowed_caps if k != effort_key]
 
         for k, v in raw_ease.items():
@@ -163,7 +218,7 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
 
     reason = str(raw.get("reason", ""))
 
-    return {
+    out = {
         "need_roll": True,
         "action_id": action_id,
         "pool": pool_id,
@@ -174,6 +229,61 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
         "reason": reason
     }
 
+    if isinstance(raw.get("stat"), str) and raw["stat"].strip():
+        out["stat"] = raw["stat"].strip()
+
+    if "modifier" in raw and raw.get("modifier") is not None:
+        out["modifier"] = _parse_int_val(raw.get("modifier"))
+    elif "bonus" in raw and raw.get("bonus") is not None:
+        out["modifier"] = _parse_int_val(raw.get("bonus"))
+
+    if "roll_bonus" in raw and raw.get("roll_bonus") is not None:
+        out["roll_bonus"] = _parse_int_val(raw.get("roll_bonus"))
+
+    if raw.get("advantage") in ("advantage", "disadvantage"):
+        out["advantage"] = raw["advantage"]
+
+    if "pool_size" in raw and raw.get("pool_size") is not None:
+        ps = _parse_int_val(raw.get("pool_size"))
+        if ps > 0:
+            out["pool_size"] = ps
+
+    if "damage_effort_levels" in raw:
+        dmg_eff = _parse_int_val(raw.get("damage_effort_levels"))
+        if dmg_eff > 0:
+            out["damage_effort_levels"] = dmg_eff
+
+    if "base_damage" in raw and raw.get("base_damage") is not None:
+        base_dmg = _parse_int_val(raw.get("base_damage"))
+        if base_dmg > 0:
+            out["base_damage"] = base_dmg
+
+    if isinstance(raw.get("target_npc"), str) and raw["target_npc"].strip():
+        out["target_npc"] = raw["target_npc"].strip()
+
+    if "npc_health_max" in raw and raw.get("npc_health_max") is not None:
+        npc_hp = _parse_int_val(raw.get("npc_health_max"))
+        if npc_hp > 0:
+            out["npc_health_max"] = npc_hp
+
+    if "npc_armor" in raw and raw.get("npc_armor") is not None:
+        npc_arm = _parse_int_val(raw.get("npc_armor"))
+        if npc_arm > 0:
+            out["npc_armor"] = npc_arm
+
+    if "incoming_damage" in raw and raw.get("incoming_damage") is not None:
+        inc_dmg = _parse_int_val(raw.get("incoming_damage"))
+        if inc_dmg > 0:
+            out["incoming_damage"] = inc_dmg
+
+    if isinstance(raw.get("damage_pool"), str) and raw["damage_pool"].strip():
+        out["damage_pool"] = raw["damage_pool"].strip()
+
+    if raw.get("ignore_armor") is True:
+        out["ignore_armor"] = True
+
+    return out
+
 def format_task_roll_line(state_changes: dict, pack) -> str:
     """
     Formats the task result into a readable narrative line.
@@ -181,6 +291,8 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
     task_res = state_changes.get("task")
     if not task_res:
         return ""
+
+    family = getattr(pack.resolution, "family", "StepTargetD20") if getattr(pack, "resolution", None) else "StepTargetD20"
 
     diff_info = task_res.get("difficulty", {})
     init_diff = diff_info.get("initial")
@@ -218,8 +330,14 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
     rolled_list = task_res.get("rolled", [])
 
     outcome = task_res.get("outcome")
-    if outcome == "SUCCESS":
+    if outcome == "CRITICAL_SUCCESS":
+        outcome_str = "Succès critique"
+    elif outcome == "SUCCESS":
         outcome_str = "Succès"
+    elif outcome == "PARTIAL_SUCCESS":
+        outcome_str = "Succès partiel"
+    elif outcome == "CRITICAL_FAILURE":
+        outcome_str = "Échec critique"
     elif outcome == "FAILURE":
         outcome_str = "Échec"
     else:
@@ -230,26 +348,57 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
     if margin is not None:
         margin_str = f" (marge +{margin})" if margin >= 0 else f" (marge {margin})"
 
-    base_str = f"Tâche — {pool_name} : "
+    action_id = task_res.get("action", "task")
+    action_def = None
+    if pack.actions and pack.actions.actions:
+        action_def = next((a for a in pack.actions.actions if a.id == action_id), None)
 
-    # Resolution format
-    if impossible:
-        res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target} inatteignable : aucun dé, échec."
-    elif not rolled_list:
-        res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str} : réussite automatique, aucun dé."
-    else:
-        roll = rolled_list[0]
-        res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target}, d20 = {roll} → {outcome_str}{margin_str}."
+    action_label = action_def.name if (action_def and action_def.name) else "Tâche"
+    action_role = getattr(action_def, "role", "general") if action_def else "general"
+
+    if family == "StepTargetD20":
+        base_str = f"{action_label} — {pool_name} : "
+        if impossible:
+            res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target} inatteignable : aucun dé, échec."
+        elif not rolled_list:
+            res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str} : réussite automatique, aucun dé."
+        else:
+            roll = rolled_list[0]
+            res = f"{base_str}difficulté {init_diff}{init_name_str} → {final_diff}{final_name_str}, cible {target}, d20 = {roll} → {outcome_str}{margin_str}."
+    elif family == "D20VsTarget":
+        stat_label = task_res.get("stat") or pool_name
+        prefix = f"{action_label} ({stat_label})" if stat_label else action_label
+        mod_val = task_res.get("modifier", 0)
+        mod_str = f" + {mod_val}" if mod_val >= 0 else f" - {abs(mod_val)}"
+        adv = task_res.get("advantage")
+        roll_display = f"{rolled_list} ({adv})" if adv else (str(rolled_list[0]) if rolled_list else "?")
+        total_val = task_res.get("total", 0)
+        res = f"{prefix} — DD {target}{init_name_str} : d20 = {roll_display}{mod_str} = {total_val} → {outcome_str}{margin_str}."
+    elif family == "PbtA2d6":
+        stat_label = task_res.get("stat") or pool_name
+        prefix = f"{action_label} ({stat_label})" if stat_label else action_label
+        mod_val = task_res.get("modifier", 0)
+        mod_str = f" + {mod_val}" if mod_val >= 0 else f" - {abs(mod_val)}"
+        total_val = task_res.get("total", 0)
+        tier_lbl = task_res.get("tier_label")
+        tier_str = f" ({tier_lbl})" if tier_lbl else ""
+        res = f"{prefix} : 2d6 = {rolled_list}{mod_str} = {total_val} → {outcome_str}{tier_str}."
+    else:  # DicePoolSuccess
+        total_val = task_res.get("total", 0)
+        res = f"{action_label} — seuil {target} succès : dés = {rolled_list} → {total_val} succès → {outcome_str}{margin_str}."
 
     # Effort block
     effort_res = state_changes.get("effort")
     if effort_res:
         waived = bool(effort_res.get("waived", False))
+        refunded = bool(effort_res.get("refunded", False))
         cost = effort_res.get("cost", 0)
         levels = effort_res.get("levels", 0)
 
         if waived:
             res += " Effort non dépensé."
+        elif refunded:
+            res += f" Effort : {levels} niveau(x), coût 0 (remboursé sur 20 naturel)."
         elif cost > 0:
             res += f" Effort : {levels} niveau(x), coût {cost}"
             pool_changes = state_changes.get(pool_id)
@@ -257,6 +406,39 @@ def format_task_roll_line(state_changes: dict, pack) -> str:
                 res += f", {pool_name} {pool_changes['avant']}→{pool_changes['apres']}."
             else:
                 res += "."
+
+    # Special roll narrative tag (for combat actions or when refunded)
+    special_roll = task_res.get("special_roll")
+    if special_roll and action_role != "general":
+        special_labels = getattr(action_def, "special_roll_labels", {}) if action_def else {}
+        label = special_labels.get(special_roll, special_roll)
+        res += f" {label} !"
+
+    # Attack damage block
+    atk_dmg = state_changes.get("attack_damage")
+    if atk_dmg:
+        total_dmg = atk_dmg.get("total", 0)
+        npc_dmg = state_changes.get("npc_damage")
+        if npc_dmg:
+            npc_id = npc_dmg.get("npc_id", "PNJ")
+            avant = npc_dmg.get("avant", 0)
+            apres = npc_dmg.get("apres", 0)
+            defeated_str = ", vaincu" if npc_dmg.get("defeated") else ""
+            res += f" Dégâts infligés : {total_dmg} ({npc_id} {avant}→{apres} PV{defeated_str})."
+        else:
+            res += f" Dégâts infligés : {total_dmg}."
+
+    # Defense damage taken block
+    dmg_taken = state_changes.get("damage_taken")
+    if dmg_taken:
+        eff_dmg = dmg_taken.get("effective", 0)
+        raw_dmg = dmg_taken.get("raw", 0)
+        arm_dmg = dmg_taken.get("armor", 0)
+        track_info = dmg_taken.get("damage_track", {})
+        track_str = ""
+        if track_info and track_info.get("avant") != track_info.get("apres"):
+            track_str = f", état {track_info.get('avant')}→{track_info.get('apres')}"
+        res += f" Dégâts subis : {eff_dmg} (brut {raw_dmg}, armure -{arm_dmg}{track_str})."
 
     warnings = task_res.get("warnings", [])
     if warnings:
@@ -282,7 +464,7 @@ def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict
     new_sheet = copy.deepcopy(sheet)
     restored_paths = []
 
-    engine_paths = ["recovery_step", "pending_allocation"]
+    engine_paths = ["recovery_step", "pending_allocation", "npc_health"]
 
     if pack.resources:
         if pack.resources.pools:
@@ -293,6 +475,8 @@ def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict
         if pack.resources.pool_groups:
             for group in pack.resources.pool_groups:
                 engine_paths.append(group.path)
+        if getattr(pack.resources, "damage", None) and pack.resources.damage.damage_track_path:
+            engine_paths.append(pack.resources.damage.damage_track_path)
 
     for path in engine_paths:
         try:

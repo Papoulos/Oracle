@@ -216,7 +216,7 @@ def test_transition_deterministic_logic():
     mock_classif.content = '{"category": "transition", "next_scene": "SCENE_02", "notable_deviation": "Le PJ a résolu l\'énigme."}'
 
     agent.llm = mock.Mock()
-    agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
+    agent.llm.invoke = mock.Mock(side_effect=[mock_classif])
     agent.narrator.generate_response = mock.Mock(return_value="Le narrateur décrit la transition.")
     agent.sheet_manager.update_sheet = mock.Mock(return_value={})
     agent.update_chronicle = mock.Mock()
@@ -269,7 +269,7 @@ def test_transition_invalid_fallback_to_improvisation():
     mock_classif.content = '{"category": "transition", "next_scene": "SCENE_INVALIDE", "notable_deviation": null}'
 
     agent.llm = mock.Mock()
-    agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
+    agent.llm.invoke = mock.Mock(side_effect=[mock_classif])
     agent.narrator.generate_response = mock.Mock(return_value="Narration.")
     agent.sheet_manager.update_sheet = mock.Mock(return_value={})
     agent.update_chronicle = mock.Mock()
@@ -317,7 +317,7 @@ def test_contournement_non_blocking():
     mock_classif.content = '{"category": "bypassed", "next_scene": null, "notable_deviation": "Le PJ a contourné."}'
 
     agent.llm = mock.Mock()
-    agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
+    agent.llm.invoke = mock.Mock(side_effect=[mock_classif])
     agent.narrator.generate_response = mock.Mock(return_value="Narration contournement.")
     agent.sheet_manager.update_sheet = mock.Mock(return_value={})
     agent.update_chronicle = mock.Mock()
@@ -365,7 +365,7 @@ def test_clock_trigger_consequence_injection():
     mock_classif.content = '{"category": "improvisation", "next_scene": null, "impacted_clocks": [{"name": "Le Volcan", "segments_added": 1}], "notable_deviation": null}'
 
     agent.llm = mock.Mock()
-    agent.llm.invoke = mock.Mock(side_effect=[mock_mech, mock_classif])
+    agent.llm.invoke = mock.Mock(side_effect=[mock_classif])
 
     agent.narrator.generate_response = mock.Mock(return_value="Le volcan explose.")
     agent.sheet_manager.update_sheet = mock.Mock(return_value={})

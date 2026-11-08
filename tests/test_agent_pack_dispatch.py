@@ -206,15 +206,9 @@ def test_experimental_mode(monkeypatch, tmp_path):
     agent = create_agent(tmp_path, pack_id=None, character_data={"pv": {"current": 5}})
     agent.llm.invoke.return_value = mock.Mock(content=json.dumps({"need_roll": False}))
 
-    with mock.patch.object(agent.gse, "consume_spell_slot") as mock_consume:
-        mock_consume.return_value = mock.Mock(success=True, message="Sort lancé")
-        agent.chat("Je lance un sort")
-        mock_consume.assert_called_once_with(1)
-
-    with mock.patch.object(agent.gse, "rest") as mock_rest:
-        mock_rest.return_value = mock.Mock(success=True, message="Repos pris")
-        agent.chat("repos long")
-        mock_rest.assert_called_once_with("long")
+    res = agent.chat("Je marche prudemment")
+    assert "Narrator response" in res
+    assert agent.gse.detect_action_type("Je lance un sort") is None
 
 def test_engine_owned_fields_survive_sheet_manager(monkeypatch, tmp_path, mock_systems_dir):
     monkeypatch.chdir(tmp_path)

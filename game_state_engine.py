@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Optional
 from systems.loader import SystemPack
-from mechanics.models import ResolutionRequest
+from mechanics.models import ResolutionRequest, Outcome
 from mechanics.resolution import resolve
 from mechanics.paths import get_by_path, set_by_path
 from mechanics.expr import evaluate_int, ExprError
@@ -38,14 +38,6 @@ class GameStateEngine:
     Central Game State Engine — Pure Python, zero LLM.
     Validates and applies all mechanical game state changes.
     """
-
-    RESOURCE_KEYWORDS = {
-        "sort": "spells_per_day",
-        "magie": "spells_per_day",
-        "spell": "spells_per_day",
-        "rage": "points_de_rage",
-        "inspiration": "inspiration",
-    }
 
     def __init__(self, character_path: str = "Memory/character.json", pack: Optional[SystemPack] = None, rng: Optional[random.Random] = None):
         self.character_path = character_path
@@ -81,23 +73,21 @@ class GameStateEngine:
 
     # ── Accessors ────────────────────────────────────────────
 
+    def _get_health_pool_def(self):
+        if self.pack and getattr(self.pack, "resources", None) and self.pack.resources.pools:
+            return next((p for p in self.pack.resources.pools if p.kind == "health"), None)
+        return None
+
     def get_hp(self) -> tuple[int, int]:
         """Returns (current_hp, max_hp)."""
+        hp_pool = self._get_health_pool_def()
+        if hp_pool:
+            cur = get_by_path(self.state, hp_pool.current_path)
+            max_val = hp_pool.max_value if hp_pool.max_value is not None else (get_by_path(self.state, hp_pool.max_path) if hp_pool.max_path else 0)
+            return (cur if isinstance(cur, int) else 0), (max_val if isinstance(max_val, int) else 0)
         resources = self.state.get("resources", {})
         pv = resources.get("hit_points", {})
         return pv.get("current", 0), pv.get("max", 0)
-
-    def get_resource(self, resource_key: str, level: Optional[int] = None) -> tuple[int, int]:
-        """
-        Returns (current, max) for a resource.
-        If level is provided, searches in resource_key.level_N (for spells).
-        """
-        resources = self.state.get("resources", {})
-        resource = resources.get(resource_key, {})
-        if level is not None:
-            slot = resource.get(f"level_{level}", {})
-            return slot.get("current", 0), slot.get("max", 0)
-        return resource.get("current", 0), resource.get("max", 0)
 
     def get_state_summary(self) -> str:
         """Readable summary of the state for the Orchestrator."""
@@ -147,60 +137,177 @@ class GameStateEngine:
                         values = group_dict[key]
                         if isinstance(values, dict):
                             lines.append(f"{group.name} {key}: {values.get('current', 0)}/{values.get('max', 0)}")
-        else:
-            # Legacy branch
-            resources = self.state.get("resources", {})
-            spells = resources.get("spells_per_day", {})
-            if isinstance(spells, dict):
-                for slot, values in spells.items():
-                    if isinstance(values, dict):
-                        lines.append(f"Spells {slot}: {values.get('current', 0)}/{values.get('max', 0)}")
+
+            dmg_cfg = getattr(self.pack.resources, "damage", None)
+            if dmg_cfg:
+                if dmg_cfg.armor_path:
+                    armor_val = get_by_path(self.state, dmg_cfg.armor_path)
+                    if isinstance(armor_val, int) and not isinstance(armor_val, bool):
+                        lines.append(f"Armor: {armor_val}")
+                if dmg_cfg.damage_track_path:
+                    track_val = get_by_path(self.state, dmg_cfg.damage_track_path)
+                    if isinstance(track_val, str) and track_val:
+                        lines.append(f"Damage Track: {track_val}")
+
+            npc_health = self.state.get("npc_health")
+            if isinstance(npc_health, dict) and npc_health:
+                npc_parts = []
+                for npc_id, info in npc_health.items():
+                    if isinstance(info, dict):
+                        npc_parts.append(f"{npc_id} {info.get('current', 0)}/{info.get('max', 0)}")
+                if npc_parts:
+                    lines.append(f"NPC Health: {', '.join(npc_parts)}")
 
         return " | ".join(lines)
 
-    # ── Validation ────────────────────────────────────────────
-
-    def can_use_spell(self, spell_level: int) -> ActionResult:
-        """Verifies if the character can cast a spell of the given level."""
-        current, max_val = self.get_resource("spells_per_day", level=spell_level)
-        if max_val == 0:
-            return ActionResult(
-                success=False,
-                message=f"The character has no spell slots of level {spell_level}.",
-                blocked_reason="no_spell_slot"
-            )
-        if current <= 0:
-            return ActionResult(
-                success=False,
-                message=f"No spell slots of level {spell_level} remaining. Rest required.",
-                blocked_reason="no_spell_slot_remaining"
-            )
-        return ActionResult(success=True, message=f"Spell slot level {spell_level} available ({current}/{max_val}).")
-
-    def can_use_resource(self, resource_key: str) -> ActionResult:
-        """Verifies if a generic resource is available."""
-        current, max_val = self.get_resource(resource_key)
-        if max_val == 0:
-            return ActionResult(
-                success=False,
-                message=f"Resource '{resource_key}' unavailable for this character.",
-                blocked_reason="resource_unavailable"
-            )
-        if current <= 0:
-            return ActionResult(
-                success=False,
-                message=f"Resource '{resource_key}' depleted. Rest required.",
-                blocked_reason="resource_depleted"
-            )
-        return ActionResult(success=True, message=f"Resource '{resource_key}' available ({current}/{max_val}).")
-
     # ── Modifications Application ────────────────────────
 
-    def apply_damage(self, amount: int) -> ActionResult:
-        """Applies damage to the character."""
+    def _compute_damage_track(self) -> Optional[str]:
+        """
+        Computes the damage track state configured in the pack's damage settings
+        based on how many cascade pools are at or below min_value.
+        """
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "damage", None):
+            return None
+        dmg_cfg = self.pack.resources.damage
+        if not dmg_cfg.damage_track_states:
+            return None
+        zero_count = 0
+        present_pools = 0
+        for pid in dmg_cfg.cascade_pools:
+            pool_def = next((p for p in self.pack.resources.pools if p.id == pid), None)
+            if not pool_def:
+                continue
+            cur = get_by_path(self.state, pool_def.current_path)
+            if isinstance(cur, int) and not isinstance(cur, bool):
+                present_pools += 1
+                if cur <= pool_def.min_value:
+                    zero_count += 1
+        if present_pools == 0:
+            return None
+        states = dmg_cfg.damage_track_states
+        idx = min(zero_count, len(states) - 1)
+        return states[idx]
+
+    def advance_damage_track(self, steps: int = 1) -> ActionResult:
+        """
+        Directly shifts the character's damage track by `steps` (positive to worsen,
+        negative to recover), as configured in the pack's damage_track_states.
+        """
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "damage", None):
+            return ActionResult(success=False, message="No damage track configured in pack.", blocked_reason="no_damage_track")
+        dmg_cfg = self.pack.resources.damage
+        states = dmg_cfg.damage_track_states
+        if not states or not dmg_cfg.damage_track_path:
+            return ActionResult(success=False, message="No damage track states configured in pack.", blocked_reason="no_damage_track")
+
+        old_track = get_by_path(self.state, dmg_cfg.damage_track_path)
+        old_idx = states.index(old_track) if old_track in states else 0
+        new_idx = max(0, min(len(states) - 1, old_idx + steps))
+        new_track = states[new_idx]
+        set_by_path(self.state, dmg_cfg.damage_track_path, new_track)
+        self.save()
+        return ActionResult(
+            success=True,
+            message=f"Damage track shifted: {old_track or states[0]} -> {new_track}.",
+            state_changes={dmg_cfg.damage_track_path: {"avant": old_track or states[0], "apres": new_track}},
+        )
+
+    def update_damage_track(self) -> Optional[dict]:
+        """
+        Updates the damage track in state if configured and returns {"avant": old, "apres": new}
+        if it changed, or None.
+        """
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "damage", None):
+            return None
+        dmg_cfg = self.pack.resources.damage
+        new_track = self._compute_damage_track()
+        if new_track is None:
+            return None
+        old_track = get_by_path(self.state, dmg_cfg.damage_track_path)
+        if old_track != new_track:
+            set_by_path(self.state, dmg_cfg.damage_track_path, new_track)
+            return {"avant": old_track, "apres": new_track}
+        return None
+
+    def apply_damage(self, amount: int, pool_id: Optional[str] = None, ignore_armor: bool = False) -> ActionResult:
+        """Applies damage to the character (supports pack pool cascade + armor or legacy hit_points)."""
+        if type(amount) is bool or not isinstance(amount, int) or amount < 0:
+            return ActionResult(success=False, message="damage amount must be a non-negative integer", blocked_reason="invalid_damage")
+
+        if (
+            self.pack
+            and getattr(self.pack, "resources", None)
+            and getattr(self.pack.resources, "damage", None)
+            and not self._pack_manages_hit_points()
+        ):
+            dmg_cfg = self.pack.resources.damage
+            armor_val = 0
+            if not ignore_armor and dmg_cfg.armor_path:
+                raw_armor = get_by_path(self.state, dmg_cfg.armor_path)
+                if isinstance(raw_armor, int) and not isinstance(raw_armor, bool) and raw_armor > 0:
+                    armor_val = raw_armor
+
+            effective = max(0, amount - armor_val)
+            cascade_order = list(dmg_cfg.cascade_pools)
+            if pool_id and pool_id in cascade_order:
+                cascade_order.remove(pool_id)
+                cascade_order.insert(0, pool_id)
+
+            remaining = effective
+            pools_affected = {}
+            for pid in cascade_order:
+                if remaining <= 0:
+                    break
+                pool_def = next((p for p in self.pack.resources.pools if p.id == pid), None)
+                if not pool_def:
+                    continue
+                cur = get_by_path(self.state, pool_def.current_path)
+                if not isinstance(cur, int) or isinstance(cur, bool):
+                    continue
+                avail = max(0, cur - pool_def.min_value)
+                loss = min(avail, remaining)
+                if loss > 0:
+                    new_val = cur - loss
+                    set_by_path(self.state, pool_def.current_path, new_val)
+                    pools_affected[pid] = {"avant": cur, "apres": new_val, "loss": loss}
+                    remaining -= loss
+
+            default_track = dmg_cfg.damage_track_states[0] if dmg_cfg.damage_track_states else None
+            old_track = (get_by_path(self.state, dmg_cfg.damage_track_path) if dmg_cfg.damage_track_path else None) or default_track
+            new_track = self._compute_damage_track() or old_track
+            if dmg_cfg.damage_track_path and new_track is not None:
+                set_by_path(self.state, dmg_cfg.damage_track_path, new_track)
+            self.save()
+
+            dmg_summary = {
+                "raw": amount,
+                "armor": armor_val,
+                "effective": effective,
+                "unabsorbed": remaining,
+                "pools": pools_affected,
+                "damage_track": {"avant": old_track, "apres": new_track},
+            }
+            state_changes = {"damage": dmg_summary}
+            for pid, pchange in pools_affected.items():
+                state_changes[pid] = {"avant": pchange["avant"], "apres": pchange["apres"]}
+            if old_track != new_track:
+                state_changes[dmg_cfg.damage_track_path] = {"avant": old_track, "apres": new_track}
+
+            pool_parts = [f"{pid} {c['avant']}->{c['apres']}" for pid, c in pools_affected.items()]
+            pools_str = ", ".join(pool_parts) if pool_parts else "none"
+            msg = f"Damage: {amount} raw - {armor_val} armor = {effective} effective ({pools_str}). Track: {old_track}->{new_track}."
+            return ActionResult(success=True, message=msg, state_changes=state_changes)
+
+        hp_pool = self._get_health_pool_def()
         hp_cur, hp_max = self.get_hp()
-        new_hp = max(0, hp_cur - amount)
-        self.state.setdefault("resources", {}).setdefault("hit_points", {})["current"] = new_hp
+        min_hp = hp_pool.min_value if hp_pool else 0
+        new_hp = max(min_hp, hp_cur - amount)
+        pool_key = hp_pool.id if hp_pool else "hit_points"
+        if hp_pool:
+            set_by_path(self.state, hp_pool.current_path, new_hp)
+        else:
+            self.state.setdefault("resources", {}).setdefault("hit_points", {})["current"] = new_hp
         if "pv" in self.state:
             self.state["pv"] = new_hp
         self.save()
@@ -208,36 +315,75 @@ class GameStateEngine:
         return ActionResult(
             success=True,
             message=f"-{amount} HP. {status}",
-            state_changes={"hit_points": {"avant": hp_cur, "apres": new_hp}}
+            state_changes={pool_key: {"avant": hp_cur, "apres": new_hp}}
         )
+
+    def apply_npc_damage(
+        self,
+        npc_id: str,
+        damage: int,
+        npc_level: int = 1,
+        npc_health_max: Optional[int] = None,
+        npc_armor: int = 0,
+    ) -> dict:
+        """
+        Applies damage to a target NPC tracked in self.state['npc_health'][npc_id].
+        Defaults NPC max health to 3 * npc_level when not previously tracked or specified.
+        """
+        npc_table = self.state.setdefault("npc_health", {})
+        entry = npc_table.get(npc_id)
+        if not isinstance(entry, dict):
+            max_hp = npc_health_max if (isinstance(npc_health_max, int) and npc_health_max > 0) else max(1, npc_level * 3)
+            armor_val = npc_armor if (isinstance(npc_armor, int) and npc_armor >= 0) else 0
+            entry = {
+                "current": max_hp,
+                "max": max_hp,
+                "level": npc_level,
+                "armor": armor_val,
+            }
+            npc_table[npc_id] = entry
+        else:
+            if isinstance(npc_health_max, int) and npc_health_max > 0 and "max" not in entry:
+                entry["max"] = npc_health_max
+            if isinstance(npc_armor, int) and npc_armor > 0 and not entry.get("armor"):
+                entry["armor"] = npc_armor
+
+        armor_used = entry.get("armor", 0)
+        if not isinstance(armor_used, int) or armor_used < 0:
+            armor_used = 0
+        effective = max(0, damage - armor_used)
+        before = entry.get("current", entry.get("max", 0))
+        after = max(0, before - effective)
+        entry["current"] = after
+        self.save()
+        return {
+            "npc_id": npc_id,
+            "raw_damage": damage,
+            "armor": armor_used,
+            "effective_damage": effective,
+            "avant": before,
+            "apres": after,
+            "max": entry.get("max", before),
+            "defeated": after == 0,
+        }
 
     def apply_healing(self, amount: int) -> ActionResult:
         """Applies healing to the character."""
+        hp_pool = self._get_health_pool_def()
         hp_cur, hp_max = self.get_hp()
-        new_hp = min(hp_max, hp_cur + amount)
-        self.state.setdefault("resources", {}).setdefault("hit_points", {})["current"] = new_hp
+        new_hp = min(hp_max, hp_cur + amount) if hp_max > 0 else (hp_cur + amount)
+        pool_key = hp_pool.id if hp_pool else "hit_points"
+        if hp_pool:
+            set_by_path(self.state, hp_pool.current_path, new_hp)
+        else:
+            self.state.setdefault("resources", {}).setdefault("hit_points", {})["current"] = new_hp
         if "pv" in self.state:
             self.state["pv"] = new_hp
         self.save()
         return ActionResult(
             success=True,
             message=f"+{amount} HP. {new_hp}/{hp_max} HP.",
-            state_changes={"hit_points": {"avant": hp_cur, "apres": new_hp}}
-        )
-
-    def consume_spell_slot(self, spell_level: int) -> ActionResult:
-        """Consumes a spell slot."""
-        check = self.can_use_spell(spell_level)
-        if not check.success:
-            return check
-        current, max_val = self.get_resource("spells_per_day", level=spell_level)
-        slot_key = f"level_{spell_level}"
-        self.state.setdefault("resources", {}).setdefault("spells_per_day", {}).setdefault(slot_key, {})["current"] = current - 1
-        self.save()
-        return ActionResult(
-            success=True,
-            message=f"Spell slot level {spell_level} consumed ({current - 1}/{max_val} remaining).",
-            state_changes={"spells_per_day": {slot_key: {"avant": current, "apres": current - 1}}}
+            state_changes={pool_key: {"avant": hp_cur, "apres": new_hp}}
         )
 
     def consume_pool(self, target_id: str, key: Optional[str] = None, amount: int = 1) -> ActionResult:
@@ -287,21 +433,6 @@ class GameStateEngine:
                 message=f"Consumed {amount} from {group.name} [{key}] ({new_val} remaining).",
                 state_changes={group.id: {key: {"avant": current, "apres": new_val}}}
             )
-
-    def consume_resource(self, resource_key: str, amount: int = 1) -> ActionResult:
-        """Consumes a generic resource."""
-        check = self.can_use_resource(resource_key)
-        if not check.success:
-            return check
-        current, max_val = self.get_resource(resource_key)
-        new_val = max(0, current - amount)
-        self.state.setdefault("resources", {})[resource_key]["current"] = new_val
-        self.save()
-        return ActionResult(
-            success=True,
-            message=f"'{resource_key}' consumed ({new_val}/{max_val} remaining).",
-            state_changes={resource_key: {"avant": current, "apres": new_val}}
-        )
 
     def add_xp(self, amount: int) -> ActionResult:
         """Adds XP and detects level up."""
@@ -569,12 +700,18 @@ class GameStateEngine:
                     "next_index": sequence_info["next_index"]
                 }
 
+            dmg_cfg = getattr(self.pack.resources, "damage", None)
+            if dmg_cfg and get_by_path(self.state, dmg_cfg.damage_track_path) is not None:
+                track_change = self.update_damage_track()
+                if track_change:
+                    state_changes["damage_track"] = track_change
+
             self.synchronize_and_recalculate()
             self.save()
 
             final_changes = {"rest": trigger_id, "restored": {}}
             for key, val in state_changes.items():
-                if key in ("pending_allocation", "pooled", "sequence", "restored"):
+                if key in ("pending_allocation", "pooled", "sequence", "restored", "damage_track"):
                     final_changes[key] = val
                 else:
                     final_changes["restored"][key] = val
@@ -590,9 +727,7 @@ class GameStateEngine:
                 state_changes=final_changes
             )
 
-        if trigger_id in ("long", "short"):
-            return self._legacy_rest(trigger_id)
-        return ActionResult(success=False, message=f"Unknown recovery tier '{trigger_id}'.")
+        return ActionResult(success=False, message=f"Unknown recovery tier '{trigger_id}'.", blocked_reason="no_pack")
 
     def allocate_recovery(self, allocation: dict[str, int]) -> ActionResult:
         """
@@ -665,6 +800,12 @@ class GameStateEngine:
         }
 
         del self.state["pending_allocation"]
+        if self.pack and getattr(self.pack, "resources", None):
+            dmg_cfg = getattr(self.pack.resources, "damage", None)
+            if dmg_cfg and get_by_path(self.state, dmg_cfg.damage_track_path) is not None:
+                track_change = self.update_damage_track()
+                if track_change:
+                    state_changes["damage_track"] = track_change
         self.synchronize_and_recalculate()
         self.save()
 
@@ -674,74 +815,79 @@ class GameStateEngine:
             state_changes=state_changes
         )
 
-    def _legacy_rest(self, rest_type: str = "long") -> ActionResult:
-        resources = self.state.get("resources", {})
-        restored = []
-
-        if rest_type == "long":
-            # Max HP
-            pv = resources.get("hit_points", {})
-            if pv:
-                pv["current"] = pv.get("max", pv.get("current", 0))
-                if "pv" in self.state:
-                    self.state["pv"] = pv["current"]
-                restored.append("HP")
-
-            # Spells
-            spells = resources.get("spells_per_day", {})
-            for slot, values in spells.items():
-                if isinstance(values, dict) and "max" in values:
-                    values["current"] = values["max"]
-            if spells:
-                restored.append("spells")
-
-            # Other resources with max
-            for key, values in resources.items():
-                if key not in ("hit_points", "spells_per_day") and isinstance(values, dict) and "max" in values:
-                    values["current"] = values["max"]
-                    restored.append(key)
-
-        elif rest_type == "short":
-            # Only HP
-            pv = resources.get("hit_points", {})
-            if pv:
-                heal = max(1, pv.get("max", 1) // 4)
-                pv["current"] = min(pv.get("max", 0), pv.get("current", 0) + heal)
-                if "pv" in self.state:
-                    self.state["pv"] = pv["current"]
-                restored.append(f"HP +{heal}")
-
-        self.state["resources"] = resources
-        self.save()
-        return ActionResult(
-            success=True,
-            message=f"Rest {rest_type} completed. Restored: {', '.join(restored) if restored else 'nothing'}.",
-            state_changes={"rest": rest_type, "restored": restored}
-        )
+    def _resolve_stat_modifier(self, stat: Optional[str], explicit_modifier: int = 0) -> int:
+        if explicit_modifier != 0 or not stat or not isinstance(self.state, dict):
+            return explicit_modifier
+        mods = self.state.get("modifiers")
+        if isinstance(mods, dict):
+            for k, v in mods.items():
+                if k.lower() == stat.lower() and isinstance(v, int) and not isinstance(v, bool):
+                    return v
+        stats = self.state.get("statistics")
+        if isinstance(stats, dict):
+            for k, v in stats.items():
+                if k.lower() == stat.lower() and isinstance(v, int) and not isinstance(v, bool):
+                    return v if -5 <= v <= 10 else (v - 10) // 2
+        return 0
 
     def execute_task(
         self,
         action_id: str,
-        pool_id: Optional[str],
-        difficulty: int,
+        pool_id: Optional[str] = None,
+        difficulty: Optional[int] = None,
         step_adjustments: Optional[dict[str, int]] = None,
         effort_levels: int = 0,
-        impaired: bool = False
+        impaired: Optional[bool] = None,
+        damage_effort_levels: int = 0,
+        base_damage: Optional[int] = None,
+        target_npc: Optional[str] = None,
+        npc_health_max: Optional[int] = None,
+        npc_armor: int = 0,
+        incoming_damage: Optional[int] = None,
+        damage_pool: Optional[str] = None,
+        ignore_armor: bool = False,
+        refund_on_20: Optional[bool] = None,
+        modifier: int = 0,
+        roll_bonus: int = 0,
+        advantage: str = "none",
+        pool_size: Optional[int] = None,
+        stat: Optional[str] = None,
     ) -> ActionResult:
         """
-        Executes a task action (e.g. attack, defend, climb) dynamically from the system pack.
+        Executes a task action (e.g. attack, defend, climb, ability_check) dynamically from the system pack.
+        Supports StepTargetD20, D20VsTarget, PbtA2d6, and DicePoolSuccess resolution families.
         """
         if not self.pack:
             return ActionResult(success=False, message="No system pack loaded.", blocked_reason="no_pack")
         if not getattr(self.pack, "actions", None) or not self.pack.actions.actions:
             return ActionResult(success=False, message="System pack has no actions configured.", blocked_reason="no_actions")
-        if self.pack.resolution.family != "StepTargetD20":
-            return ActionResult(success=False, message="Task actions currently only support StepTargetD20 family.", blocked_reason="unsupported_family")
+
+        family = self.pack.resolution.family
+        if family not in ("StepTargetD20", "D20VsTarget", "PbtA2d6", "DicePoolSuccess"):
+            return ActionResult(success=False, message=f"Unsupported resolution family '{family}'.", blocked_reason="unsupported_family")
 
         action = next((a for a in self.pack.actions.actions if a.id == action_id and a.kind == "task"), None)
         if not action:
             valid_actions = [a.id for a in self.pack.actions.actions if a.kind == "task"]
             return ActionResult(success=False, message=f"Unknown task action '{action_id}'. Valid actions: {', '.join(valid_actions)}", blocked_reason="unknown_action")
+
+        # Damage track check (configured blocking_states block tasks; impaired_state auto-applies unless overridden)
+        dmg_cfg = getattr(self.pack.resources, "damage", None) if getattr(self.pack, "resources", None) else None
+        current_track = None
+        if dmg_cfg and dmg_cfg.damage_track_path:
+            current_track = get_by_path(self.state, dmg_cfg.damage_track_path)
+            if current_track and current_track in dmg_cfg.blocking_states:
+                return ActionResult(
+                    success=False,
+                    message=f"Character is {current_track} and cannot perform tasks.",
+                    blocked_reason=current_track,
+                )
+
+        is_impaired = (
+            bool(impaired)
+            if impaired is not None
+            else bool(dmg_cfg and dmg_cfg.impaired_state and current_track == dmg_cfg.impaired_state)
+        )
 
         # Validation of pool_id
         if action.pools:
@@ -752,7 +898,7 @@ class GameStateEngine:
         else:
             if pool_id is not None:
                 return ActionResult(success=False, message=f"action '{action_id}' does not use a pool", blocked_reason="invalid_pool")
-            if effort_levels > 0:
+            if effort_levels > 0 or damage_effort_levels > 0:
                 return ActionResult(success=False, message="effort requires a pool", blocked_reason="invalid_pool")
 
         pool_def = None
@@ -761,16 +907,38 @@ class GameStateEngine:
             if not pool_def:
                 return ActionResult(success=False, message=f"Pool '{pool_id}' not found in resources.", blocked_reason="invalid_pool")
 
-        # Validation of difficulty
-        if type(difficulty) is bool or not isinstance(difficulty, int):
-            return ActionResult(success=False, message="difficulty must be an integer", blocked_reason="invalid_difficulty")
-        if not (self.pack.resolution.min_difficulty <= difficulty <= self.pack.resolution.max_difficulty):
-            return ActionResult(success=False, message=f"difficulty {difficulty} out of bounds [{self.pack.resolution.min_difficulty}, {self.pack.resolution.max_difficulty}]", blocked_reason="invalid_difficulty")
+        # Family-specific difficulty & parameter validation
+        if family == "StepTargetD20":
+            if type(difficulty) is bool or not isinstance(difficulty, int):
+                return ActionResult(success=False, message="difficulty must be an integer", blocked_reason="invalid_difficulty")
+            if not (self.pack.resolution.min_difficulty <= difficulty <= self.pack.resolution.max_difficulty):
+                return ActionResult(success=False, message=f"difficulty {difficulty} out of bounds [{self.pack.resolution.min_difficulty}, {self.pack.resolution.max_difficulty}]", blocked_reason="invalid_difficulty")
+        elif family == "D20VsTarget":
+            if type(difficulty) is bool or not isinstance(difficulty, int) or difficulty < 0:
+                return ActionResult(success=False, message="difficulty (DC/AC) must be a non-negative integer", blocked_reason="invalid_difficulty")
+            if advantage not in ("none", "advantage", "disadvantage"):
+                return ActionResult(success=False, message=f"invalid advantage mode '{advantage}'", blocked_reason="invalid_advantage")
+        elif family == "PbtA2d6":
+            if difficulty is None:
+                difficulty = 0
+            elif type(difficulty) is bool or not isinstance(difficulty, int):
+                return ActionResult(success=False, message="difficulty must be an integer", blocked_reason="invalid_difficulty")
+        elif family == "DicePoolSuccess":
+            if difficulty is None:
+                difficulty = 1
+            elif type(difficulty) is bool or not isinstance(difficulty, int) or difficulty < 1:
+                return ActionResult(success=False, message="difficulty (required successes) must be a positive integer", blocked_reason="invalid_difficulty")
+            eff_pool_size = pool_size if pool_size is not None else getattr(self.pack.resolution, "default_pool_size", None)
+            if type(eff_pool_size) is bool or not isinstance(eff_pool_size, int) or eff_pool_size < 1:
+                return ActionResult(success=False, message="pool_size must be a positive integer", blocked_reason="invalid_pool_size")
 
         # Validation of effort
         if type(effort_levels) is bool or not isinstance(effort_levels, int) or effort_levels < 0:
             return ActionResult(success=False, message="effort_levels must be a non-negative integer", blocked_reason="invalid_effort")
+        if type(damage_effort_levels) is bool or not isinstance(damage_effort_levels, int) or damage_effort_levels < 0:
+            return ActionResult(success=False, message="damage_effort_levels must be a non-negative integer", blocked_reason="invalid_effort")
 
+        total_effort_levels = effort_levels + damage_effort_levels
         adj = dict(step_adjustments or {})
         effort_cost = 0
         edge = 0
@@ -783,8 +951,8 @@ class GameStateEngine:
             if action.effort.max_levels_path:
                 max_levels = get_by_path(self.state, action.effort.max_levels_path)
 
-            if max_levels is not None and effort_levels > max_levels:
-                return ActionResult(success=False, message=f"effort_levels ({effort_levels}) exceeds max_levels ({max_levels})", blocked_reason="invalid_effort")
+            if max_levels is not None and total_effort_levels > max_levels:
+                return ActionResult(success=False, message=f"effort_levels ({total_effort_levels}) exceeds max_levels ({max_levels})", blocked_reason="invalid_effort")
 
             if action.effort.edge_path_template and pool_id:
                 edge_path = action.effort.edge_path_template.format(pool=pool_id)
@@ -794,15 +962,16 @@ class GameStateEngine:
 
             ctx = {
                 "character": self.state,
-                "effort": {"levels": effort_levels, "edge": edge, "impaired": impaired}
+                "effort": {"levels": total_effort_levels, "edge": edge, "impaired": is_impaired}
             }
-            if effort_levels > 0:
+            if total_effort_levels > 0:
                 try:
                     raw_cost = evaluate_int(action.effort.cost_expr, ctx, self.rng)
                     effort_cost = max(0, raw_cost)
                 except ExprError as e:
                     return ActionResult(success=False, message=f"formula_error: {e}", blocked_reason="formula_error")
 
+            if effort_levels > 0:
                 adj[action.effort.adjustment_key] = -effort_levels
 
         current_val = 0
@@ -814,79 +983,160 @@ class GameStateEngine:
             if current_val - effort_cost < pool_def.min_value:
                 return ActionResult(success=False, message=f"Insufficient resources in '{pool_id}' to pay effort cost of {effort_cost}", blocked_reason="insufficient_resources")
 
-        req = ResolutionRequest(
-            difficulty=difficulty,
-            step_adjustments=adj
-        )
+        eff_modifier = self._resolve_stat_modifier(stat, modifier)
+
+        if family == "StepTargetD20":
+            req = ResolutionRequest(
+                difficulty=difficulty,
+                step_adjustments=adj
+            )
+        elif family == "D20VsTarget":
+            req = ResolutionRequest(
+                difficulty=difficulty,
+                modifier=eff_modifier,
+                roll_bonus=roll_bonus,
+                advantage=advantage,
+            )
+        elif family == "PbtA2d6":
+            req = ResolutionRequest(
+                difficulty=difficulty or 0,
+                modifier=eff_modifier,
+                roll_bonus=roll_bonus,
+            )
+        else:  # DicePoolSuccess
+            req = ResolutionRequest(
+                difficulty=difficulty,
+                pool_size=pool_size if pool_size is not None else getattr(self.pack.resolution, "default_pool_size", None),
+            )
+
         result = resolve(self.pack.resolution, req, self.rng)
-
-        # Build output message
-        pool_name = pool_def.name if pool_def else "no pool"
-
-        initial_name = next((s.name for s in self.pack.actions.difficulty_scale if s.level == difficulty), None)
-        diff_str = f"difficulty {difficulty}"
-        if initial_name:
-            diff_str += f" ({initial_name})"
-
-        final_name = next((s.name for s in self.pack.actions.difficulty_scale if s.level == result.difficulty_final), None)
-        if result.difficulty_initial != result.difficulty_final:
-            diff_str += f" reduced to {result.difficulty_final}"
-            if final_name:
-                diff_str += f" ({final_name})"
-
-        # Construct technical phrase
-        if result.impossible:
-            phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {result.target} is unreachable: no die rolled, FAILURE."
-        elif result.difficulty_final == self.pack.resolution.auto_success_at:
-            phrase = f"Task '{action_id}' with {pool_name}: {diff_str}: automatic success, no die rolled."
+        if result.rolled:
+            if family == "D20VsTarget" and advantage == "advantage":
+                nat_roll = max(result.rolled)
+            elif family == "D20VsTarget" and advantage == "disadvantage":
+                nat_roll = min(result.rolled)
+            else:
+                nat_roll = result.rolled[0]
         else:
+            nat_roll = None
+
+        # Special roll detection (configured in action.special_rolls; suppressed when impaired if in impaired_suppressed_special_rolls)
+        special_roll = None
+        if nat_roll is not None and getattr(action, "special_rolls", None):
+            suppressed = getattr(action, "impaired_suppressed_special_rolls", []) or []
+            if not (is_impaired and str(nat_roll) in suppressed):
+                special_roll = action.special_rolls.get(str(nat_roll))
+
+        # Build output message and task_dict
+        pool_name = pool_def.name if pool_def else (stat if stat else "no pool")
+        initial_name = next((s.name for s in self.pack.actions.difficulty_scale if s.level == difficulty), None) if self.pack.actions.difficulty_scale else None
+        final_name = next((s.name for s in self.pack.actions.difficulty_scale if s.level == result.difficulty_final), None) if (self.pack.actions.difficulty_scale and result.difficulty_final is not None) else initial_name
+        eff_target = result.target if result.target is not None else difficulty
+
+        if family == "StepTargetD20":
+            diff_str = f"difficulty {difficulty}"
+            if initial_name:
+                diff_str += f" ({initial_name})"
+            if result.difficulty_initial != result.difficulty_final:
+                diff_str += f" reduced to {result.difficulty_final}"
+                if final_name:
+                    diff_str += f" ({final_name})"
+
+            if result.impossible:
+                phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {eff_target} is unreachable: no die rolled, FAILURE."
+            elif result.difficulty_final == self.pack.resolution.auto_success_at:
+                phrase = f"Task '{action_id}' with {pool_name}: {diff_str}: automatic success, no die rolled."
+            else:
+                margin_str = f"+{result.margin}" if result.margin is not None and result.margin >= 0 else str(result.margin)
+                rolled_str = str(result.rolled[0]) if result.rolled else "none"
+                phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {eff_target}, rolled {rolled_str}, {result.outcome.name} (margin {margin_str})."
+        elif family == "D20VsTarget":
             margin_str = f"+{result.margin}" if result.margin is not None and result.margin >= 0 else str(result.margin)
-            rolled_str = str(result.rolled[0]) if result.rolled else "none"
-            phrase = f"Task '{action_id}' with {pool_name}: {diff_str}, target {result.target}, rolled {rolled_str}, {result.outcome.name} (margin {margin_str})."
+            total_mod = eff_modifier + roll_bonus
+            mod_str = f"+{total_mod}" if total_mod >= 0 else str(total_mod)
+            adv_str = f" ({advantage})" if advantage != "none" else ""
+            phrase = f"Task '{action_id}' ({pool_name}): DC {eff_target}, rolled {result.rolled}{adv_str} {mod_str} = {result.total}, {result.outcome.name} (margin {margin_str})."
+        elif family == "PbtA2d6":
+            total_mod = eff_modifier + roll_bonus
+            mod_str = f"+{total_mod}" if total_mod >= 0 else str(total_mod)
+            tier_str = f" [{result.tier_label}]" if result.tier_label else ""
+            phrase = f"Task '{action_id}' ({pool_name}): rolled {result.rolled} {mod_str} = {result.total}, {result.outcome.name}{tier_str}."
+        else:  # DicePoolSuccess
+            margin_str = f"+{result.margin}" if result.margin is not None and result.margin >= 0 else str(result.margin)
+            phrase = f"Task '{action_id}': rolled {result.rolled} -> {result.total} successes vs {eff_target}, {result.outcome.name} (margin {margin_str})."
 
         effort_waived = False
-        if effort_levels > 0 and result.impossible:
+        effort_refunded = False
+        should_refund_20 = refund_on_20 if refund_on_20 is not None else bool(action.effort and action.effort.refund_on_20)
+
+        if total_effort_levels > 0 and result.impossible:
             effort_waived = True
             effort_cost = 0
+        elif total_effort_levels > 0 and nat_roll == 20 and should_refund_20:
+            effort_refunded = True
+            effort_cost = 0
 
-        if effort_levels > 0 and pool_def:
+        if total_effort_levels > 0 and pool_def:
             if effort_waived:
                 phrase += " Effort not spent: the task is impossible."
+            elif effort_refunded:
+                phrase += f" Effort: {total_effort_levels} level(s), cost 0 (refunded on natural 20, {current_val} remaining)."
             else:
                 rem = current_val - effort_cost
-                phrase += f" Effort: {effort_levels} level(s), cost {effort_cost} ({rem} remaining)."
+                phrase += f" Effort: {total_effort_levels} level(s), cost {effort_cost} ({rem} remaining)."
+
+        if special_roll:
+            phrase += f" Special roll ({nat_roll}): {special_roll}."
 
         if result.warnings:
             phrase += f" Warnings: {', '.join(result.warnings)}."
 
-        state_changes = {
-            "task": {
-                "action": action_id,
-                "pool": pool_id,
-                "difficulty": {
-                    "initial": result.difficulty_initial,
-                    "final": result.difficulty_final,
-                    "name": final_name
-                },
-                "target": result.target,
-                "rolled": result.rolled,
-                "total": result.total,
-                "outcome": result.outcome.name,
-                "margin": result.margin,
-                "impossible": result.impossible,
-                "warnings": list(result.warnings)
-            }
+        task_dict = {
+            "action": action_id,
+            "pool": pool_id,
+            "difficulty": {
+                "initial": result.difficulty_initial if result.difficulty_initial is not None else difficulty,
+                "final": result.difficulty_final if result.difficulty_final is not None else difficulty,
+                "name": final_name
+            },
+            "target": eff_target,
+            "rolled": result.rolled,
+            "total": result.total,
+            "outcome": result.outcome.name,
+            "margin": result.margin,
+            "impossible": result.impossible,
+            "warnings": list(result.warnings)
         }
+        if family in ("D20VsTarget", "PbtA2d6"):
+            task_dict["modifier"] = eff_modifier + roll_bonus
+            if stat:
+                task_dict["stat"] = stat
+            if family == "D20VsTarget" and advantage != "none":
+                task_dict["advantage"] = advantage
+            if family == "PbtA2d6":
+                task_dict["tier_id"] = result.tier_id
+                task_dict["tier_label"] = result.tier_label
+        if special_roll:
+            task_dict["special_roll"] = special_roll
 
-        if effort_levels > 0 and pool_def:
-            state_changes["effort"] = {
-                "levels": effort_levels,
+        state_changes = {"task": task_dict}
+
+        if total_effort_levels > 0 and pool_def:
+            effort_dict = {
+                "levels": total_effort_levels,
                 "edge": edge,
                 "cost": effort_cost,
-                "waived": effort_waived
+                "waived": effort_waived,
             }
+            if damage_effort_levels > 0:
+                effort_dict["ease_levels"] = effort_levels
+                effort_dict["damage_levels"] = damage_effort_levels
+            if effort_refunded:
+                effort_dict["refunded"] = True
+            state_changes["effort"] = effort_dict
 
-        # Apply deduction
+        state_dirty = False
+        # Apply effort deduction first
         if effort_cost > 0 and pool_def:
             new_val = current_val - effort_cost
             set_by_path(self.state, pool_def.current_path, new_val)
@@ -897,8 +1147,83 @@ class GameStateEngine:
                 "avant": current_val,
                 "apres": new_val
             }
+            if dmg_cfg and get_by_path(self.state, dmg_cfg.damage_track_path) is not None:
+                track_change = self.update_damage_track()
+                if track_change:
+                    state_changes[dmg_cfg.damage_track_path] = track_change
+            state_dirty = True
 
-        if effort_cost > 0:
+        # Combat consequences: Attack
+        action_role = getattr(action, "role", "general")
+        is_attack_hit = (
+            result.outcome in (Outcome.SUCCESS, Outcome.CRITICAL_SUCCESS, Outcome.PARTIAL_SUCCESS)
+            and not result.impossible
+        )
+        is_defend_fail = (
+            result.outcome in (Outcome.FAILURE, Outcome.CRITICAL_FAILURE)
+            or result.impossible
+        )
+
+        if action_role == "attack" and is_attack_hit:
+            base_dmg = base_damage if (isinstance(base_damage, int) and not isinstance(base_damage, bool) and base_damage >= 0) else getattr(action, "default_damage", 0)
+            dmg_per_lvl = action.effort.damage_per_level if action.effort else 0
+            effort_dmg = damage_effort_levels * dmg_per_lvl
+            roll_bonuses = getattr(action, "roll_damage_bonuses", {}) or {}
+            dmg_roll_bonus = roll_bonuses.get(str(nat_roll), 0) if nat_roll is not None else 0
+            max_imp_bonus = getattr(action, "impaired_max_roll_bonus", None)
+            if is_impaired and max_imp_bonus is not None and dmg_roll_bonus > max_imp_bonus:
+                dmg_roll_bonus = max_imp_bonus
+            total_dmg = base_dmg + effort_dmg + dmg_roll_bonus
+            if total_dmg > 0 or base_damage is not None or getattr(action, "default_damage", 0) > 0:
+                state_changes["attack_damage"] = {
+                    "base": base_dmg,
+                    "effort_bonus": effort_dmg,
+                    "roll_bonus": dmg_roll_bonus,
+                    "total": total_dmg,
+                }
+                phrase += f" Attack damage: {total_dmg} (base {base_dmg}, effort +{effort_dmg}, roll +{dmg_roll_bonus})."
+                if target_npc:
+                    npc_lvl = difficulty if (isinstance(difficulty, int) and difficulty > 0) else 1
+                    npc_res = self.apply_npc_damage(
+                        target_npc,
+                        total_dmg,
+                        npc_level=npc_lvl,
+                        npc_health_max=npc_health_max,
+                        npc_armor=npc_armor,
+                    )
+                    state_changes["npc_damage"] = npc_res
+                    phrase += f" NPC '{target_npc}' health: {npc_res['avant']}->{npc_res['apres']}"
+                    if npc_res["defeated"]:
+                        phrase += " (DEFEATED)."
+                    else:
+                        phrase += "."
+                    state_dirty = False  # apply_npc_damage already saved
+
+        # Combat consequences: Defend
+        elif action_role == "defend" and is_defend_fail:
+            inc_dmg = incoming_damage if (isinstance(incoming_damage, int) and not isinstance(incoming_damage, bool) and incoming_damage >= 0) else (difficulty if family == "StepTargetD20" and isinstance(difficulty, int) else 0)
+            if inc_dmg > 0:
+                default_pool = dmg_cfg.cascade_pools[0] if (dmg_cfg and dmg_cfg.cascade_pools) else None
+                dmg_res = self.apply_damage(inc_dmg, pool_id=damage_pool or default_pool, ignore_armor=ignore_armor)
+                if dmg_res.success:
+                    if "damage" in dmg_res.state_changes:
+                        dmg_info = dmg_res.state_changes["damage"]
+                        state_changes["damage_taken"] = dmg_info
+                        for pid, pchange in dmg_info.get("pools", {}).items():
+                            if pid in state_changes and "avant" in state_changes[pid]:
+                                state_changes[pid]["apres"] = pchange["apres"]
+                            else:
+                                state_changes[pid] = {"avant": pchange["avant"], "apres": pchange["apres"]}
+                        if dmg_cfg and dmg_cfg.damage_track_path in dmg_res.state_changes:
+                            state_changes[dmg_cfg.damage_track_path] = dmg_res.state_changes[dmg_cfg.damage_track_path]
+                    else:
+                        state_changes["damage_taken"] = {"raw": inc_dmg, "armor": 0, "effective": inc_dmg}
+                        for k, v in dmg_res.state_changes.items():
+                            state_changes[k] = v
+                    phrase += f" Defense failed: {dmg_res.message}"
+                    state_dirty = False  # apply_damage already saved
+
+        if state_dirty:
             self.save()
 
         return ActionResult(
@@ -977,29 +1302,63 @@ class GameStateEngine:
 
     def describe_difficulty_scale(self) -> str:
         """
-        Returns a formatted string describing the difficulty scale for the current pack.
-        Format: 'Niveau X (Name, cible Y) : <guidance>'
-        Returns an empty string if no pack, no scale, or family is not StepTargetD20.
+        Returns a formatted string describing the difficulty scale or tiers for the current pack.
+        Returns an empty string if no pack or no difficulty information is configured.
         """
-        if not self.pack or not getattr(self.pack, "actions", None) or not self.pack.actions.difficulty_scale:
+        if not self.pack or not getattr(self.pack, "resolution", None):
             return ""
 
-        if self.pack.resolution.family != "StepTargetD20":
-            return ""
+        family = self.pack.resolution.family
+        scale = getattr(self.pack.actions, "difficulty_scale", None) if getattr(self.pack, "actions", None) else None
 
-        multiplier = getattr(self.pack.resolution, "multiplier", 1)
-        scale = self.pack.actions.difficulty_scale
-        sorted_scale = sorted(scale, key=lambda x: x.level)
+        if family == "StepTargetD20":
+            if not scale:
+                return ""
+            multiplier = getattr(self.pack.resolution, "multiplier", 1)
+            sorted_scale = sorted(scale, key=lambda x: x.level)
+            lines = []
+            for level_info in sorted_scale:
+                target = level_info.level * multiplier
+                line = f"Niveau {level_info.level} ({level_info.name}, cible {target})"
+                if level_info.guidance:
+                    line += f" : {level_info.guidance}"
+                lines.append(line)
+            return "\n".join(lines)
 
-        lines = []
-        for level_info in sorted_scale:
-            target = level_info.level * multiplier
-            line = f"Niveau {level_info.level} ({level_info.name}, cible {target})"
-            if level_info.guidance:
-                line += f" : {level_info.guidance}"
-            lines.append(line)
+        if family == "D20VsTarget":
+            if not scale:
+                return ""
+            sorted_scale = sorted(scale, key=lambda x: x.level)
+            lines = []
+            for level_info in sorted_scale:
+                line = f"DD {level_info.level} ({level_info.name})"
+                if level_info.guidance:
+                    line += f" : {level_info.guidance}"
+                lines.append(line)
+            return "\n".join(lines)
 
-        return "\n".join(lines)
+        if family == "DicePoolSuccess":
+            if not scale:
+                return ""
+            sorted_scale = sorted(scale, key=lambda x: x.level)
+            lines = []
+            for level_info in sorted_scale:
+                line = f"{level_info.level} succès ({level_info.name})"
+                if level_info.guidance:
+                    line += f" : {level_info.guidance}"
+                lines.append(line)
+            return "\n".join(lines)
+
+        if family == "PbtA2d6":
+            tiers = getattr(self.pack.resolution, "tiers", [])
+            if not tiers:
+                return ""
+            lines = []
+            for t in tiers:
+                lines.append(f"{t.id} ({t.range[0]}-{t.range[1]}) : {t.label}")
+            return "\n".join(lines)
+
+        return ""
 
     # ── Automatic Detection from Text ─────────────────
 
@@ -1049,7 +1408,7 @@ class GameStateEngine:
 
     def detect_action_type(self, user_input: str) -> Optional[str]:
         """
-        Detects action type from player's text input.
+        Detects action type from player's text input using the loaded SystemPack.
         Returns action key or None if no mechanical action is detected.
         """
         if self.pack:
@@ -1060,34 +1419,4 @@ class GameStateEngine:
                         return f"rest_seq:{action.sequence}"
                     return f"rest:{action.trigger}"
                 return action.rule_id
-            return None
-
-        def normalize(t):
-            t = t.lower()
-            return ''.join(c for c in unicodedata.normalize('NFD', t) if unicodedata.category(c) != 'Mn')
-
-        text = normalize(user_input)
-        if any(w in text for w in ["lance", "utilise", "sort", "magie", "spell", "incantation"]):
-            return "spell"
-        if any(w in text for w in ["rage", "berserk", "fureur"]):
-            return "rage"
-        if any(w in text for w in ["repos", "dors", "camp", "bivouac", "long rest", "short rest", "pause"]):
-            return "rest"
         return None
-
-    def apply_orchestrator_decision(self, decision: dict) -> ActionResult:
-        """
-        Applies a mechanical decision from the Orchestrator.
-        Expected format: {"action": "damage"|"heal"|"xp", "amount": int}
-        """
-        action = decision.get("action")
-        amount = decision.get("amount", 0)
-
-        if action == "damage":
-            return self.apply_damage(amount)
-        elif action == "heal":
-            return self.apply_healing(amount)
-        elif action == "xp":
-            return self.add_xp(amount)
-
-        return ActionResult(success=False, message=f"Unknown mechanical action: {action}")

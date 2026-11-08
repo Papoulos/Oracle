@@ -18,6 +18,8 @@ class EffortRule(BaseModel):
     adjustment_key: str = "effort"
     max_levels_path: Optional[str] = None
     edge_path_template: Optional[str] = None
+    refund_on_20: bool = False
+    damage_per_level: int = 0
 
 
 class TaskAction(BaseModel):
@@ -26,11 +28,18 @@ class TaskAction(BaseModel):
     """
     id: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     kind: Literal["task"] = "task"
+    role: Literal["general", "attack", "defend"] = "general"
     name: str
     description: str = ""
     guidance: str = ""
     pools: list[str] = Field(default_factory=list)
     effort: Optional[EffortRule] = None
+    default_damage: int = 0
+    roll_damage_bonuses: dict[str, int] = Field(default_factory=dict)
+    impaired_max_roll_bonus: Optional[int] = None
+    impaired_suppressed_special_rolls: list[str] = Field(default_factory=list)
+    special_rolls: dict[str, str] = Field(default_factory=dict)
+    special_roll_labels: dict[str, str] = Field(default_factory=dict)
 
 
 class ActionsConfig(BaseModel):

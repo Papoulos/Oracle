@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "difficulty_scale": [
+    {"level": 5, "name": "Très facile", "guidance": "Presque tout le monde réussit sans effort particulier."},
+    {"level": 10, "name": "Facile", "guidance": "Une tâche simple pour un aventurier même non entraîné."},
+    {"level": 15, "name": "Moyen", "guidance": "Demande une certaine compétence ou un peu de chance."},
+    {"level": 20, "name": "Difficile", "guidance": "Hors de portée des novices sans bonus important."},
+    {"level": 25, "name": "Très difficile", "guidance": "Seuls les experts de haut niveau ont une chance sérieuse."},
+    {"level": 30, "name": "Presque impossible", "guidance": "Exploit héroïque quasi inaccessible."}
+  ],
+  "actions": [
+    {
+      "id": "ability_check",
+      "kind": "task",
+      "role": "general",
+      "name": "Test de caractéristique",
+      "description": "Tout test de caractéristique ou de compétence D&D 5e (Force, Dextérité, Constitution, Intelligence, Sagesse, Charisme) contre un Degré de Difficulté (DD).",
+      "guidance": "Procédure du MJ pour un test de caractéristique : 1) Si l'action est triviale, pas de jet. 2) Choisis la caractéristique pertinente (stat) et calcule le modificateur total du personnage (modifier = modificateur de caractéristique + bonus de maîtrise si compétent). 3) Fixe le DD (difficulty) selon l'échelle (10 Facile, 15 Moyen, 20 Difficile). 4) Indique advantage='advantage' ou 'disadvantage' si les circonstances le justifient.",
+      "pools": [],
+      "special_rolls": {
+        "1": "critical_failure",
+        "20": "critical_success"
+      },
+      "special_roll_labels": {
+        "critical_failure": "Échec critique (1 naturel)",
+        "critical_success": "Réussite critique (20 naturel)"
+      }
+    },
+    {
+      "id": "attack",
+      "kind": "task",
+      "role": "attack",
+      "name": "Jet d'attaque",
+      "description": "Attaque au corps à corps, à distance ou par sort contre la Classe d'Armure (CA) d'un adversaire.",
+      "guidance": "Utilise 'attack' lorsque le joueur attaque un PNJ. 1) difficulty = CA de la cible (ou 10 + niveau du PNJ par défaut). 2) modifier = bonus d'attaque du personnage (modificateur de Force/Dextérité/Incantation + maîtrise). 3) base_damage = dégâts moyens de l'arme ou du sort + modificateur (par défaut 6). 4) target_npc = identifiant du PNJ visé.",
+      "pools": [],
+      "default_damage": 6,
+      "roll_damage_bonuses": {
+        "20": 4
+      },
+      "special_rolls": {
+        "1": "critical_failure",
+        "20": "critical_success"
+      },
+      "special_roll_labels": {
+        "critical_failure": "Échec critique (1 naturel)",
+        "critical_success": "Coup critique (20 naturel)"
+      }
+    },
+    {
+      "id": "saving_throw",
+      "kind": "task",
+      "role": "defend",
+      "name": "Jet de sauvegarde",
+      "description": "Jet de sauvegarde pour résister à un sort, un piège, un poison ou un danger immédiat. En cas d'échec, le personnage subit les dégâts indiqués.",
+      "guidance": "Utilise 'saving_throw' lorsque le personnage doit résister à un effet dangereux ou une attaque ennemie. 1) difficulty = DD de la sauvegarde. 2) modifier = modificateur de sauvegarde du personnage. 3) incoming_damage = dégâts subis en cas d'échec.",
+      "pools": [],
+      "special_rolls": {
+        "1": "critical_failure",
+        "20": "critical_success"
+      },
+      "special_roll_labels": {
+        "critical_failure": "Échec critique (1 naturel)",
+        "critical_success": "Réussite critique (20 naturel)"
+      }
+    }
+  ]
+}
