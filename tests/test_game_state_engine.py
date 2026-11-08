@@ -66,7 +66,6 @@ def test_gse_apply_damage(temp_character_file):
     res = gse.apply_damage(3)
     assert res.success is True
     assert gse.get_hp()[0] == 7
-    assert gse.state["pv"] == 7 # legacy sync
 
 def test_gse_apply_healing(temp_character_file):
     gse = GameStateEngine(temp_character_file)

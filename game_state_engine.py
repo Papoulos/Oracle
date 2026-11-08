@@ -239,7 +239,7 @@ class GameStateEngine:
             self.pack
             and getattr(self.pack, "resources", None)
             and getattr(self.pack.resources, "damage", None)
-            and not self._pack_manages_hit_points()
+            and getattr(self.pack.resources.damage, "cascade_pools", None)
         ):
             dmg_cfg = self.pack.resources.damage
             armor_val = 0
@@ -308,8 +308,6 @@ class GameStateEngine:
             set_by_path(self.state, hp_pool.current_path, new_hp)
         else:
             self.state.setdefault("resources", {}).setdefault("hit_points", {})["current"] = new_hp
-        if "pv" in self.state:
-            self.state["pv"] = new_hp
         self.save()
         status = "inconscient" if new_hp == 0 else f"{new_hp}/{hp_max} HP remaining"
         return ActionResult(
@@ -377,8 +375,6 @@ class GameStateEngine:
             set_by_path(self.state, hp_pool.current_path, new_hp)
         else:
             self.state.setdefault("resources", {}).setdefault("hit_points", {})["current"] = new_hp
-        if "pv" in self.state:
-            self.state["pv"] = new_hp
         self.save()
         return ActionResult(
             success=True,
@@ -1750,69 +1746,66 @@ class GameStateEngine:
 
     def synchronize_and_recalculate(self):
         """
-        Recalculates derived values (HP, AC, etc.) based on stats, race and class.
-        Ensures sheet consistency.
+        Ensures sheet consistency by clamping all pools and pool_groups declared
+        in the active SystemPack to their configured bounds [min_value, max] and
+        normalizing progression and damage track fields.
         """
         if not self.state:
             return
 
-        stats = self.state.get("statistics", {})
+        if self.pack is not None and getattr(self.pack, "resources", None):
+            res_cfg = self.pack.resources
+            for pool in getattr(res_cfg, "pools", []):
+                cur = get_by_path(self.state, pool.current_path)
+                max_val = pool.max_value if pool.max_value is not None else (
+                    get_by_path(self.state, pool.max_path) if pool.max_path else None
+                )
+                if isinstance(cur, int) and not isinstance(cur, bool):
+                    clamped = max(pool.min_value, cur)
+                    if isinstance(max_val, int) and not isinstance(max_val, bool) and max_val > 0 and clamped > max_val:
+                        clamped = max_val
+                    if clamped != cur:
+                        set_by_path(self.state, pool.current_path, clamped)
+                elif cur is None and isinstance(max_val, int) and not isinstance(max_val, bool) and max_val > 0:
+                    set_by_path(self.state, pool.current_path, max_val)
 
-        # Normalize hit_points only if no pack, or if the pack manages them explicitly.
-        run_hp_normalization = True
-        if self.pack is not None:
-            run_hp_normalization = self._pack_manages_hit_points()
+            for group in getattr(res_cfg, "pool_groups", []):
+                group_dict = get_by_path(self.state, group.path)
+                if isinstance(group_dict, dict):
+                    for sub_obj in group_dict.values():
+                        if isinstance(sub_obj, dict):
+                            s_cur = sub_obj.get("current")
+                            s_max = sub_obj.get("max")
+                            if isinstance(s_cur, int) and not isinstance(s_cur, bool):
+                                clamped = max(0, s_cur)
+                                if isinstance(s_max, int) and not isinstance(s_max, bool) and s_max > 0 and clamped > s_max:
+                                    clamped = s_max
+                                sub_obj["current"] = clamped
+                            elif s_cur is None and isinstance(s_max, int) and not isinstance(s_max, bool) and s_max > 0:
+                                sub_obj["current"] = s_max
 
-        if run_hp_normalization:
-            resources = self.state.setdefault("resources", {})
-            pv = resources.setdefault("hit_points", {})
+            prog = getattr(res_cfg, "progression", None)
+            if prog:
+                for p_path in (prog.level_path, prog.xp_path):
+                    if p_path:
+                        raw_v = get_by_path(self.state, p_path)
+                        if raw_v is not None and not isinstance(raw_v, bool):
+                            try:
+                                set_by_path(self.state, p_path, int(raw_v))
+                            except (ValueError, TypeError):
+                                pass
 
-            hp_max = pv.get("max", 0)
-            hp_cur = pv.get("current", 0)
-
-            if hp_max == 0 and "pv" in self.state and isinstance(self.state["pv"], int):
-                hp_max = self.state["pv"]
-                pv["max"] = hp_max
-
-            if hp_cur > hp_max and hp_max > 0:
-                pv["current"] = hp_max
-
-            if hp_max > 0 and isinstance(self.state.get("pv"), int) and "current" in pv:
-                self.state["pv"] = pv["current"]
-
-        if "level" in self.state:
-            try: self.state["level"] = int(self.state["level"])
-            except: pass
-        if "xp" in self.state:
-            try: self.state["xp"] = int(self.state["xp"])
-            except: pass
+            if getattr(res_cfg, "damage", None) and getattr(res_cfg.damage, "damage_track_path", None):
+                self.update_damage_track()
+        else:
+            for k in ("level", "xp"):
+                if k in self.state and not isinstance(self.state[k], bool):
+                    try:
+                        self.state[k] = int(self.state[k])
+                    except (ValueError, TypeError):
+                        pass
 
         self.save()
-
-    def _pack_manages_hit_points(self) -> bool:
-        """
-        Checks if the loaded pack explicitly manages a 'resources.hit_points' namespace
-        via its pools or pool_groups paths.
-        """
-        if not self.pack or not hasattr(self.pack, "resources") or not self.pack.resources:
-            return False
-
-        def is_hp_path(path) -> bool:
-            if not isinstance(path, str):
-                return False
-            return path == "resources.hit_points" or path.startswith("resources.hit_points.")
-
-        for pool in getattr(self.pack.resources, "pools", []):
-            if is_hp_path(getattr(pool, "current_path", None)):
-                return True
-            if is_hp_path(getattr(pool, "max_path", None)):
-                return True
-
-        for group in getattr(self.pack.resources, "pool_groups", []):
-            if is_hp_path(getattr(group, "path", None)):
-                return True
-
-        return False
 
     # ── Info Extraction ──────────────────────────────────────
 

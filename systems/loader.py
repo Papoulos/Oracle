@@ -111,3 +111,38 @@ def load_pack(pack_id: str, base_dir: str = None) -> SystemPack:
         character_schema=character_schema,
         creation_manual=creation_manual
     )
+
+
+def list_available_packs(base_dir: Optional[str] = None) -> list[dict]:
+    """
+    Scans `base_dir` (defaults to `systems/`) for valid System Pack directories
+    containing a `manifest.yaml` (excluding `draft` or hidden directories) and
+    returns a sorted list of `{"id": ..., "name": ..., "version": ...}` dicts.
+    """
+    import re
+    if base_dir is None:
+        base_dir = os.path.join(os.path.dirname(__file__), "..", "systems")
+    if not os.path.isdir(base_dir):
+        return []
+
+    packs = []
+    for entry in sorted(os.listdir(base_dir)):
+        if entry == "draft" or entry.startswith(".") or not re.fullmatch(r"[a-z0-9_]+", entry):
+            continue
+        pack_dir = os.path.join(base_dir, entry)
+        manifest_path = os.path.join(pack_dir, "manifest.yaml")
+        if not os.path.isdir(pack_dir) or not os.path.isfile(manifest_path):
+            continue
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = yaml.safe_load(f)
+            manifest = Manifest.model_validate(manifest_data)
+            packs.append({
+                "id": manifest.id,
+                "name": manifest.name,
+                "version": manifest.version,
+            })
+        except Exception:
+            continue
+    return packs
+

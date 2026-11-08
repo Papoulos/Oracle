@@ -159,57 +159,45 @@ def test_validate_pack_manual_steps(tmp_path):
     assert any(i.severity == "error" and i.file == "creation_manual.json" and "Expected step 2, got 3" in i.message for i in issues2)
 
 
-def test_synchronize_and_recalculate_hit_points_logic(tmp_path, monkeypatch):
+def test_synchronize_and_recalculate_generic_pools(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
-    # Pack with hp kind health but no hit_points id
+    # 1. Generic pool clamping (min_value and max_path)
     pools1 = [{
-        "id": "hp",
-        "name": "HP",
-        "kind": "health",
-        "current_path": "resources.hp.current",
-        "max_path": "resources.hp.max",
+        "id": "sanity",
+        "name": "Santé mentale",
+        "kind": "counter",
+        "current_path": "resources.sanity.current",
+        "max_path": "resources.sanity.max",
+        "min_value": 0,
         "recovery": []
     }]
-    pack_dir1 = setup_pack(tmp_path, pack_id="pack_health", pools=pools1)
-    pack1 = load_pack("pack_health", base_dir=str(tmp_path))
+    setup_pack(tmp_path, pack_id="pack_sanity", pools=pools1)
+    pack1 = load_pack("pack_sanity", base_dir=str(tmp_path))
 
     engine1 = GameStateEngine(pack=pack1)
-    engine1.state = {"pv": 10}
+    engine1.state = {
+        "resources": {"sanity": {"current": 85, "max": 60}},
+    }
     engine1.synchronize_and_recalculate()
-    assert "resources" not in engine1.state or "hit_points" not in engine1.state.get("resources", {})
+    assert engine1.state["resources"]["sanity"]["current"] == 60
+    assert "hit_points" not in engine1.state["resources"]
 
-    # Pack with hit_points id
-    pools2 = [{
-        "id": "hit_points",
-        "name": "Hit Points",
-        "kind": "health",
-        "current_path": "resources.hit_points.current",
-        "max_path": "resources.hit_points.max",
-        "recovery": []
-    }]
-    pack_dir2 = setup_pack(tmp_path, pack_id="pack_hit_points", pools=pools2)
-    pack2 = load_pack("pack_hit_points", base_dir=str(tmp_path))
-
-    engine2 = GameStateEngine(pack=pack2)
-    engine2.state = {"pv": 10}
+    # 2. Missing current initialized from max, negative clamped to min_value
+    engine2 = GameStateEngine(pack=pack1)
+    engine2.state = {"resources": {"sanity": {"max": 50}}}
     engine2.synchronize_and_recalculate()
-    assert "hit_points" in engine2.state["resources"]
-    assert engine2.state["resources"]["hit_points"]["max"] == 10
+    assert engine2.state["resources"]["sanity"]["current"] == 50
 
-    # No pack (fallback logic)
-    engine3 = GameStateEngine(pack=None)
-    engine3.state = {"pv": 10}
-    engine3.synchronize_and_recalculate()
-    assert "hit_points" in engine3.state["resources"]
-    assert engine3.state["resources"]["hit_points"]["max"] == 10
+    engine2.state["resources"]["sanity"]["current"] = -5
+    engine2.synchronize_and_recalculate()
+    assert engine2.state["resources"]["sanity"]["current"] == 0
 
 
-def test_synchronize_hit_points_regression_139(tmp_path, monkeypatch):
+def test_synchronize_pools_across_dnd_and_cypher(tmp_path, monkeypatch):
     """
-    Test pour la régression #139 : la normalisation des points de vie (hit_points) doit
-    se déclencher UNIQUEMENT si le pack gère explicitement "resources.hit_points" dans ses
-    chemins de pools ou pool_groups, ou s'il n'y a pas de pack.
+    Vérifie que synchronize_and_recalculate borne génériquement toutes les pools
+    et pool_groups du pack actif (D&D 5e et Cypher) sans injecter de clés hit_points/pv hors-pack.
     """
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
@@ -218,82 +206,120 @@ def test_synchronize_hit_points_regression_139(tmp_path, monkeypatch):
 
     base_sys_dir = Path(__file__).parent.parent / "systems"
 
-    # 1. Pack dnd5e_srd : transfert simple de pv vers resources.hit_points
+    # 1. Pack dnd5e_srd : current > max ramené à max, spell_slots bornés
     pack_dnd = load_pack("dnd5e_srd", base_dir=str(base_sys_dir))
     engine_dnd = GameStateEngine(pack=pack_dnd)
-    engine_dnd.state = {"pv": 12, "resources": {}}
-    engine_dnd.synchronize_and_recalculate()
-    assert "hit_points" in engine_dnd.state["resources"]
-    assert engine_dnd.state["resources"]["hit_points"]["max"] == 12
-
-    # 2. Pack dnd5e_srd : current > max est ramené au max, pv mis à jour
-    engine_dnd.state = {"pv": 10, "resources": {"hit_points": {"current": 30, "max": 20}}}
+    engine_dnd.state = {
+        "level": "3",
+        "xp": "900",
+        "resources": {
+            "hit_points": {"current": 30, "max": 20},
+            "spells_per_day": {"level_1": {"current": 5, "max": 2}},
+        },
+    }
     engine_dnd.synchronize_and_recalculate()
     assert engine_dnd.state["resources"]["hit_points"]["current"] == 20
-    assert engine_dnd.state["pv"] == 20
+    assert engine_dnd.state["resources"]["spells_per_day"]["level_1"]["current"] == 2
+    assert engine_dnd.state["level"] == 3
+    assert engine_dnd.state["xp"] == 900
 
-    # 3. Pack cypher_system : ne gère pas hit_points, aucune clé ajoutée
+    # 2. Pack cypher_system : might/speed/intellect bornés + damage_track recalculé, aucun hit_points ajouté
     pack_cypher = load_pack("cypher_system", base_dir=str(base_sys_dir))
     engine_cypher = GameStateEngine(pack=pack_cypher)
-    engine_cypher.state = {"pv": 15, "resources": {}}
+    engine_cypher.state = {
+        "tier": "2",
+        "resources": {
+            "might": {"current": 0, "max": 12},
+            "speed": {"current": 15, "max": 10},
+            "intellect": {"current": 8, "max": 10},
+        },
+    }
     engine_cypher.synchronize_and_recalculate()
     assert "hit_points" not in engine_cypher.state["resources"]
+    assert engine_cypher.state["resources"]["speed"]["current"] == 10
+    assert engine_cypher.state["damage_track"] == "impaired"
+    assert engine_cypher.state["tier"] == 2
 
-    # 4. Pack de test : current_path = "resources.hp.current"
-    pools_hp = [{
-        "id": "hp",
-        "name": "HP",
-        "kind": "health",
-        "current_path": "resources.hp.current",
-        "max_path": "resources.hp.max",
-        "recovery": []
-    }]
-    setup_pack(tmp_path, pack_id="pack_hp_only", pools=pools_hp)
-    pack_hp = load_pack("pack_hp_only", base_dir=str(tmp_path))
-    engine_hp = GameStateEngine(pack=pack_hp)
-    engine_hp.state = {"pv": 10, "resources": {}}
-    engine_hp.synchronize_and_recalculate()
-    assert "hit_points" not in engine_hp.state.get("resources", {})
 
-    # 5. Pack de test : id "vie", current_path = "resources.hit_points.current" (déclenche normalisation)
-    pools_vie = [{
-        "id": "vie",
-        "name": "Vie",
-        "kind": "health",
-        "current_path": "resources.hit_points.current",
-        "max_path": "resources.hit_points.max",
-        "recovery": []
-    }]
-    setup_pack(tmp_path, pack_id="pack_vie", pools=pools_vie)
-    pack_vie = load_pack("pack_vie", base_dir=str(tmp_path))
-    engine_vie = GameStateEngine(pack=pack_vie)
-    engine_vie.state = {"pv": 10, "resources": {}}
-    engine_vie.synchronize_and_recalculate()
-    assert "hit_points" in engine_vie.state["resources"]
-    assert engine_vie.state["resources"]["hit_points"]["max"] == 10
+def test_build_character_view_and_list_available_packs():
+    from mechanics.character import build_character_view
+    from systems.loader import list_available_packs, load_pack
 
-    # 6. Pack de test : current_path = "resources.hit_points_extra.current" (rejeté, préfixe exact)
-    pools_extra = [{
-        "id": "extra",
-        "name": "Extra",
-        "kind": "health",
-        "current_path": "resources.hit_points_extra.current",
-        "max_path": "resources.hit_points_extra.max",
-        "recovery": []
-    }]
-    setup_pack(tmp_path, pack_id="pack_extra", pools=pools_extra)
-    pack_extra = load_pack("pack_extra", base_dir=str(tmp_path))
-    engine_extra = GameStateEngine(pack=pack_extra)
-    engine_extra.state = {"pv": 10, "resources": {}}
-    engine_extra.synchronize_and_recalculate()
-    assert "hit_points" not in engine_extra.state.get("resources", {})
+    packs = list_available_packs()
+    pack_ids = [p["id"] for p in packs]
+    assert "cypher_system" in pack_ids
+    assert "dnd5e_srd" in pack_ids
 
-    # 7. Sans pack : comportement inchangé
-    engine_no_pack = GameStateEngine(pack=None)
-    engine_no_pack.state = {"pv": 10, "resources": {}}
-    engine_no_pack.synchronize_and_recalculate()
-    assert "hit_points" in engine_no_pack.state["resources"]
-    assert engine_no_pack.state["resources"]["hit_points"]["max"] == 10
+    # 1. Cypher view
+    cypher_pack = load_pack("cypher_system")
+    cypher_sheet = {
+        "name": "Hector",
+        "descriptor": "Clever",
+        "type": "Adept",
+        "focus": "Crafts Illusions",
+        "tier": 1,
+        "effort": 1,
+        "armor": 1,
+        "xp": 3,
+        "damage_track": "hale",
+        "cypher_limit": 2,
+        "edge": {"might": 0, "speed": 0, "intellect": 1},
+        "resources": {
+            "might": {"current": 10, "max": 10},
+            "speed": {"current": 10, "max": 10},
+            "intellect": {"current": 15, "max": 15},
+        },
+        "skills": ["Psychologie", "Tromperie visuelle"],
+        "abilities": ["Onslaught", "Ward", "Minor Illusion", "Far Step", "Scan"],
+        "cyphers": ["Détonateur thermique (Niv 4)"],
+        "equipment": ["Bâton runique", "Vêtements sombres"],
+    }
+    c_view = build_character_view(cypher_sheet, pack=cypher_pack)
+    assert c_view["name"] == "Hector"
+    scalar_labels = {s["path"]: s["label"] for s in c_view["scalars"]}
+    assert scalar_labels["descriptor"] == "Descripteur"
+    assert scalar_labels["tier"] == "Tier"
+    assert scalar_labels["damage_track"] == "Piste de dégâts"
+    assert len(c_view["pools"]) == 3
+    assert c_view["stat_groups"][0]["label"] == "Avantage (Edge)"
+    cypher_list_entry = next(l for l in c_view["lists"] if l["path"] == "cyphers")
+    assert cypher_list_entry["max_items"] == 2
+    assert c_view["other"] == {}
+
+    # 2. D&D 5e view
+    dnd_pack = load_pack("dnd5e_srd")
+    dnd_sheet = {
+        "name": "Lyra",
+        "race": "Elfe",
+        "class": "Magicien",
+        "background": "Sage",
+        "level": 2,
+        "xp": 300,
+        "proficiency_bonus": 2,
+        "ac": 12,
+        "statistics": {
+            "strength": 8,
+            "dexterity": 14,
+            "constitution": 12,
+            "intelligence": 16,
+            "wisdom": 13,
+            "charisma": 10,
+        },
+        "resources": {
+            "hit_points": {"current": 11, "max": 12},
+            "spells_per_day": {"level_1": {"current": 2, "max": 3}},
+        },
+        "skills": ["Arcanes", "Histoire"],
+        "spells": ["Projectile magique", "Bouclier"],
+        "equipment": ["Grimoire", "Dague"],
+    }
+    d_view = build_character_view(dnd_sheet, pack=dnd_pack)
+    assert d_view["name"] == "Lyra"
+    assert d_view["stat_groups"][0]["label"] == "Caractéristiques"
+    assert d_view["stat_groups"][0]["items"][3] == {"key": "intelligence", "label": "Intelligence", "value": 16}
+    assert len(d_view["pools"]) == 1
+    assert len(d_view["pool_groups"]) == 1
+    assert d_view["other"] == {}
 
 
 def test_cypher_pack_character_schema_and_manual_loaded():

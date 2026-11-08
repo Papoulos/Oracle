@@ -343,7 +343,7 @@ STYLE:
         return response.content
 
 class RPGAgent(BaseAgent):
-    def __init__(self, verbose=False):
+    def __init__(self, verbose=False, pack_id=None):
         super().__init__(model=config.ORCHESTRATOR_MODEL, temperature=config.ORCHESTRATOR_TEMP, verbose=verbose)
         self.embeddings = get_embeddings()
         self.client = chromadb.PersistentClient(path=config.CHROMA_PATH if config.CHROMA_PATH else "./chroma_db")
@@ -358,9 +358,9 @@ class RPGAgent(BaseAgent):
         from game_state_engine import GameStateEngine
         from systems.loader import load_pack
         pack = None
-        pack_id = os.getenv("SYSTEM_PACK")
-        if pack_id:
-            pack = load_pack(pack_id)
+        resolved_pack_id = pack_id if pack_id is not None else os.getenv("SYSTEM_PACK")
+        if resolved_pack_id:
+            pack = load_pack(resolved_pack_id)
         self.gse = GameStateEngine(pack=pack)
 
         self.character_creator = CharacterCreator(verbose=verbose, pack=pack)
@@ -389,6 +389,19 @@ class RPGAgent(BaseAgent):
         self.chronicle_data = None
         self.setup_logs = []
         self._missing_character_fields = None
+
+    def set_pack(self, pack_id: str | None) -> None:
+        """Dynamically switches the active SystemPack across GSE, CharacterCreator, and SheetManager."""
+        from systems.loader import load_pack
+        pack = load_pack(pack_id) if pack_id else None
+        if pack_id:
+            os.environ["SYSTEM_PACK"] = pack_id
+        else:
+            os.environ.pop("SYSTEM_PACK", None)
+        if self.gse is not None:
+            self.gse.pack = pack
+        self.character_creator.pack = pack
+        self.sheet_manager.pack = pack
 
     def _pack_mechanical_step(self, user_input: str) -> str:
         """
