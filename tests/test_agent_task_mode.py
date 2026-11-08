@@ -207,3 +207,44 @@ def test_dnd5e_task_mode_turn(tmp_path):
     assert "The roll below was resolved by the game engine" in instruction
     assert "TECHNICAL RESULT: Jet d'attaque (Strength) — DD 12 :" in instruction
     assert "🎲 Jet d'attaque (Strength) — DD 12 :" in res
+
+
+def test_agent_consumable_and_progression_turn(tmp_path):
+    agent = create_agent(tmp_path, "cypher_system")
+    agent.current_scene_id = None
+    agent.gse.state["cyphers"] = ["Injecteur neural (Niv 3)"]
+    agent.gse.state["xp"] = 4
+    agent.gse.state["tier"] = 1
+    agent.gse.state["effort"] = 1
+    agent.gse.state["tier_advancements"] = []
+    agent.gse.save()
+
+    mock_llm_response = mock.Mock()
+    mock_llm_response.content = json.dumps({
+        "need_roll": False,
+        "consume_item": {
+            "item": "Injecteur neural",
+            "list_id": "cyphers",
+            "heal_pool": "intellect",
+            "heal_amount": 3,
+        },
+        "buy_advancement": {
+            "id": "extra_effort",
+        },
+    })
+    agent.llm.invoke.return_value = mock_llm_response
+    agent.sheet_manager.update_sheet.return_value = None
+
+    agent.chat("J'utilise mon injecteur neural et je dépense 4 XP pour augmenter mon Effort")
+
+    call_args = agent.narrator.generate_response.call_args[0]
+    instruction = call_args[2]
+
+    assert "Injecteur neural (Niv 3)" in instruction
+    assert "Effort supplémentaire (+1 Effort)" in instruction
+    assert agent.gse.state["cyphers"] == []
+    assert agent.gse.state["resources"]["intellect"]["current"] == 5
+    assert agent.gse.state["effort"] == 2
+    assert agent.gse.state["xp"] == 0
+    assert agent.gse.state["tier_advancements"] == ["extra_effort"]
+

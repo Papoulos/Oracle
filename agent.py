@@ -16,7 +16,7 @@ from scenario_agents import ScenarioExtractorAgent
 from validation import validate_scenario_structure, validate_character_sheet
 from mechanics.character import schema_as_legacy_dict, apply_schema_defaults
 from mechanics.paths import get_by_path, set_by_path
-from mechanics.task_flow import build_task_analysis_prompt, sanitize_task_decision, format_task_roll_line, enforce_engine_owned_fields, build_allocation_prompt, sanitize_allocation, format_pending_allocation_note
+from mechanics.task_flow import build_task_analysis_prompt, sanitize_task_decision, sanitize_turn_mechanics, format_task_roll_line, enforce_engine_owned_fields, build_allocation_prompt, sanitize_allocation, format_pending_allocation_note
 
 logger = logging.getLogger(__name__)
 
@@ -850,6 +850,7 @@ class RPGAgent(BaseAgent):
 
             roll_info = ""
             roll_result = None
+            extra_owned_paths: list[str] = []
 
             if self._task_mode():
                 prompt = build_task_analysis_prompt(
@@ -925,6 +926,84 @@ class RPGAgent(BaseAgent):
                         roll_result = None # Handled inside format_task_roll_line
                     else:
                         mechanical_context += f"\n⚠ ACTION BLOQUÉE : {result.blocked_reason} — {result.message}"
+
+                # Consumables & Progression side-effects from Orchestrator turn analysis
+                turn_mech = sanitize_turn_mechanics(raw, self.gse.pack)
+                if "consume_item" in turn_mech:
+                    ci = turn_mech["consume_item"]
+                    c_res = self.gse.use_consumable(
+                        ci["item"],
+                        target_id=ci.get("list"),
+                        heal_pool=ci.get("heal_pool"),
+                        heal_amount=ci.get("heal_amount"),
+                        heal_expr=ci.get("heal_expr"),
+                    )
+                    if c_res.success:
+                        mechanical_context += f"\nMECANIQUE : {c_res.message}"
+                        self.character_data = self.gse.state
+                        used_list_id = c_res.state_changes.get("consumable_used", {}).get("list") or ci.get("list")
+                        c_def = self.gse._find_consumable_def(used_list_id)
+                        if c_def:
+                            extra_owned_paths.append(c_def.path)
+                    else:
+                        mechanical_context += f"\n⚠ ACTION BLOQUÉE : {c_res.blocked_reason} — {c_res.message}"
+
+                if "add_item" in turn_mech:
+                    ai = turn_mech["add_item"]
+                    a_res = self.gse.add_consumable(ai["item"], target_id=ai.get("list"))
+                    if a_res.success:
+                        mechanical_context += f"\nMECANIQUE : {a_res.message}"
+                        self.character_data = self.gse.state
+                        c_def = self.gse._find_consumable_def(ai.get("list"))
+                        if c_def:
+                            extra_owned_paths.append(c_def.path)
+                    else:
+                        mechanical_context += f"\n⚠ ACTION BLOQUÉE : {a_res.blocked_reason} — {a_res.message}"
+
+                if "xp_gain" in turn_mech:
+                    xp_res = self.gse.add_xp(turn_mech["xp_gain"])
+                    if xp_res.success:
+                        mechanical_context += f"\nMECANIQUE : {xp_res.message}"
+                        self.character_data = self.gse.state
+                    else:
+                        mechanical_context += f"\n⚠ ACTION BLOQUÉE : {xp_res.blocked_reason} — {xp_res.message}"
+
+                if "spend_xp" in turn_mech:
+                    sx = turn_mech["spend_xp"]
+                    sx_res = self.gse.spend_xp(sx["amount"], reason=sx.get("reason"))
+                    if sx_res.success:
+                        mechanical_context += f"\nMECANIQUE : {sx_res.message}"
+                        self.character_data = self.gse.state
+                    else:
+                        mechanical_context += f"\n⚠ ACTION BLOQUÉE : {sx_res.blocked_reason} — {sx_res.message}"
+
+                if "buy_advancement" in turn_mech:
+                    ba = turn_mech["buy_advancement"]
+                    ba_res = self.gse.apply_advancement(
+                        ba["id"],
+                        target_path=ba.get("target_path"),
+                        allocation=ba.get("allocation"),
+                        value=ba.get("value"),
+                    )
+                    if ba_res.success:
+                        mechanical_context += f"\nMECANIQUE : {ba_res.message}"
+                        self.character_data = self.gse.state
+                        for p in ba_res.state_changes.get("advancement", {}).get("changes", {}).keys():
+                            extra_owned_paths.append(p)
+                        for p in ba_res.state_changes.get("rank_up", {}).keys():
+                            extra_owned_paths.append(p)
+                    else:
+                        mechanical_context += f"\n⚠ ACTION BLOQUÉE : {ba_res.blocked_reason} — {ba_res.message}"
+
+                if turn_mech.get("level_up"):
+                    lu_res = self.gse.level_up()
+                    if lu_res.success:
+                        mechanical_context += f"\nMECANIQUE : {lu_res.message}"
+                        self.character_data = self.gse.state
+                        for p in lu_res.state_changes.get("rank_up", {}).keys():
+                            extra_owned_paths.append(p)
+                    else:
+                        mechanical_context += f"\n⚠ ACTION BLOQUÉE : {lu_res.blocked_reason} — {lu_res.message}"
 
             # 2. Scene analysis from the Orchestrator (Transition / Improvisation / Bypassed)
             scene_analysis_result = {
@@ -1101,7 +1180,9 @@ NPCs AVAILABLE: {npcs_summary}
                 if new_sheet and isinstance(new_sheet, dict):
                     sheet = self._unwrap_character_data(new_sheet)
                     if self.gse.pack is not None:
-                        sheet, restored = enforce_engine_owned_fields(sheet, snapshot, self.gse.pack)
+                        sheet, restored = enforce_engine_owned_fields(
+                            sheet, snapshot, self.gse.pack, extra_paths=extra_owned_paths
+                        )
                         for path in restored:
                             logger.warning(f"Engine-owned field restored after sheet update: {path}")
                     self.character_data = sheet

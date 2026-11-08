@@ -232,6 +232,33 @@ def validate_pack(pack_path: str) -> list[Issue]:
                 trigger = trigger_data.get("id")
                 if trigger not in used_triggers and not trigger_data.get("informational"):
                     issues.append(Issue(severity="warning", file="resources.json", path=f"/recovery_triggers", message=f"Recovery trigger '{trigger}' is not used by any pool, pool_group, or pooled_recovery rule"))
+
+            consumable_ids = set()
+            for i, cdef in enumerate(resources.consumables):
+                if cdef.id in consumable_ids:
+                    issues.append(Issue(severity="error", file="resources.json", path=f"/consumables/{i}", message=f"Duplicate consumable list id: {cdef.id}"))
+                consumable_ids.add(cdef.id)
+
+            if resources.progression:
+                prog = resources.progression
+                if prog.threshold_expr:
+                    for var in referenced_variables(prog.threshold_expr):
+                        if not var.startswith("character."):
+                            issues.append(Issue(severity="error", file="resources.json", path="/progression/threshold_expr", message=f"Invalid variable '{var}' in threshold_expr. Allowed: variables starting with 'character.'."))
+                adv_ids = set()
+                for i, adv in enumerate(prog.advancements):
+                    if adv.id in adv_ids:
+                        issues.append(Issue(severity="error", file="resources.json", path=f"/progression/advancements/{i}", message=f"Duplicate advancement id: {adv.id}"))
+                    adv_ids.add(adv.id)
+                    if adv.cost_expr:
+                        for var in referenced_variables(adv.cost_expr):
+                            if not var.startswith("character."):
+                                issues.append(Issue(severity="error", file="resources.json", path=f"/progression/advancements/{i}/cost_expr", message=f"Invalid variable '{var}' in cost_expr."))
+                for i, eff in enumerate(prog.on_rank_up):
+                    for var in referenced_variables(eff.expr):
+                        if not var.startswith("character."):
+                            issues.append(Issue(severity="error", file="resources.json", path=f"/progression/on_rank_up/{i}/expr", message=f"Invalid variable '{var}' in on_rank_up expr."))
+
             check_for_todos(resources_data, "resources.json", "", issues)
 
         except ValidationError as e:

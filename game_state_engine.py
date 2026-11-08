@@ -434,18 +434,534 @@ class GameStateEngine:
                 state_changes={group.id: {key: {"avant": current, "apres": new_val}}}
             )
 
-    def add_xp(self, amount: int) -> ActionResult:
-        """Adds XP and detects level up."""
-        current_xp = self.state.get("xp", 0)
-        next_level_xp = self.state.get("next_level_xp", self.state.get("xp_prochain_niveau", 999999))
+    def add_xp(self, amount: int, auto_level_up: bool = False) -> ActionResult:
+        """Adds XP and detects or applies level/rank progression configured in the pack."""
+        if type(amount) is bool or not isinstance(amount, int) or amount < 0:
+            return ActionResult(success=False, message="XP amount must be a non-negative integer.", blocked_reason="invalid_xp")
+
+        prog = getattr(self.pack.resources, "progression", None) if (self.pack and getattr(self.pack, "resources", None)) else None
+        xp_path = prog.xp_path if prog else "xp"
+        level_path = prog.level_path if prog else "level"
+
+        raw_xp = get_by_path(self.state, xp_path)
+        current_xp = raw_xp if (isinstance(raw_xp, int) and not isinstance(raw_xp, bool)) else 0
         new_xp = current_xp + amount
-        self.state["xp"] = new_xp
-        level_up = new_xp >= next_level_xp
-        self.save()
-        msg = f"+{amount} XP ({new_xp}/{next_level_xp})"
-        if level_up:
+        set_by_path(self.state, xp_path, new_xp)
+
+        raw_lvl = get_by_path(self.state, level_path) if level_path else None
+        current_lvl = raw_lvl if (isinstance(raw_lvl, int) and not isinstance(raw_lvl, bool)) else 1
+
+        next_threshold = None
+        if "next_level_xp" in self.state or "xp_prochain_niveau" in self.state:
+            next_threshold = self.state.get("next_level_xp", self.state.get("xp_prochain_niveau"))
+        elif prog:
+            if prog.max_level is None or current_lvl < prog.max_level:
+                if prog.thresholds and str(current_lvl + 1) in prog.thresholds:
+                    next_threshold = prog.thresholds[str(current_lvl + 1)]
+                elif prog.threshold_expr:
+                    try:
+                        next_threshold = evaluate_int(prog.threshold_expr, {"character": self.state}, self.rng)
+                    except ExprError:
+                        next_threshold = None
+
+        level_up_ready = bool(isinstance(next_threshold, int) and new_xp >= next_threshold)
+        advancement_ready = False
+        if prog and prog.advancements:
+            min_cost = min((a.cost for a in prog.advancements if a.cost > 0), default=0)
+            if min_cost > 0 and new_xp >= min_cost:
+                advancement_ready = True
+
+        state_changes = {
+            "xp": {"avant": current_xp, "apres": new_xp},
+            "level_up": level_up_ready,
+        }
+        if advancement_ready:
+            state_changes["advancement_available"] = True
+
+        denom = next_threshold if next_threshold is not None else 999999
+        msg = f"+{amount} XP ({new_xp}/{denom})"
+        if level_up_ready:
             msg += " — LEVEL UP available !"
-        return ActionResult(success=True, message=msg, state_changes={"xp": {"avant": current_xp, "apres": new_xp}, "level_up": level_up})
+        elif advancement_ready:
+            msg += " — Advancement available !"
+
+        if auto_level_up and level_up_ready and prog:
+            lvl_res = self.level_up()
+            if lvl_res.success:
+                state_changes["rank_up"] = lvl_res.state_changes.get("rank_up")
+                msg += f" {lvl_res.message}"
+                return ActionResult(success=True, message=msg, state_changes=state_changes)
+
+        self.save()
+        return ActionResult(success=True, message=msg, state_changes=state_changes)
+
+    def spend_xp(self, amount: int = 0, reason: Optional[str] = None) -> ActionResult:
+        """Spends XP directly (e.g. for an immediate reroll, refusing an intrusion, or narrative benefit)."""
+        prog = getattr(self.pack.resources, "progression", None) if (self.pack and getattr(self.pack, "resources", None)) else None
+        xp_path = prog.xp_path if prog else "xp"
+
+        cost = amount
+        if (cost is None or cost == 0) and reason and prog and prog.xp_spends and reason in prog.xp_spends:
+            cost = prog.xp_spends[reason]
+
+        if type(cost) is bool or not isinstance(cost, int) or cost <= 0:
+            return ActionResult(success=False, message="XP spend amount must be a positive integer.", blocked_reason="invalid_xp_cost")
+
+        raw_xp = get_by_path(self.state, xp_path)
+        current_xp = raw_xp if (isinstance(raw_xp, int) and not isinstance(raw_xp, bool)) else 0
+        if current_xp < cost:
+            return ActionResult(
+                success=False,
+                message=f"Insufficient XP ({current_xp} available, {cost} required).",
+                blocked_reason="insufficient_xp",
+            )
+
+        new_xp = current_xp - cost
+        set_by_path(self.state, xp_path, new_xp)
+        self.save()
+        reason_str = f" ({reason})" if reason else ""
+        return ActionResult(
+            success=True,
+            message=f"Spent {cost} XP{reason_str} ({new_xp} XP remaining).",
+            state_changes={"xp": {"avant": current_xp, "apres": new_xp, "spent": cost, "reason": reason}},
+        )
+
+    def _apply_rank_up_effects(self, prog) -> dict:
+        """Increments the rank/level/tier and applies configured on_rank_up formulas."""
+        changes = {}
+        if prog.level_path:
+            raw_lvl = get_by_path(self.state, prog.level_path)
+            old_lvl = raw_lvl if (isinstance(raw_lvl, int) and not isinstance(raw_lvl, bool)) else 1
+            new_lvl = old_lvl + 1
+            set_by_path(self.state, prog.level_path, new_lvl)
+            changes[prog.level_path] = {"avant": old_lvl, "apres": new_lvl}
+
+        for effect in getattr(prog, "on_rank_up", []):
+            val = evaluate_int(effect.expr, {"character": self.state}, self.rng)
+            old_target = get_by_path(self.state, effect.target_path)
+            if effect.mode == "set_formula":
+                new_target = val
+                set_by_path(self.state, effect.target_path, new_target)
+                changes[effect.target_path] = {"avant": old_target, "apres": new_target}
+            elif effect.mode == "add_formula":
+                base_val = old_target if (isinstance(old_target, int) and not isinstance(old_target, bool)) else 0
+                new_target = base_val + val
+                set_by_path(self.state, effect.target_path, new_target)
+                changes[effect.target_path] = {"avant": base_val, "apres": new_target}
+                if effect.sync_path:
+                    old_sync = get_by_path(self.state, effect.sync_path)
+                    base_sync = old_sync if (isinstance(old_sync, int) and not isinstance(old_sync, bool)) else 0
+                    set_by_path(self.state, effect.sync_path, base_sync + val)
+                    changes[effect.sync_path] = {"avant": base_sync, "apres": base_sync + val}
+        return changes
+
+    def level_up(self) -> ActionResult:
+        """Advances the character to the next level/rank if thresholds (when configured) are met."""
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "progression", None):
+            return ActionResult(success=False, message="No progression configured in pack.", blocked_reason="no_progression")
+
+        prog = self.pack.resources.progression
+        if not prog.level_path:
+            return ActionResult(success=False, message="This system does not use discrete levels/ranks.", blocked_reason="no_levels")
+
+        raw_lvl = get_by_path(self.state, prog.level_path)
+        current_lvl = raw_lvl if (isinstance(raw_lvl, int) and not isinstance(raw_lvl, bool)) else 1
+        if prog.max_level is not None and current_lvl >= prog.max_level:
+            return ActionResult(success=False, message=f"Maximum level/rank ({prog.max_level}) already reached.", blocked_reason="max_level_reached")
+
+        raw_xp = get_by_path(self.state, prog.xp_path)
+        current_xp = raw_xp if (isinstance(raw_xp, int) and not isinstance(raw_xp, bool)) else 0
+
+        required_xp = None
+        if prog.thresholds and str(current_lvl + 1) in prog.thresholds:
+            required_xp = prog.thresholds[str(current_lvl + 1)]
+        elif prog.threshold_expr:
+            try:
+                required_xp = evaluate_int(prog.threshold_expr, {"character": self.state}, self.rng)
+            except ExprError as e:
+                return ActionResult(success=False, message=f"Threshold formula error: {e}", blocked_reason="formula_error")
+
+        if required_xp is not None and current_xp < required_xp:
+            return ActionResult(
+                success=False,
+                message=f"Insufficient XP for level {current_lvl + 1} ({current_xp}/{required_xp}).",
+                blocked_reason="insufficient_xp",
+            )
+
+        state_changes = {}
+        if prog.reset_xp_on_level_up and required_xp is not None:
+            new_xp = max(0, current_xp - required_xp)
+            set_by_path(self.state, prog.xp_path, new_xp)
+            state_changes[prog.xp_path] = {"avant": current_xp, "apres": new_xp}
+
+        try:
+            rank_changes = self._apply_rank_up_effects(prog)
+        except ExprError as e:
+            return ActionResult(success=False, message=f"Rank-up formula error: {e}", blocked_reason="formula_error")
+
+        state_changes["rank_up"] = rank_changes
+        self.synchronize_and_recalculate()
+        self.save()
+        new_lvl = get_by_path(self.state, prog.level_path)
+        return ActionResult(
+            success=True,
+            message=f"Rank/Level increased: {current_lvl} -> {new_lvl}.",
+            state_changes=state_changes,
+        )
+
+    def apply_advancement(
+        self,
+        advancement_id: str,
+        target_path: Optional[str] = None,
+        allocation: Optional[dict[str, int]] = None,
+        value: object = None,
+        *,
+        allocations: Optional[dict[str, int]] = None,
+        pool: Optional[str] = None,
+        skill: Optional[str] = None,
+        ability: Optional[str] = None,
+    ) -> ActionResult:
+        """
+        Purchases and applies an advancement from the pack's progression catalog.
+        Automatically advances rank/tier if advancements_per_rank is reached.
+        """
+        if allocation is None and allocations is not None:
+            allocation = allocations
+        if target_path is None and pool is not None:
+            target_path = pool
+        if value is None:
+            value = skill if skill is not None else ability
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "progression", None):
+            return ActionResult(success=False, message="No progression configured in pack.", blocked_reason="no_progression")
+
+        prog = self.pack.resources.progression
+        adv = next((a for a in prog.advancements if a.id == advancement_id), None)
+        if not adv:
+            valid_ids = [a.id for a in prog.advancements]
+            return ActionResult(
+                success=False,
+                message=f"Unknown advancement '{advancement_id}'. Valid options: {', '.join(valid_ids)}",
+                blocked_reason="unknown_advancement",
+            )
+
+        taken_list = get_by_path(self.state, prog.advancements_path)
+        if not isinstance(taken_list, list):
+            taken_list = []
+        if not adv.repeatable_per_rank and advancement_id in taken_list:
+            return ActionResult(
+                success=False,
+                message=f"Advancement '{advancement_id}' has already been purchased in the current rank/tier.",
+                blocked_reason="advancement_already_taken",
+            )
+
+        try:
+            cost = evaluate_int(adv.cost_expr, {"character": self.state}, self.rng) if adv.cost_expr else adv.cost
+        except ExprError as e:
+            return ActionResult(success=False, message=f"Advancement cost formula error: {e}", blocked_reason="formula_error")
+
+        raw_xp = get_by_path(self.state, prog.xp_path)
+        current_xp = raw_xp if (isinstance(raw_xp, int) and not isinstance(raw_xp, bool)) else 0
+        if current_xp < cost:
+            return ActionResult(
+                success=False,
+                message=f"Insufficient XP for '{adv.name}' ({current_xp}/{cost}).",
+                blocked_reason="insufficient_xp",
+            )
+
+        effect_changes = {}
+        if adv.kind == "add_stat":
+            resolved_path = target_path or adv.target_path
+            if adv.allowed_paths:
+                if resolved_path and resolved_path not in adv.allowed_paths:
+                    # Allow short key (e.g. "might" -> "edge.might")
+                    candidate = next((p for p in adv.allowed_paths if p.endswith(f".{resolved_path}")), None)
+                    if candidate:
+                        resolved_path = candidate
+                if not resolved_path or resolved_path not in adv.allowed_paths:
+                    return ActionResult(
+                        success=False,
+                        message=f"target_path for '{advancement_id}' must be one of {adv.allowed_paths}",
+                        blocked_reason="invalid_advancement_target",
+                    )
+            if not resolved_path:
+                return ActionResult(success=False, message=f"Missing target_path for '{advancement_id}'.", blocked_reason="invalid_advancement_target")
+
+            cur_val = get_by_path(self.state, resolved_path)
+            base_val = cur_val if (isinstance(cur_val, int) and not isinstance(cur_val, bool)) else 0
+            new_val = base_val + adv.amount
+            set_by_path(self.state, resolved_path, new_val)
+            effect_changes[resolved_path] = {"avant": base_val, "apres": new_val}
+
+            sync_p = adv.sync_paths.get(resolved_path)
+            if sync_p:
+                cur_sync = get_by_path(self.state, sync_p)
+                base_sync = cur_sync if (isinstance(cur_sync, int) and not isinstance(cur_sync, bool)) else 0
+                set_by_path(self.state, sync_p, base_sync + adv.amount)
+                effect_changes[sync_p] = {"avant": base_sync, "apres": base_sync + adv.amount}
+
+        elif adv.kind == "distribute_points":
+            if not isinstance(allocation, dict) or not allocation:
+                return ActionResult(success=False, message=f"allocation dict required for '{advancement_id}'.", blocked_reason="invalid_advancement_allocation")
+
+            normalized_alloc = {}
+            for k, v in allocation.items():
+                if type(v) is bool or not isinstance(v, int) or v < 0:
+                    return ActionResult(success=False, message=f"Allocation values must be non-negative integers.", blocked_reason="invalid_advancement_allocation")
+                if v == 0:
+                    continue
+                resolved_k = k
+                if adv.allowed_paths and resolved_k not in adv.allowed_paths:
+                    candidate = next((p for p in adv.allowed_paths if f".{k}." in p or p.endswith(f".{k}")), None)
+                    if candidate:
+                        resolved_k = candidate
+                if adv.allowed_paths and resolved_k not in adv.allowed_paths:
+                    return ActionResult(
+                        success=False,
+                        message=f"Path '{k}' not allowed for '{advancement_id}'. Allowed: {adv.allowed_paths}",
+                        blocked_reason="invalid_advancement_allocation",
+                    )
+                normalized_alloc[resolved_k] = normalized_alloc.get(resolved_k, 0) + v
+
+            total_pts = sum(normalized_alloc.values())
+            if total_pts != adv.amount:
+                return ActionResult(
+                    success=False,
+                    message=f"Total allocated points ({total_pts}) must equal {adv.amount}.",
+                    blocked_reason="invalid_advancement_allocation",
+                )
+
+            for path, pts in normalized_alloc.items():
+                cur_val = get_by_path(self.state, path)
+                base_val = cur_val if (isinstance(cur_val, int) and not isinstance(cur_val, bool)) else 0
+                set_by_path(self.state, path, base_val + pts)
+                effect_changes[path] = {"avant": base_val, "apres": base_val + pts}
+                sync_p = adv.sync_paths.get(path)
+                if sync_p:
+                    cur_sync = get_by_path(self.state, sync_p)
+                    base_sync = cur_sync if (isinstance(cur_sync, int) and not isinstance(cur_sync, bool)) else 0
+                    set_by_path(self.state, sync_p, base_sync + pts)
+                    effect_changes[sync_p] = {"avant": base_sync, "apres": base_sync + pts}
+
+        elif adv.kind == "append_list":
+            resolved_path = target_path or adv.target_path
+            if not resolved_path or not value:
+                return ActionResult(success=False, message=f"value is required for '{advancement_id}'.", blocked_reason="invalid_advancement_value")
+            lst = get_by_path(self.state, resolved_path)
+            if not isinstance(lst, list):
+                lst = []
+            lst = list(lst)
+            lst.append(value)
+            set_by_path(self.state, resolved_path, lst)
+            effect_changes[resolved_path] = {"added": value}
+
+        # Deduct XP and record advancement
+        new_xp = current_xp - cost
+        set_by_path(self.state, prog.xp_path, new_xp)
+        new_taken = list(taken_list) + [advancement_id]
+
+        state_changes = {
+            "advancement": {
+                "id": advancement_id,
+                "name": adv.name,
+                "cost": cost,
+                "changes": effect_changes,
+            },
+            prog.xp_path: {"avant": current_xp, "apres": new_xp},
+        }
+
+        msg = f"Advancement '{adv.name}' purchased (-{cost} XP, {new_xp} remaining)."
+
+        if prog.advancements_per_rank and len(new_taken) >= prog.advancements_per_rank:
+            raw_lvl = get_by_path(self.state, prog.level_path) if prog.level_path else 1
+            cur_lvl = raw_lvl if (isinstance(raw_lvl, int) and not isinstance(raw_lvl, bool)) else 1
+            if prog.max_level is None or cur_lvl < prog.max_level:
+                rank_changes = self._apply_rank_up_effects(prog)
+                set_by_path(self.state, prog.advancements_path, [])
+                state_changes["rank_up"] = rank_changes
+                new_lvl = get_by_path(self.state, prog.level_path)
+                msg += f" All {prog.advancements_per_rank} advancements completed: Rank/Tier increased {cur_lvl} -> {new_lvl}!"
+            else:
+                set_by_path(self.state, prog.advancements_path, new_taken)
+        else:
+            set_by_path(self.state, prog.advancements_path, new_taken)
+
+        self.synchronize_and_recalculate()
+        self.save()
+        return ActionResult(success=True, message=msg, state_changes=state_changes)
+
+    # ── Consumables Management ───────────────────────────────
+
+    def _find_consumable_def(self, target_id: Optional[str] = None):
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "consumables", None):
+            return None
+        consumables = self.pack.resources.consumables
+        if not consumables:
+            return None
+        if target_id:
+            return next((c for c in consumables if c.id == target_id or c.path == target_id), None)
+        return consumables[0]
+
+    def add_consumable(
+        self,
+        item: object,
+        target_id: Optional[str] = None,
+        *,
+        list_id: Optional[str] = None,
+    ) -> ActionResult:
+        """Adds an item to a declared consumable list, enforcing max_items / max_items_path if configured."""
+        eff_target_id = target_id or list_id
+        cdef = self._find_consumable_def(eff_target_id)
+        if not cdef:
+            return ActionResult(success=False, message=f"Consumable list '{eff_target_id}' not configured in pack.", blocked_reason="unknown_consumable_list")
+
+        items = get_by_path(self.state, cdef.path)
+        if not isinstance(items, list):
+            items = []
+        else:
+            items = list(items)
+
+        max_limit = cdef.max_items
+        if max_limit is None and cdef.max_items_path:
+            raw_max = get_by_path(self.state, cdef.max_items_path)
+            if isinstance(raw_max, int) and not isinstance(raw_max, bool) and raw_max > 0:
+                max_limit = raw_max
+
+        if max_limit is not None and len(items) >= max_limit:
+            return ActionResult(
+                success=False,
+                message=f"Cannot add item to '{cdef.name}': limit of {max_limit} reached.",
+                blocked_reason="consumable_limit_reached",
+            )
+
+        items.append(item)
+        set_by_path(self.state, cdef.path, items)
+        self.save()
+        label = item.get("name", str(item)) if isinstance(item, dict) else str(item)
+        return ActionResult(
+            success=True,
+            message=f"Added '{label}' to {cdef.name} ({len(items)}/{max_limit if max_limit is not None else '∞'}).",
+            state_changes={"consumable_added": {"list": cdef.id, "item": item, "count": len(items)}},
+        )
+
+    def use_consumable(
+        self,
+        item_name: str,
+        target_id: Optional[str] = None,
+        *,
+        list_id: Optional[str] = None,
+        heal_pool: Optional[str] = None,
+        heal_amount: Optional[int] = None,
+        heal_expr: Optional[str] = None,
+    ) -> ActionResult:
+        """
+        Consumes an item by name from a declared consumable list (decrementing quantity if stacked
+        or removing it from the list) and optionally applies a healing/pool restoration effect.
+        """
+        eff_target_id = target_id or list_id
+        if not self.pack or not getattr(self.pack, "resources", None) or not getattr(self.pack.resources, "consumables", None):
+            return ActionResult(success=False, message="No consumables configured in pack.", blocked_reason="no_consumables")
+
+        if not isinstance(item_name, str) or not item_name.strip():
+            return ActionResult(success=False, message="item_name must be a non-empty string.", blocked_reason="invalid_item")
+
+        query = item_name.strip().lower()
+        candidates = [self._find_consumable_def(eff_target_id)] if eff_target_id else list(self.pack.resources.consumables)
+        candidates = [c for c in candidates if c is not None]
+        if not candidates and eff_target_id:
+            candidates = list(self.pack.resources.consumables)
+
+        matched_cdef = None
+        matched_idx = None
+        matched_list = None
+
+        for cdef in candidates:
+            items = get_by_path(self.state, cdef.path)
+            if not isinstance(items, list):
+                continue
+            # 1. Exact case-insensitive match
+            for idx, entry in enumerate(items):
+                entry_str = entry.get("name", "") if isinstance(entry, dict) else str(entry)
+                if entry_str.strip().lower() == query:
+                    matched_cdef, matched_idx, matched_list = cdef, idx, list(items)
+                    break
+            if matched_cdef:
+                break
+            # 2. Substring case-insensitive match
+            for idx, entry in enumerate(items):
+                entry_str = entry.get("name", "") if isinstance(entry, dict) else str(entry)
+                if query in entry_str.strip().lower():
+                    matched_cdef, matched_idx, matched_list = cdef, idx, list(items)
+                    break
+            if matched_cdef:
+                break
+
+        if not matched_cdef or matched_idx is None:
+            return ActionResult(
+                success=False,
+                message=f"Consumable '{item_name}' not found in character inventory.",
+                blocked_reason="item_not_found",
+            )
+
+        entry = matched_list[matched_idx]
+        consumed_label = entry.get("name", str(entry)) if isinstance(entry, dict) else str(entry)
+
+        # Handle stacked items (dict quantity/charges or string "(xN)")
+        if isinstance(entry, dict) and isinstance(entry.get("quantity"), int) and entry["quantity"] > 1:
+            updated = dict(entry)
+            updated["quantity"] = entry["quantity"] - 1
+            matched_list[matched_idx] = updated
+        elif isinstance(entry, str):
+            m = re.search(r"\(\s*x(\d+)\s*\)", entry, re.IGNORECASE)
+            if m and int(m.group(1)) > 1:
+                new_qty = int(m.group(1)) - 1
+                matched_list[matched_idx] = entry[:m.start()] + f"(x{new_qty})" + entry[m.end():]
+            else:
+                matched_list.pop(matched_idx)
+        else:
+            matched_list.pop(matched_idx)
+
+        set_by_path(self.state, matched_cdef.path, matched_list)
+
+        state_changes = {
+            "consumable_used": {
+                "list": matched_cdef.id,
+                "item": consumed_label,
+                "remaining_count": len(matched_list),
+            }
+        }
+        msg = f"Used consumable '{consumed_label}' from {matched_cdef.name}."
+
+        # Optional healing / pool restoration
+        gain = None
+        if isinstance(heal_amount, int) and not isinstance(heal_amount, bool) and heal_amount > 0:
+            gain = heal_amount
+        elif isinstance(heal_expr, str) and heal_expr.strip():
+            try:
+                gain = max(0, evaluate_int(heal_expr, {"character": self.state}, self.rng))
+            except ExprError as e:
+                return ActionResult(success=False, message=f"Consumable heal_expr error: {e}", blocked_reason="formula_error")
+
+        if gain and gain > 0:
+            target_pool = None
+            if heal_pool:
+                target_pool = next((p for p in self.pack.resources.pools if p.id == heal_pool), None)
+            if not target_pool:
+                target_pool = self._get_health_pool_def()
+            if target_pool:
+                cur_val = get_by_path(self.state, target_pool.current_path)
+                max_val = target_pool.max_value if target_pool.max_value is not None else get_by_path(self.state, target_pool.max_path)
+                base_cur = cur_val if (isinstance(cur_val, int) and not isinstance(cur_val, bool)) else 0
+                new_cur = min(max_val, base_cur + gain) if isinstance(max_val, int) else (base_cur + gain)
+                set_by_path(self.state, target_pool.current_path, new_cur)
+                state_changes[target_pool.id] = {"avant": base_cur, "apres": new_cur}
+                if self.pack.resources.damage and get_by_path(self.state, self.pack.resources.damage.damage_track_path) is not None:
+                    track_change = self.update_damage_track()
+                    if track_change:
+                        state_changes["damage_track"] = track_change
+                msg += f" Restored +{new_cur - base_cur} to {target_pool.name} ({base_cur}->{new_cur})."
+
+        self.save()
+        return ActionResult(success=True, message=msg, state_changes=state_changes)
 
     def next_rest(self, sequence_id: str) -> ActionResult:
         """

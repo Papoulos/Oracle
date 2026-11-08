@@ -215,6 +215,50 @@ class DamageConfig(BaseModel):
     impaired_state: str | None = None
 
 
+class ConsumableListDef(BaseModel):
+    id: str
+    name: str
+    path: str
+    max_items: int | None = None
+    max_items_path: str | None = None
+    engine_owned: bool = False
+
+
+class AdvancementOption(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    cost: int = 0
+    cost_expr: Formula | None = None
+    kind: Literal["add_stat", "distribute_points", "append_list", "custom"] = "custom"
+    target_path: str | None = None
+    allowed_paths: list[str] = Field(default_factory=list)
+    sync_paths: dict[str, str] = Field(default_factory=dict)
+    amount: int = 1
+    repeatable_per_rank: bool = False
+
+
+class RankUpEffect(BaseModel):
+    target_path: str
+    mode: Literal["set_formula", "add_formula"]
+    expr: Formula
+    sync_path: str | None = None
+
+
+class ProgressionConfig(BaseModel):
+    xp_path: str = "xp"
+    level_path: str | None = "level"
+    max_level: int | None = None
+    thresholds: dict[str, int] = Field(default_factory=dict)
+    threshold_expr: Formula | None = None
+    reset_xp_on_level_up: bool = False
+    advancements: list[AdvancementOption] = Field(default_factory=list)
+    advancements_per_rank: int | None = None
+    advancements_path: str = "advancements_taken"
+    on_rank_up: list[RankUpEffect] = Field(default_factory=list)
+    xp_spends: dict[str, int] = Field(default_factory=dict)
+
+
 class ResourcesConfig(BaseModel):
     recovery_triggers: list[RecoveryTrigger]
     pools: list[PoolDef]
@@ -222,6 +266,8 @@ class ResourcesConfig(BaseModel):
     pooled_recoveries: list[PooledRecoveryRule] = Field(default_factory=list)
     recovery_sequences: list[RecoverySequence] = Field(default_factory=list)
     damage: DamageConfig | None = None
+    consumables: list[ConsumableListDef] = Field(default_factory=list)
+    progression: ProgressionConfig | None = None
 
     def model_post_init(self, __context):
         # Validate that all triggers in recovery rules exist in recovery_triggers

@@ -83,10 +83,40 @@ MECHANICAL STATE: {state_summary}
         if stat_parts:
             prompt += f"CHARACTER STATISTICS: {', '.join(stat_parts)}\n\n"
 
+    consumables_cfg = getattr(pack.resources, "consumables", None) if pack.resources else None
+    if consumables_cfg and isinstance(sheet, dict):
+        cons_lines = []
+        for cdef in consumables_cfg:
+            items = get_by_path(sheet, cdef.path)
+            if isinstance(items, list):
+                limit_val = cdef.max_items if cdef.max_items is not None else (get_by_path(sheet, cdef.max_items_path) if cdef.max_items_path else None)
+                limit_str = f"/{limit_val}" if isinstance(limit_val, int) else ""
+                items_str = ", ".join(i.get("name", str(i)) if isinstance(i, dict) else str(i) for i in items) if items else "aucun"
+                cons_lines.append(f"- {cdef.id} ({cdef.name}, {len(items)}{limit_str}) : {items_str}")
+        if cons_lines:
+            prompt += "CONSUMABLES / ITEMS:\n" + "\n".join(cons_lines) + "\n\n"
+
+    prog_cfg = getattr(pack.resources, "progression", None) if pack.resources else None
+    if prog_cfg and isinstance(sheet, dict):
+        xp_val = get_by_path(sheet, prog_cfg.xp_path)
+        lvl_val = get_by_path(sheet, prog_cfg.level_path) if prog_cfg.level_path else None
+        taken_val = get_by_path(sheet, prog_cfg.advancements_path) if prog_cfg.advancements_path else None
+        prog_parts = [f"XP={xp_val if isinstance(xp_val, int) else 0}"]
+        if lvl_val is not None:
+            prog_parts.append(f"{prog_cfg.level_path}={lvl_val}")
+        if isinstance(taken_val, list):
+            prog_parts.append(f"{prog_cfg.advancements_path}={taken_val}")
+        if prog_cfg.advancements:
+            adv_ids = [f"{a.id} ({a.cost} XP)" for a in prog_cfg.advancements]
+            prog_parts.append(f"advancements=[{', '.join(adv_ids)}]")
+        prompt += "PROGRESSION: " + ", ".join(prog_parts) + "\n\n"
+
     prompt += """According to the rules and the character state, determines if a roll is required.
 If a roll is required, select the appropriate action_id, pool (if applicable), difficulty, and modifiers/adjustments.
 For attack actions (role="attack"), you may also specify "damage_effort_levels", "base_damage", "target_npc", "npc_health_max", and "npc_armor".
 For defense actions (role="defend"), you may also specify "incoming_damage", "damage_pool", and "ignore_armor".
+If the player uses a consumable/cypher/potion, specify "consume_item". If they find/receive one, specify "add_item".
+If XP is awarded or spent (or an advancement/level-up is requested), specify "xp_gain", "spend_xp", "buy_advancement", or "level_up".
 
 Reply in JSON format:
 {
@@ -110,6 +140,12 @@ Reply in JSON format:
     "incoming_damage": integer_or_null_optional,
     "damage_pool": "pool_id_or_null_optional",
     "ignore_armor": boolean_optional,
+    "consume_item": {"list": "list_id_optional", "item": "item_name", "heal_pool": "pool_id_optional", "heal_amount": integer_optional, "heal_expr": "formula_optional"},
+    "add_item": {"list": "list_id_optional", "item": "item_name_or_object"},
+    "xp_gain": integer_optional,
+    "spend_xp": {"amount": integer_optional, "reason": "string_optional"},
+    "buy_advancement": {"id": "advancement_id", "target_path": "path_optional", "allocation": {"pool": integer}, "value": "string_optional"},
+    "level_up": boolean_optional,
     "reason": "short explanation"
 }
 """
@@ -281,6 +317,84 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
 
     if raw.get("ignore_armor") is True:
         out["ignore_armor"] = True
+
+    return out
+
+
+def sanitize_turn_mechanics(raw: Any, pack) -> dict:
+    """
+    Extracts optional non-roll turn mechanics (consumable use/addition, XP gain/spend,
+    advancement purchase, level-up) from the Orchestrator's analysis JSON.
+    Works regardless of whether need_roll is True or False.
+    """
+    if not isinstance(raw, dict) or not pack or not getattr(pack, "resources", None):
+        return {}
+
+    out: dict[str, Any] = {}
+
+    raw_consume = raw.get("consume_item")
+    if isinstance(raw_consume, dict) and isinstance(raw_consume.get("item"), str) and raw_consume["item"].strip():
+        c_dict: dict[str, Any] = {"item": raw_consume["item"].strip()}
+        lst = raw_consume.get("list") or raw_consume.get("list_id")
+        if isinstance(lst, str) and lst.strip():
+            c_dict["list"] = lst.strip()
+        if isinstance(raw_consume.get("heal_pool"), str) and raw_consume["heal_pool"].strip():
+            c_dict["heal_pool"] = raw_consume["heal_pool"].strip()
+        if raw_consume.get("heal_amount") is not None:
+            ha = _parse_int_val(raw_consume.get("heal_amount"))
+            if ha > 0:
+                c_dict["heal_amount"] = ha
+        if isinstance(raw_consume.get("heal_expr"), str) and raw_consume["heal_expr"].strip():
+            c_dict["heal_expr"] = raw_consume["heal_expr"].strip()
+        out["consume_item"] = c_dict
+
+    raw_add = raw.get("add_item")
+    if isinstance(raw_add, dict) and raw_add.get("item"):
+        item_val = raw_add["item"]
+        if (isinstance(item_val, str) and item_val.strip()) or isinstance(item_val, dict):
+            a_dict: dict[str, Any] = {"item": item_val.strip() if isinstance(item_val, str) else item_val}
+            lst = raw_add.get("list") or raw_add.get("list_id")
+            if isinstance(lst, str) and lst.strip():
+                a_dict["list"] = lst.strip()
+            out["add_item"] = a_dict
+
+    if raw.get("xp_gain") is not None:
+        xp_g = _parse_int_val(raw.get("xp_gain"))
+        if xp_g > 0:
+            out["xp_gain"] = xp_g
+
+    raw_spend = raw.get("spend_xp")
+    if isinstance(raw_spend, dict):
+        amt = _parse_int_val(raw_spend.get("amount"))
+        reason = raw_spend.get("reason")
+        reason_str = reason.strip() if isinstance(reason, str) and reason.strip() else None
+        if amt > 0 or reason_str:
+            out["spend_xp"] = {"amount": amt, "reason": reason_str}
+
+    raw_adv = raw.get("buy_advancement")
+    if isinstance(raw_adv, dict) and isinstance(raw_adv.get("id"), str) and raw_adv["id"].strip():
+        adv_dict: dict[str, Any] = {"id": raw_adv["id"].strip()}
+        tp = raw_adv.get("target_path") or raw_adv.get("pool")
+        if isinstance(tp, str) and tp.strip():
+            adv_dict["target_path"] = tp.strip()
+        raw_alloc = raw_adv.get("allocation") or raw_adv.get("allocations")
+        if isinstance(raw_alloc, dict):
+            alloc = {}
+            for k, v in raw_alloc.items():
+                iv = _parse_int_val(v)
+                if iv > 0:
+                    alloc[str(k)] = iv
+            if alloc:
+                adv_dict["allocation"] = alloc
+        val = raw_adv.get("value")
+        if val is None:
+            val = raw_adv.get("skill") if raw_adv.get("skill") is not None else raw_adv.get("ability")
+        if val is not None:
+            adv_dict["value"] = val
+        out["buy_advancement"] = adv_dict
+
+    if raw.get("level_up") is True:
+        out["level_up"] = True
 
     return out
 
@@ -456,7 +570,7 @@ def _get_by_path_strict(data: dict, path: str):
         val = val[k]
     return val
 
-def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict, list[str]]:
+def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack, extra_paths: list[str] | None = None) -> tuple[dict, list[str]]:
     """
     Enforces engine-owned fields on a modified sheet, using the snapshot as ground truth.
     Returns a deep-copied corrected sheet and a list of restored paths.
@@ -477,6 +591,23 @@ def enforce_engine_owned_fields(sheet: dict, snapshot: dict, pack) -> tuple[dict
                 engine_paths.append(group.path)
         if getattr(pack.resources, "damage", None) and pack.resources.damage.damage_track_path:
             engine_paths.append(pack.resources.damage.damage_track_path)
+        if getattr(pack.resources, "consumables", None):
+            for cdef in pack.resources.consumables:
+                if getattr(cdef, "engine_owned", False) and cdef.path not in engine_paths:
+                    engine_paths.append(cdef.path)
+        if getattr(pack.resources, "progression", None):
+            prog = pack.resources.progression
+            if prog.xp_path and prog.xp_path not in engine_paths:
+                engine_paths.append(prog.xp_path)
+            if prog.level_path and prog.level_path not in engine_paths:
+                engine_paths.append(prog.level_path)
+            if prog.advancements_path and prog.advancements_path not in engine_paths:
+                engine_paths.append(prog.advancements_path)
+
+    if extra_paths:
+        for ep in extra_paths:
+            if ep and ep not in engine_paths:
+                engine_paths.append(ep)
 
     for path in engine_paths:
         try:

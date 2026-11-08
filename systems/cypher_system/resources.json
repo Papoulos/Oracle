@@ -58,5 +58,80 @@
     "damage_track_states": ["hale", "impaired", "debilitated", "dead"],
     "blocking_states": ["debilitated", "dead"],
     "impaired_state": "impaired"
+  },
+  "consumables": [
+    {
+      "id": "cyphers",
+      "name": "Cyphers",
+      "path": "cyphers",
+      "max_items_path": "cypher_limit"
+    },
+    {
+      "id": "equipment",
+      "name": "Équipement consommable",
+      "path": "equipment"
+    }
+  ],
+  "progression": {
+    "xp_path": "xp",
+    "level_path": "tier",
+    "max_level": 6,
+    "advancements_per_rank": 4,
+    "advancements_path": "tier_advancements",
+    "xp_spends": {
+      "reroll": 1,
+      "intrusion_refusal": 1,
+      "short_term_benefit": 2
+    },
+    "advancements": [
+      {
+        "id": "increase_capabilities",
+        "name": "Augmenter les capacités (+4 points de Réserves)",
+        "description": "Ajoute 4 points répartis librement dans les valeurs max (et actuelles) des réserves Might, Speed et Intellect.",
+        "cost": 4,
+        "kind": "distribute_points",
+        "amount": 4,
+        "allowed_paths": ["resources.might.max", "resources.speed.max", "resources.intellect.max"],
+        "sync_paths": {
+          "resources.might.max": "resources.might.current",
+          "resources.speed.max": "resources.speed.current",
+          "resources.intellect.max": "resources.intellect.current"
+        }
+      },
+      {
+        "id": "move_toward_perfection",
+        "name": "Tendre vers la perfection (+1 Edge)",
+        "description": "Ajoute +1 à l'Edge de Might, de Speed ou d'Intellect.",
+        "cost": 4,
+        "kind": "add_stat",
+        "amount": 1,
+        "allowed_paths": ["edge.might", "edge.speed", "edge.intellect"]
+      },
+      {
+        "id": "extra_effort",
+        "name": "Effort supplémentaire (+1 Effort)",
+        "description": "Augmente le score d'Effort de +1.",
+        "cost": 4,
+        "kind": "add_stat",
+        "amount": 1,
+        "target_path": "effort"
+      },
+      {
+        "id": "skill_training",
+        "name": "Entraînement aux compétences",
+        "description": "S'entraîner dans une nouvelle compétence ou se spécialiser dans une compétence déjà entraînée.",
+        "cost": 4,
+        "kind": "append_list",
+        "target_path": "skills"
+      },
+      {
+        "id": "other_option",
+        "name": "Nouvelle capacité spéciale / option de palier",
+        "description": "Acquérir une capacité supplémentaire de son Type ou de son Focus.",
+        "cost": 4,
+        "kind": "append_list",
+        "target_path": "abilities"
+      }
+    ]
   }
 }

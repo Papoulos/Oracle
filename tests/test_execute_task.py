@@ -439,3 +439,139 @@ def test_execute_task_pbta_and_dice_pool(tmp_path):
     assert res_pool.state_changes["task"]["total"] == 4
 
 
+def test_cypher_consumables_and_advancement_progression(engine):
+    # 1. Cypher consumables: add up to cypher_limit (2), third is blocked
+    engine.state["cypher_limit"] = 2
+    engine.state["cyphers"] = []
+    r1 = engine.add_consumable("Détonateur thermique (Niv 5)", list_id="cyphers")
+    r2 = engine.add_consumable("Injecteur régénérant (Niv 4)", list_id="cyphers")
+    r3 = engine.add_consumable("Sphère gravitationnelle", list_id="cyphers")
+    assert r1.success is True
+    assert r2.success is True
+    assert r3.success is False
+    assert r3.blocked_reason == "consumable_limit_reached"
+    assert len(engine.state["cyphers"]) == 2
+
+    # Use a cypher with healing on might
+    engine.state["resources"]["might"]["current"] = 5
+    u1 = engine.use_consumable("Injecteur", list_id="cyphers", heal_pool="might", heal_amount=4)
+    assert u1.success is True
+    assert len(engine.state["cyphers"]) == 1
+    assert engine.state["resources"]["might"]["current"] == 9
+
+    # 2. Cypher XP, xp_spends, and 4 advancements -> Tier 2
+    engine.state["xp"] = 0
+    engine.state["tier"] = 1
+    engine.state["tier_advancements"] = []
+
+    xp_res = engine.add_xp(18)
+    assert xp_res.success is True
+    assert engine.state["xp"] == 18
+
+    # Direct XP spend (e.g., reroll costs 1 XP)
+    sp_res = engine.spend_xp(1, reason="reroll")
+    assert sp_res.success is True
+    assert engine.state["xp"] == 17
+
+    # 4 advancements (cost 4 XP each = 16 XP)
+    a1 = engine.apply_advancement("increase_capabilities", allocations={"might": 2, "speed": 2})
+    assert a1.success is True
+    assert engine.state["resources"]["might"]["max"] == 14
+    assert engine.state["resources"]["speed"]["max"] == 12
+    assert engine.state["tier"] == 1
+
+    # Duplicate advancement in same tier is blocked
+    dup = engine.apply_advancement("increase_capabilities", allocations={"might": 4})
+    assert dup.success is False
+    assert dup.blocked_reason == "advancement_already_taken"
+
+    a2 = engine.apply_advancement("move_toward_perfection", pool="might")
+    assert a2.success is True
+    assert engine.state["edge"]["might"] == 2
+
+    a3 = engine.apply_advancement("extra_effort")
+    assert a3.success is True
+    assert engine.state["effort"] == 3
+
+    # 4th advancement triggers rank-up to Tier 2 and resets tier_advancements
+    engine.state["skills"] = []
+    a4 = engine.apply_advancement("skill_training", skill="Perception (Entraîné)")
+    assert a4.success is True
+    assert engine.state["tier"] == 2
+    assert engine.state["tier_advancements"] == []
+    assert engine.state["xp"] == 1
+    assert "Perception (Entraîné)" in engine.state["skills"]
+
+
+def test_dnd5e_consumables_and_threshold_progression(monkeypatch, tmp_path):
+    monkeypatch.setenv("SYSTEMS_DIR", "systems")
+    pack = load_pack("dnd5e_srd")
+    char_file = tmp_path / "dnd_prog.json"
+    char_file.write_text(json.dumps({
+        "name": "Aragorn",
+        "level": 1,
+        "xp": 0,
+        "proficiency_bonus": 2,
+        "equipment": ["Épée longue", "Potion de soin (x2)"],
+        "resources": {"hit_points": {"current": 6, "max": 12}},
+    }))
+    e = GameStateEngine(character_path=str(char_file), pack=pack)
+
+    # Use stacked potion (x2 -> x1) with heal_amount=5
+    u1 = e.use_consumable("Potion de soin", heal_amount=5)
+    assert u1.success is True
+    assert e.state["resources"]["hit_points"]["current"] == 11
+    assert "Potion de soin (x1)" in e.state["equipment"]
+
+    # Second use removes the item completely
+    u2 = e.use_consumable("Potion de soin", heal_amount=5)
+    assert u2.success is True
+    assert e.state["resources"]["hit_points"]["current"] == 12
+    assert all("Potion de soin" not in item for item in e.state["equipment"])
+
+    # Add 300 XP -> eligible for level 2
+    xp_res = e.add_xp(300)
+    assert xp_res.success is True
+    assert xp_res.state_changes.get("level_up") is True
+
+    lu_res = e.level_up()
+    assert lu_res.success is True
+    assert e.state["level"] == 2
+    assert e.state["proficiency_bonus"] == 2
+    assert e.state["resources"]["hit_points"]["max"] == 17
+    assert e.state["resources"]["hit_points"]["current"] == 17
+
+    # Jump to 6500 XP and level up to 5 -> proficiency_bonus becomes 3
+    e.add_xp(6200)
+    for _ in range(3):
+        assert e.level_up().success is True
+    assert e.state["level"] == 5
+    assert e.state["proficiency_bonus"] == 3
+
+
+def test_pbta_formula_threshold_and_reset_xp(tmp_path):
+    from mechanics.models import ProgressionConfig, RankUpEffect
+    pbta_pack = load_pack("pbta_minimal", base_dir=Path(__file__).parent / "fixtures")
+    pbta_pack.resources.progression = ProgressionConfig(
+        xp_path="xp",
+        level_path="level",
+        max_level=10,
+        threshold_expr="5 + character.level",
+        reset_xp_on_level_up=True,
+        on_rank_up=[RankUpEffect(target_path="luck_max", mode="add_formula", expr="1")],
+    )
+    char_file = tmp_path / "pbta_prog.json"
+    char_file.write_text(json.dumps({"name": "Hunter", "level": 1, "xp": 0, "luck_max": 7}))
+    e = GameStateEngine(character_path=str(char_file), pack=pbta_pack)
+
+    # At level 1, threshold is 5 + 1 = 6 XP
+    e.add_xp(6)
+    assert e.state["xp"] == 6
+    lu = e.level_up()
+    assert lu.success is True
+    assert e.state["level"] == 2
+    assert e.state["xp"] == 0  # 6 - 6 = 0
+    assert e.state["luck_max"] == 8
+
+
+

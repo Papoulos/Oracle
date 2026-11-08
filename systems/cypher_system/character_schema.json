@@ -37,12 +37,18 @@
     {"path": "skills", "description": "Liste des compétences (chaînes ou objets avec nom et niveau 'trained' / 'specialized' / 'inability')."},
     {"path": "abilities", "description": "Liste des capacités spéciales de Type et de Focus (au moins une capacité requise)."},
     {"path": "cyphers", "description": "Liste des cyphers (objets à usage unique) portés par le personnage."},
+    {"path": "cypher_limit", "description": "Nombre maximal de cyphers pouvant être portés simultanément sans danger (2 ou 3 au Tier 1 selon le Type)."},
+    {"path": "xp", "description": "Points d'expérience (XP) disponibles pour les relances (1 XP) ou les avancements de Tier (4 XP par évolution)."},
+    {"path": "tier_advancements", "description": "Liste des évolutions achetées dans le Tier actuel (4 évolutions font passer au Tier suivant)."},
     {"path": "equipment", "description": "Liste des armes, armures et équipements du personnage."}
   ],
   "defaults": {
     "tier": 1,
     "effort": 1,
     "armor": 0,
+    "xp": 0,
+    "cypher_limit": 2,
+    "tier_advancements": [],
     "damage_track": "hale",
     "recovery_step": 0,
     "edge": {
