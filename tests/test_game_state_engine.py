@@ -11,7 +11,6 @@ def temp_character_file(tmp_path):
         "level": 1,
         "xp": 0,
         "next_level_xp": 1000,
-        "pv": 10,
         "resources": {
             "hit_points": {"current": 10, "max": 10},
             "spells_per_day": {
@@ -157,13 +156,11 @@ def test_gse_pack_dnd5e_srd(temp_character_file_pack, caplog):
     # Test Rest (mode pack)
     gse_pack.state["resources"]["hit_points"]["current"] = 5
     gse_pack.state["resources"]["spells_per_day"]["level_1"]["current"] = 1
-    gse_pack.state["pv"] = 5
 
     res = gse_pack.rest("long_rest")
     assert res.success is True
     assert gse_pack.state["resources"]["hit_points"]["current"] == 10
     assert gse_pack.state["resources"]["spells_per_day"]["level_1"]["current"] == 2
-    assert gse_pack.state["pv"] == 10
 
     # Test short_rest (ne modifie rien pour l'instant dans dnd5e_srd)
     res_short = gse_pack.rest("short_rest")

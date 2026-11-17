@@ -175,7 +175,6 @@ def test_dnd5e_consume_and_long_rest(monkeypatch, tmp_path, mock_systems_dir):
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
     char = {
-        "pv": 3,
         "resources": {
             "hit_points": {"current": 3, "max": 30},
             "spells_per_day": {
@@ -203,7 +202,7 @@ def test_dnd5e_consume_and_long_rest(monkeypatch, tmp_path, mock_systems_dir):
 def test_experimental_mode(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     import os; os.makedirs("Memory", exist_ok=True)
-    agent = create_agent(tmp_path, pack_id=None, character_data={"pv": {"current": 5}})
+    agent = create_agent(tmp_path, pack_id=None, character_data={"resources": {"hit_points": {"current": 5, "max": 10}}})
     agent.llm.invoke.return_value = mock.Mock(content=json.dumps({"need_roll": False}))
 
     res = agent.chat("Je marche prudemment")

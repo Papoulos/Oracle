@@ -900,7 +900,10 @@ class RPGAgent(BaseAgent):
                         "pool_size",
                         "damage_effort_levels",
                         "base_damage",
+                        "weapon",
+                        "damage_type",
                         "target_npc",
+                        "npc_level",
                         "npc_health_max",
                         "npc_armor",
                         "incoming_damage",
@@ -918,6 +921,9 @@ class RPGAgent(BaseAgent):
                             None,
                         )
                         if npc_entry:
+                            extra_kwargs["npc_data"] = npc_entry
+                            if "npc_level" not in extra_kwargs and isinstance(npc_entry.get("level"), int):
+                                extra_kwargs["npc_level"] = npc_entry["level"]
                             if "npc_health_max" not in extra_kwargs and isinstance(npc_entry.get("health"), int):
                                 extra_kwargs["npc_health_max"] = npc_entry["health"]
                             if "npc_armor" not in extra_kwargs and isinstance(npc_entry.get("armor"), int):

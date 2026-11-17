@@ -32,12 +32,38 @@
       "role": "attack",
       "name": "Jet d'attaque",
       "description": "Attaque au corps à corps, à distance ou par sort contre la Classe d'Armure (CA) d'un adversaire.",
-      "guidance": "Utilise 'attack' lorsque le joueur attaque un PNJ. 1) difficulty = CA de la cible (ou 10 + niveau du PNJ par défaut). 2) modifier = bonus d'attaque du personnage (modificateur de Force/Dextérité/Incantation + maîtrise). 3) base_damage = dégâts moyens de l'arme ou du sort + modificateur (par défaut 6). 4) target_npc = identifiant du PNJ visé.",
+      "guidance": "Utilise 'attack' lorsque le joueur attaque un PNJ. 1) difficulty = CA de la cible (ou 10 + niveau du PNJ par défaut). 2) modifier = bonus d'attaque du personnage (modificateur de Force/Dextérité/Incantation + maîtrise). 3) base_damage = dégâts moyens de l'arme ou du sort + modificateur (par défaut 6). 4) target_npc = identifiant du PNJ visé. 5) npc_health_max = PV maximums du PNJ cible s'il n'est pas encore suivi.",
       "pools": [],
       "default_damage": 6,
-      "roll_damage_bonuses": {
-        "20": 4
+      "weapon_damage": {
+        "dague": 2,
+        "dagger": 2,
+        "épée courte": 3,
+        "shortsword": 3,
+        "cimeterre": 3,
+        "masse d'armes": 3,
+        "mace": 3,
+        "bâton": 3,
+        "quarterstaff": 3,
+        "hachette": 3,
+        "javeline": 3,
+        "rapière": 4,
+        "rapier": 4,
+        "épée": 4,
+        "épée longue": 4,
+        "longsword": 4,
+        "arbalète légère": 4,
+        "arc court": 3,
+        "arc long": 4,
+        "grande hache": 6,
+        "greataxe": 6,
+        "épée à deux mains": 7,
+        "greatsword": 7
       },
+      "damage_expr": "weapon.damage + max(0, stat_modifier)",
+      "critical_damage_expr": "weapon.damage if weapon.damage > 0 else base_damage",
+      "difficulty_expr": "npc.ac",
+      "npc_health_expr": "npc.hit_points if npc.hit_points > 0 else npc.health",
       "special_rolls": {
         "1": "critical_failure",
         "20": "critical_success"
@@ -55,6 +81,8 @@
       "description": "Jet de sauvegarde pour résister à un sort, un piège, un poison ou un danger immédiat. En cas d'échec, le personnage subit les dégâts indiqués.",
       "guidance": "Utilise 'saving_throw' lorsque le personnage doit résister à un effet dangereux ou une attaque ennemie. 1) difficulty = DD de la sauvegarde. 2) modifier = modificateur de sauvegarde du personnage. 3) incoming_damage = dégâts subis en cas d'échec.",
       "pools": [],
+      "difficulty_expr": "npc.save_dc",
+      "default_incoming_damage_expr": "npc.damage",
       "special_rolls": {
         "1": "critical_failure",
         "20": "critical_success"

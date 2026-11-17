@@ -94,7 +94,6 @@ def engine(test_dir, tmp_path):
     char_path = tmp_path / "character.json"
     state = {
         "tier": 2,
-        "pv": 10,
         "resources": {
             "hit_dice": {"current": 2, "max": 7},
             "stamina": {"current": 0, "max": 20},
@@ -167,12 +166,11 @@ def test_atomicity_error(engine):
     assert engine.state["resources"]["stamina"]["current"] == stamina_cur
     assert engine.state["resources"]["hit_points"]["current"] == hp_cur
 
-def test_pv_mirroring(engine):
-    assert engine.state["pv"] == 10
+def test_health_pool_fixed_recovery(engine):
+    assert engine.state["resources"]["hit_points"]["current"] == 10
     res = engine.rest("short_rest")
     assert res.success
     assert engine.state["resources"]["hit_points"]["current"] == 20
-    assert engine.state["pv"] == 20
 
 from systems.validate import validate_pack
 

@@ -50,6 +50,24 @@
       "guidance": "Utilise 'attack' lorsque le joueur attaque un PNJ. 1) difficulty = niveau du PNJ (1 à 10). 2) pool = 'might' (mêlée lourde/force), 'speed' (mêlée fine/tir) ou 'intellect' (pouvoir mental/sort comme Onslaught). 3) base_damage = dégâts de l'arme ou capacité (arme légère = 2, arme moyenne / Onslaught = 4, arme lourde = 6). 4) target_npc = identifiant ou nom du PNJ visé. 5) effort_levels = niveaux d'effort pour faciliter le jet ; damage_effort_levels = niveaux d'effort pour augmenter les dégâts (+3 dégâts par niveau), uniquement si le joueur le demande explicitement.",
       "pools": ["might", "speed", "intellect"],
       "default_damage": 4,
+      "weapon_damage": {
+        "light": 2,
+        "medium": 4,
+        "heavy": 6,
+        "légère": 2,
+        "moyenne": 4,
+        "lourde": 6,
+        "dague": 2,
+        "épée": 4,
+        "épée longue": 4,
+        "arc": 4,
+        "grande hache": 6,
+        "marteau lourd": 6
+      },
+      "damage_expr": "weapon.damage",
+      "difficulty_expr": "npc.level",
+      "npc_health_expr": "npc.health if npc.health > 0 else npc.level * 3",
+      "npc_armor_expr": "npc.armor",
       "roll_damage_bonuses": {
         "17": 1,
         "18": 2,
@@ -85,6 +103,8 @@
       "description": "Le personnage se défend contre l'attaque d'un PNJ ou un danger immédiat. En cas d'échec, il subit les dégâts de l'attaque (réduits par son Armure).",
       "guidance": "Utilise 'defend' lorsqu'un PNJ attaque le joueur ou que le joueur tente d'esquiver/encaisser une attaque ennemie. 1) difficulty = niveau du PNJ attaquant. 2) pool = 'speed' (esquive/parade), 'might' (encaisser/vigueur) ou 'intellect' (défense mentale). 3) incoming_damage = dégâts infligés par le PNJ en cas d'échec (par défaut égal au niveau du PNJ ou aux dégâts indiqués sur sa fiche). 4) damage_pool = réserve touchée par les dégâts ('might' par défaut, 'intellect' pour une attaque mentale avec ignore_armor=true).",
       "pools": ["might", "speed", "intellect"],
+      "difficulty_expr": "npc.level",
+      "default_incoming_damage_expr": "npc.damage if npc.damage > 0 else (npc.level if npc.level > 0 else difficulty)",
       "impaired_suppressed_special_rolls": ["19", "20"],
       "special_rolls": {
         "1": "gm_intrusion",

@@ -104,6 +104,11 @@ def validate_pack(pack_path: str) -> list[Issue]:
                         elif current_max >= next_min:
                             issues.append(Issue(severity="error", file="resolution.json", path=resolution_path, message=f"Overlap detected between {current_max} and {next_min}"))
 
+            if getattr(resolution, "stat_modifier_expr", None):
+                for var in referenced_variables(resolution.stat_modifier_expr):
+                    if var != "stat" and not var.startswith("character."):
+                        issues.append(Issue(severity="error", file="resolution.json", path="/stat_modifier_expr", message=f"Invalid variable '{var}' in stat_modifier_expr. Allowed: 'stat', 'character.*'."))
+
         except ValidationError as e:
              issues.append(Issue(severity="error", file="resolution.json", path=resolution_path, message=str(e)))
         except json.JSONDecodeError as e:
@@ -388,6 +393,38 @@ def validate_pack(pack_path: str) -> list[Issue]:
                         test_str = action.effort.edge_path_template.replace("{pool}", "test_pool")
                         if not re.match(ptr_regex, test_str):
                             issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/effort/edge_path_template", message=f"Invalid pointer path syntax: {action.effort.edge_path_template}"))
+
+                if action.damage_expr:
+                    allowed_dmg_vars = {"weapon.damage", "modifier", "stat_modifier", "difficulty"}
+                    for var in referenced_variables(action.damage_expr):
+                        if not var.startswith("character.") and not var.startswith("npc.") and var not in allowed_dmg_vars:
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/damage_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'npc.*', 'weapon.damage', 'modifier', 'stat_modifier', 'difficulty'."))
+
+                if action.critical_damage_expr:
+                    allowed_crit_vars = {"base_damage", "weapon.damage", "roll", "modifier", "stat_modifier", "difficulty"}
+                    for var in referenced_variables(action.critical_damage_expr):
+                        if not var.startswith("character.") and not var.startswith("npc.") and var not in allowed_crit_vars:
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/critical_damage_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'npc.*', 'base_damage', 'weapon.damage', 'roll', 'modifier', 'stat_modifier', 'difficulty'."))
+
+                if action.difficulty_expr:
+                    for var in referenced_variables(action.difficulty_expr):
+                        if not var.startswith("character.") and not var.startswith("npc."):
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/difficulty_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'npc.*'."))
+
+                if action.npc_health_expr:
+                    for var in referenced_variables(action.npc_health_expr):
+                        if not var.startswith("character.") and not var.startswith("npc.") and var != "difficulty":
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/npc_health_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'npc.*', 'difficulty'."))
+
+                if action.npc_armor_expr:
+                    for var in referenced_variables(action.npc_armor_expr):
+                        if not var.startswith("character.") and not var.startswith("npc."):
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/npc_armor_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'npc.*'."))
+
+                if action.default_incoming_damage_expr:
+                    for var in referenced_variables(action.default_incoming_damage_expr):
+                        if not var.startswith("character.") and not var.startswith("npc.") and var != "difficulty":
+                            issues.append(Issue(severity="error", file="actions.json", path=f"/actions/{action.id}/default_incoming_damage_expr", message=f"Invalid variable '{var}'. Allowed: 'character.*', 'npc.*', 'difficulty'."))
 
             # Check difficulty_scale
             levels = set()

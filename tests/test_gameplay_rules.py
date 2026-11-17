@@ -21,7 +21,6 @@ def temp_character_file(tmp_path):
         "level": 1,
         "xp": 0,
         "next_level_xp": 1000,
-        "pv": 10,
         "resources": {
             "hit_points": {"current": 4, "max": 10},
             "spells_per_day": {

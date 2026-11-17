@@ -35,7 +35,14 @@ class TaskAction(BaseModel):
     pools: list[str] = Field(default_factory=list)
     effort: Optional[EffortRule] = None
     default_damage: int = 0
+    weapon_damage: dict[str, int] = Field(default_factory=dict)
+    damage_expr: Optional[Formula] = None
     roll_damage_bonuses: dict[str, int] = Field(default_factory=dict)
+    critical_damage_expr: Optional[Formula] = None
+    difficulty_expr: Optional[Formula] = None
+    npc_health_expr: Optional[Formula] = None
+    npc_armor_expr: Optional[Formula] = None
+    default_incoming_damage_expr: Optional[Formula] = None
     impaired_max_roll_bonus: Optional[int] = None
     impaired_suppressed_special_rolls: list[str] = Field(default_factory=list)
     special_rolls: dict[str, str] = Field(default_factory=dict)

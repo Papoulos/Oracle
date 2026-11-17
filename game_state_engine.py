@@ -95,9 +95,29 @@ class GameStateEngine:
             return "No state available."
 
         hp_cur, hp_max = self.get_hp()
+        prog = getattr(self.pack.resources, "progression", None) if (self.pack and getattr(self.pack, "resources", None)) else None
+        level_val = self.state.get("level")
+        if level_val is None and prog and prog.level_path:
+            level_val = get_by_path(self.state, prog.level_path)
+        if level_val is None:
+            level_val = "?"
+
+        xp_val = self.state.get("xp")
+        if xp_val is None and prog and prog.xp_path:
+            xp_val = get_by_path(self.state, prog.xp_path)
+        if xp_val is None:
+            xp_val = 0
+
+        next_xp = self.state.get("next_level_xp", self.state.get("xp_prochain_niveau"))
+        if next_xp is None and prog and isinstance(level_val, int) and not isinstance(level_val, bool):
+            if prog.thresholds and str(level_val + 1) in prog.thresholds:
+                next_xp = prog.thresholds[str(level_val + 1)]
+        if next_xp is None:
+            next_xp = "?"
+
         lines = [
-            f"Level: {self.state.get('level', '?')}",
-            f"XP: {self.state.get('xp', 0)}/{self.state.get('next_level_xp', self.state.get('xp_prochain_niveau', '?'))}",
+            f"Level: {level_val}",
+            f"XP: {xp_val}/{next_xp}",
         ]
 
         if not self.pack:
@@ -316,45 +336,220 @@ class GameStateEngine:
             state_changes={pool_key: {"avant": hp_cur, "apres": new_hp}}
         )
 
+    def _build_npc_context(
+        self,
+        target_npc: Optional[str] = None,
+        npc_data: Optional[dict] = None,
+        npc_level: Optional[int] = None,
+        npc_health_max: Optional[int] = None,
+        npc_armor: Optional[int] = None,
+    ) -> dict:
+        raw = dict(npc_data) if isinstance(npc_data, dict) else {}
+        tracked = (
+            self.state.get("npc_health", {}).get(target_npc, {})
+            if (target_npc and isinstance(self.state.get("npc_health"), dict))
+            else {}
+        )
+        if isinstance(tracked, dict):
+            for k in ("level", "max", "armor", "ac", "damage", "save_dc", "resistances", "immunities", "vulnerabilities"):
+                if k not in raw and k in tracked:
+                    raw[k] = tracked[k]
+
+        def _int_or(val, default=0):
+            return val if (isinstance(val, int) and not isinstance(val, bool)) else default
+
+        lvl = _int_or(npc_level, _int_or(raw.get("level"), 0))
+        hp = _int_or(npc_health_max, _int_or(raw.get("health"), _int_or(raw.get("hit_points"), _int_or(raw.get("max"), 0))))
+        hit_pts = _int_or(npc_health_max, _int_or(raw.get("hit_points"), _int_or(raw.get("health"), _int_or(raw.get("max"), 0))))
+        arm = _int_or(npc_armor, _int_or(raw.get("armor"), 0))
+        ac_val = _int_or(raw.get("ac"), _int_or(raw.get("ca"), 0))
+        dmg_val = _int_or(raw.get("damage"), 0)
+        save_dc_val = _int_or(raw.get("save_dc"), _int_or(raw.get("dc"), 0))
+
+        return {
+            "id": target_npc or raw.get("id") or raw.get("name") or raw.get("full_name"),
+            "level": lvl,
+            "health": hp,
+            "hit_points": hit_pts,
+            "armor": arm,
+            "ac": ac_val,
+            "damage": dmg_val,
+            "save_dc": save_dc_val,
+            "resistances": [str(r).lower() for r in (raw.get("resistances") or []) if r],
+            "immunities": [str(r).lower() for r in (raw.get("immunities") or []) if r],
+            "vulnerabilities": [str(r).lower() for r in (raw.get("vulnerabilities") or []) if r],
+        }
+
+    def _resolve_weapon_context(
+        self,
+        action,
+        weapon: Optional[str | dict] = None,
+        damage_type: Optional[str] = None,
+    ) -> dict:
+        w_table = {k.lower(): v for k, v in (getattr(action, "weapon_damage", None) or {}).items()}
+        w_dmg: Optional[int] = None
+        w_dtype: Optional[str] = damage_type.lower().strip() if isinstance(damage_type, str) and damage_type.strip() else None
+
+        def _match_in_table(label: str) -> Optional[int]:
+            low = label.lower().strip()
+            if not low or not w_table:
+                return None
+            if low in w_table:
+                return w_table[low]
+            for k in sorted(w_table.keys(), key=len, reverse=True):
+                if k in low:
+                    return w_table[k]
+            return None
+
+        if isinstance(weapon, dict):
+            if isinstance(weapon.get("damage"), int) and not isinstance(weapon.get("damage"), bool):
+                w_dmg = weapon["damage"]
+            else:
+                for key_field in ("type", "category", "name"):
+                    val = weapon.get(key_field)
+                    if isinstance(val, str):
+                        matched = _match_in_table(val)
+                        if matched is not None:
+                            w_dmg = matched
+                            break
+            if w_dtype is None and isinstance(weapon.get("damage_type"), str):
+                w_dtype = weapon["damage_type"].lower().strip()
+        elif isinstance(weapon, str) and weapon.strip():
+            # Check character sheet weapons/equipment first for a matching structured weapon entry
+            for list_key in ("weapons", "equipment"):
+                items = self.state.get(list_key) if isinstance(self.state, dict) else None
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict) and str(item.get("name", "")).lower().strip() == weapon.lower().strip():
+                            if isinstance(item.get("damage"), int) and not isinstance(item.get("damage"), bool):
+                                w_dmg = item["damage"]
+                            elif isinstance(item.get("type"), str):
+                                w_dmg = _match_in_table(item["type"])
+                            if w_dtype is None and isinstance(item.get("damage_type"), str):
+                                w_dtype = item["damage_type"].lower().strip()
+                            break
+            if w_dmg is None:
+                w_dmg = _match_in_table(weapon)
+
+        return {
+            "damage": w_dmg if w_dmg is not None else 0,
+            "damage_type": w_dtype,
+            "matched": w_dmg is not None,
+        }
+
     def apply_npc_damage(
         self,
         npc_id: str,
         damage: int,
-        npc_level: int = 1,
+        npc_level: Optional[int] = None,
         npc_health_max: Optional[int] = None,
-        npc_armor: int = 0,
+        npc_armor: Optional[int] = None,
+        npc_data: Optional[dict] = None,
+        npc_health_expr: Optional[str] = None,
+        npc_armor_expr: Optional[str] = None,
+        damage_type: Optional[str] = None,
+        difficulty: Optional[int] = None,
     ) -> dict:
         """
         Applies damage to a target NPC tracked in self.state['npc_health'][npc_id].
-        Defaults NPC max health to 3 * npc_level when not previously tracked or specified.
+        Resolves NPC max health, armor, and resistances from the scenario NPC sheet and active SystemPack rules.
         """
         npc_table = self.state.setdefault("npc_health", {})
         entry = npc_table.get(npc_id)
+        npc_ctx = self._build_npc_context(
+            target_npc=npc_id,
+            npc_data=npc_data,
+            npc_level=npc_level,
+            npc_health_max=npc_health_max,
+            npc_armor=npc_armor,
+        )
+
+        atk_act = None
+        if self.pack and getattr(self.pack, "actions", None) and self.pack.actions.actions:
+            atk_act = next((a for a in self.pack.actions.actions if getattr(a, "role", None) == "attack"), None)
+
+        if npc_ctx["level"] <= 0 and atk_act and getattr(atk_act, "difficulty_expr", None) == "npc.level" and isinstance(difficulty, int) and difficulty > 0:
+            npc_ctx["level"] = difficulty
+
         if not isinstance(entry, dict):
-            max_hp = npc_health_max if (isinstance(npc_health_max, int) and npc_health_max > 0) else max(1, npc_level * 3)
-            armor_val = npc_armor if (isinstance(npc_armor, int) and npc_armor >= 0) else 0
+            h_expr = npc_health_expr or (getattr(atk_act, "npc_health_expr", None) if atk_act else None)
+            a_expr = npc_armor_expr or (getattr(atk_act, "npc_armor_expr", None) if atk_act else None)
+
+            eval_ctx = {
+                "npc": npc_ctx,
+                "difficulty": difficulty if isinstance(difficulty, int) else npc_ctx["level"],
+                "character": self.state,
+            }
+
+            if isinstance(npc_health_max, int) and not isinstance(npc_health_max, bool) and npc_health_max > 0:
+                max_hp = npc_health_max
+            elif h_expr:
+                try:
+                    computed_hp = evaluate_int(h_expr, eval_ctx, self.rng)
+                    max_hp = computed_hp if computed_hp > 0 else max(1, npc_ctx["health"] or npc_ctx["hit_points"] or damage)
+                except ExprError:
+                    max_hp = max(1, npc_ctx["health"] or npc_ctx["hit_points"] or damage)
+            else:
+                max_hp = max(1, npc_ctx["health"] or npc_ctx["hit_points"] or damage)
+
+            if isinstance(npc_armor, int) and not isinstance(npc_armor, bool) and npc_armor >= 0:
+                armor_val = npc_armor
+            elif a_expr:
+                try:
+                    armor_val = max(0, evaluate_int(a_expr, eval_ctx, self.rng))
+                except ExprError:
+                    armor_val = max(0, npc_ctx["armor"])
+            else:
+                armor_val = max(0, npc_ctx["armor"])
+
             entry = {
                 "current": max_hp,
                 "max": max_hp,
-                "level": npc_level,
                 "armor": armor_val,
             }
+            if npc_ctx["level"] > 0:
+                entry["level"] = npc_ctx["level"]
+            if npc_ctx["ac"] > 0:
+                entry["ac"] = npc_ctx["ac"]
+            if npc_ctx["resistances"]:
+                entry["resistances"] = npc_ctx["resistances"]
+            if npc_ctx["immunities"]:
+                entry["immunities"] = npc_ctx["immunities"]
+            if npc_ctx["vulnerabilities"]:
+                entry["vulnerabilities"] = npc_ctx["vulnerabilities"]
             npc_table[npc_id] = entry
         else:
-            if isinstance(npc_health_max, int) and npc_health_max > 0 and "max" not in entry:
+            if isinstance(npc_health_max, int) and not isinstance(npc_health_max, bool) and npc_health_max > 0 and "max" not in entry:
                 entry["max"] = npc_health_max
-            if isinstance(npc_armor, int) and npc_armor > 0 and not entry.get("armor"):
+            if isinstance(npc_armor, int) and not isinstance(npc_armor, bool) and npc_armor > 0 and not entry.get("armor"):
                 entry["armor"] = npc_armor
+            for r_key in ("resistances", "immunities", "vulnerabilities"):
+                if npc_ctx[r_key] and not entry.get(r_key):
+                    entry[r_key] = npc_ctx[r_key]
 
         armor_used = entry.get("armor", 0)
         if not isinstance(armor_used, int) or armor_used < 0:
             armor_used = 0
         effective = max(0, damage - armor_used)
+
+        dtype = damage_type.lower().strip() if isinstance(damage_type, str) and damage_type.strip() else None
+        resistance_applied = None
+        if dtype and effective > 0:
+            if dtype in (entry.get("immunities") or []):
+                effective = 0
+                resistance_applied = "immune"
+            elif dtype in (entry.get("resistances") or []):
+                effective = effective // 2
+                resistance_applied = "resistant"
+            elif dtype in (entry.get("vulnerabilities") or []):
+                effective = effective * 2
+                resistance_applied = "vulnerable"
+
         before = entry.get("current", entry.get("max", 0))
         after = max(0, before - effective)
         entry["current"] = after
         self.save()
-        return {
+        res_dict = {
             "npc_id": npc_id,
             "raw_damage": damage,
             "armor": armor_used,
@@ -364,6 +559,9 @@ class GameStateEngine:
             "max": entry.get("max", before),
             "defeated": after == 0,
         }
+        if resistance_applied:
+            res_dict["resistance"] = resistance_applied
+        return res_dict
 
     def apply_healing(self, amount: int) -> ActionResult:
         """Applies healing to the character."""
@@ -1191,9 +1389,6 @@ class GameStateEngine:
                         if pool.name not in restored:
                             restored.append(pool.name)
                         state_changes[pool.id] = {"avant": change["current"], "apres": change["new_val"], "gain": change["gain"]}
-
-                        if pool.kind == "health" and "pv" in self.state:
-                            self.state["pv"] = change["new_val"]
                 elif change["type"] == "group":
                     group = change["group"]
                     if change["current"] != change["new_val"]:
@@ -1339,7 +1534,13 @@ class GameStateEngine:
         if isinstance(stats, dict):
             for k, v in stats.items():
                 if k.lower() == stat.lower() and isinstance(v, int) and not isinstance(v, bool):
-                    return v if -5 <= v <= 10 else (v - 10) // 2
+                    stat_expr = getattr(self.pack.resolution, "stat_modifier_expr", None) if (self.pack and getattr(self.pack, "resolution", None)) else None
+                    if stat_expr:
+                        try:
+                            return evaluate_int(stat_expr, {"stat": v, "character": self.state}, self.rng)
+                        except ExprError:
+                            return 0
+                    return v
         return 0
 
     def execute_task(
@@ -1353,8 +1554,12 @@ class GameStateEngine:
         damage_effort_levels: int = 0,
         base_damage: Optional[int] = None,
         target_npc: Optional[str] = None,
+        npc_data: Optional[dict] = None,
+        npc_level: Optional[int] = None,
         npc_health_max: Optional[int] = None,
-        npc_armor: int = 0,
+        npc_armor: Optional[int] = None,
+        weapon: Optional[str | dict] = None,
+        damage_type: Optional[str] = None,
         incoming_damage: Optional[int] = None,
         damage_pool: Optional[str] = None,
         ignore_armor: bool = False,
@@ -1418,6 +1623,25 @@ class GameStateEngine:
             pool_def = next((p for p in self.pack.resources.pools if p.id == pool_id), None)
             if not pool_def:
                 return ActionResult(success=False, message=f"Pool '{pool_id}' not found in resources.", blocked_reason="invalid_pool")
+
+        if target_npc is None and isinstance(npc_data, dict):
+            target_npc = npc_data.get("id") or npc_data.get("name") or npc_data.get("full_name")
+
+        npc_ctx = self._build_npc_context(
+            target_npc=target_npc,
+            npc_data=npc_data,
+            npc_level=npc_level,
+            npc_health_max=npc_health_max,
+            npc_armor=npc_armor,
+        )
+
+        if difficulty is None and getattr(action, "difficulty_expr", None) and (npc_data is not None or target_npc is not None or npc_level is not None):
+            try:
+                resolved_diff = evaluate_int(action.difficulty_expr, {"npc": npc_ctx, "character": self.state}, self.rng)
+                if resolved_diff > 0 or family == "StepTargetD20":
+                    difficulty = resolved_diff
+            except ExprError:
+                pass
 
         # Family-specific difficulty & parameter validation
         if family == "StepTargetD20":
@@ -1652,8 +1876,6 @@ class GameStateEngine:
         if effort_cost > 0 and pool_def:
             new_val = current_val - effort_cost
             set_by_path(self.state, pool_def.current_path, new_val)
-            if pool_def.kind == "health" and "pv" in self.state:
-                self.state["pv"] = new_val
 
             state_changes[pool_id] = {
                 "avant": current_val,
@@ -1677,16 +1899,56 @@ class GameStateEngine:
         )
 
         if action_role == "attack" and is_attack_hit:
-            base_dmg = base_damage if (isinstance(base_damage, int) and not isinstance(base_damage, bool) and base_damage >= 0) else getattr(action, "default_damage", 0)
+            weapon_info = self._resolve_weapon_context(action, weapon=weapon, damage_type=damage_type)
+            stat_mod = self._resolve_stat_modifier(stat, 0) if stat else eff_modifier
+            if isinstance(base_damage, int) and not isinstance(base_damage, bool) and base_damage >= 0:
+                base_dmg = base_damage
+            elif weapon_info["matched"]:
+                dmg_expr = getattr(action, "damage_expr", None)
+                if dmg_expr:
+                    try:
+                        dmg_ctx = {
+                            "weapon": {"damage": weapon_info["damage"]},
+                            "modifier": eff_modifier,
+                            "stat_modifier": stat_mod,
+                            "difficulty": difficulty or 0,
+                            "npc": npc_ctx,
+                            "character": self.state,
+                        }
+                        base_dmg = max(0, evaluate_int(dmg_expr, dmg_ctx, self.rng))
+                    except ExprError as e:
+                        return ActionResult(success=False, message=f"formula_error: {e}", blocked_reason="formula_error")
+                else:
+                    base_dmg = weapon_info["damage"]
+            else:
+                base_dmg = getattr(action, "default_damage", 0)
+
             dmg_per_lvl = action.effort.damage_per_level if action.effort else 0
             effort_dmg = damage_effort_levels * dmg_per_lvl
             roll_bonuses = getattr(action, "roll_damage_bonuses", {}) or {}
             dmg_roll_bonus = roll_bonuses.get(str(nat_roll), 0) if nat_roll is not None else 0
+            crit_expr = getattr(action, "critical_damage_expr", None)
+            is_crit = (result.outcome == Outcome.CRITICAL_SUCCESS) or (special_roll == "critical_success")
+            if is_crit and crit_expr:
+                try:
+                    crit_ctx = {
+                        "base_damage": base_dmg,
+                        "weapon": {"damage": weapon_info["damage"]},
+                        "roll": nat_roll or 0,
+                        "modifier": eff_modifier,
+                        "stat_modifier": stat_mod,
+                        "difficulty": difficulty or 0,
+                        "npc": npc_ctx,
+                        "character": self.state,
+                    }
+                    dmg_roll_bonus += max(0, evaluate_int(crit_expr, crit_ctx, self.rng))
+                except ExprError as e:
+                    return ActionResult(success=False, message=f"formula_error: {e}", blocked_reason="formula_error")
             max_imp_bonus = getattr(action, "impaired_max_roll_bonus", None)
             if is_impaired and max_imp_bonus is not None and dmg_roll_bonus > max_imp_bonus:
                 dmg_roll_bonus = max_imp_bonus
             total_dmg = base_dmg + effort_dmg + dmg_roll_bonus
-            if total_dmg > 0 or base_damage is not None or getattr(action, "default_damage", 0) > 0:
+            if total_dmg > 0 or base_damage is not None or weapon_info["matched"] or getattr(action, "default_damage", 0) > 0:
                 state_changes["attack_damage"] = {
                     "base": base_dmg,
                     "effort_bonus": effort_dmg,
@@ -1695,13 +1957,17 @@ class GameStateEngine:
                 }
                 phrase += f" Attack damage: {total_dmg} (base {base_dmg}, effort +{effort_dmg}, roll +{dmg_roll_bonus})."
                 if target_npc:
-                    npc_lvl = difficulty if (isinstance(difficulty, int) and difficulty > 0) else 1
                     npc_res = self.apply_npc_damage(
                         target_npc,
                         total_dmg,
-                        npc_level=npc_lvl,
+                        npc_level=npc_level,
                         npc_health_max=npc_health_max,
                         npc_armor=npc_armor,
+                        npc_data=npc_data,
+                        npc_health_expr=getattr(action, "npc_health_expr", None),
+                        npc_armor_expr=getattr(action, "npc_armor_expr", None),
+                        damage_type=weapon_info["damage_type"],
+                        difficulty=difficulty,
                     )
                     state_changes["npc_damage"] = npc_res
                     phrase += f" NPC '{target_npc}' health: {npc_res['avant']}->{npc_res['apres']}"
@@ -1713,7 +1979,18 @@ class GameStateEngine:
 
         # Combat consequences: Defend
         elif action_role == "defend" and is_defend_fail:
-            inc_dmg = incoming_damage if (isinstance(incoming_damage, int) and not isinstance(incoming_damage, bool) and incoming_damage >= 0) else (difficulty if family == "StepTargetD20" and isinstance(difficulty, int) else 0)
+            inc_dmg = incoming_damage if (isinstance(incoming_damage, int) and not isinstance(incoming_damage, bool) and incoming_damage >= 0) else None
+            if inc_dmg is None:
+                def_inc_expr = getattr(action, "default_incoming_damage_expr", None)
+                if def_inc_expr:
+                    try:
+                        if npc_ctx["level"] <= 0 and getattr(action, "difficulty_expr", None) == "npc.level" and isinstance(difficulty, int) and difficulty > 0:
+                            npc_ctx["level"] = difficulty
+                        inc_dmg = max(0, evaluate_int(def_inc_expr, {"npc": npc_ctx, "difficulty": difficulty or 0, "character": self.state}, self.rng))
+                    except ExprError:
+                        inc_dmg = 0
+                else:
+                    inc_dmg = 0
             if inc_dmg > 0:
                 default_pool = dmg_cfg.cascade_pools[0] if (dmg_cfg and dmg_cfg.cascade_pools) else None
                 dmg_res = self.apply_damage(inc_dmg, pool_id=damage_pool or default_pool, ignore_armor=ignore_armor)

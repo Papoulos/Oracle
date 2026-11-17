@@ -57,9 +57,9 @@ def validate_scenario_structure(data: dict) -> tuple[dict, list[str], list[str]]
                 )
             p["usual_location"] = None
 
-        # Normalize optional combat stats (level, health, damage, armor) if present or inferable from stats_and_abilities
+        # Normalize optional combat stats (level, health, hit_points, ac, damage, armor) if present or inferable from stats_and_abilities
         stats_text = str(p.get("stats_and_abilities") or "")
-        for stat_key in ("level", "health", "damage", "armor"):
+        for stat_key in ("level", "health", "hit_points", "ac", "damage", "armor", "save_dc"):
             if stat_key in p and p[stat_key] is not None:
                 try:
                     val = int(p[stat_key])
@@ -67,22 +67,27 @@ def validate_scenario_structure(data: dict) -> tuple[dict, list[str], list[str]]
                 except (ValueError, TypeError):
                     p[stat_key] = None
 
-        if p.get("level") is None and stats_text:
-            m_lvl = re.search(r"(?:niveau|level)\s*(\d+)", stats_text, re.IGNORECASE)
-            if m_lvl:
-                p["level"] = int(m_lvl.group(1))
-
-        if isinstance(p.get("level"), int) and p["level"] > 0:
-            lvl = p["level"]
-            if p.get("health") is None:
-                m_hp = re.search(r"(?:sant[ée]|pv|hp|health)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
-                p["health"] = int(m_hp.group(1)) if m_hp else lvl * 3
+        if stats_text:
+            if p.get("level") is None:
+                m_lvl = re.search(r"(?:niveau|level)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
+                if m_lvl:
+                    p["level"] = int(m_lvl.group(1))
+            if p.get("health") is None and p.get("hit_points") is None:
+                m_hp = re.search(r"(?:sant[ée]|pv|hp|health|hit_points)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
+                if m_hp:
+                    p["health"] = int(m_hp.group(1))
+            if p.get("ac") is None:
+                m_ac = re.search(r"\b(?:ca|ac|classe d'armure)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
+                if m_ac:
+                    p["ac"] = int(m_ac.group(1))
             if p.get("damage") is None:
                 m_dmg = re.search(r"(?:d[ée]g[âa]ts|damage)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
-                p["damage"] = int(m_dmg.group(1)) if m_dmg else lvl
+                if m_dmg:
+                    p["damage"] = int(m_dmg.group(1))
             if p.get("armor") is None:
                 m_arm = re.search(r"(?:armure|armor)\s*[:=]?\s*(\d+)", stats_text, re.IGNORECASE)
-                p["armor"] = int(m_arm.group(1)) if m_arm else 0
+                if m_arm:
+                    p["armor"] = int(m_arm.group(1))
 
     # --- Scene Nodes ---
     for s in data.get("scene_nodes", []):

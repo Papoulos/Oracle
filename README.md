@@ -123,13 +123,15 @@ graph TD
 To guarantee mechanical integrity and prevent LLM hallucinations, RPG Oracle separates narration from mathematics. The `GameStateEngine` (`game_state_engine.py`) is a pure-Python, zero-LLM engine that acts as the absolute source of truth for stats and resources.
 
 ### Key Capabilities
-*   **Resource Tracking**: Manages health pools, XP, consumable pools, and structured pool groups (such as spell slots `level_1` to `level_9`).
+*   **Resource Tracking**: Manages health pools, XP, consumable lists (`consumables`), and structured pool groups (such as spell slots `level_1` to `level_9`).
 *   **Automatic Action Detection**: Analyzes player input against localized trigger rules in `triggers.json` to consume resources or trigger recovery sequences before generating narrative responses.
-*   **Derived Stat Recalculation**: `synchronize_and_recalculate()` keeps sheet values consistent and only normalizes `resources.hit_points` if the active pack explicitly manages `resources.hit_points`, preserving system-specific pool structures (such as Cypher's `might`, `speed`, and `intellect`).
-*   **System Packs (`systems/<id>/`)**: Configured via `SYSTEM_PACK=<id>` in `.env`. Built-in packs include `cypher_system` and `dnd5e_srd`.
+*   **Derived Stat & Pool Normalization**: `synchronize_and_recalculate()` clamps all pools and `pool_groups` declared in the active pack to `[min_value, max]`, normalizes progression paths, and updates configured damage tracks without injecting system-foreign keys.
+*   **System Packs (`systems/<id>/`)**: Configured via `SYSTEM_PACK=<id>` in `.env` or selected dynamically in the Streamlit sidebar (`set_pack`). Built-in packs include `cypher_system` and `dnd5e_srd`.
     *   **Formula & Pooled Recovery**: Supports `full`, `fixed`, `percent`, and `formula` recovery modes (evaluated safely via `mechanics/expr.py` with `character` and `pool` context), as well as `pooled_recoveries` (shared recovery rolls allocated by the player across pools) and `recovery_sequences` (such as Cypher's 4-step daily rest cycle).
-    *   **Actions (`actions.json`)**: Supports task actions (e.g. attack, defend, climb) with dynamic effort mechanics and difficulty scales. `execute_task(action_id, pool_id, difficulty, step_adjustments, effort_levels, impaired)` evaluates cost formulas (using `effort.levels`, `effort.edge`, and `effort.impaired`), verifies resources atomically, resolves the check, and returns an `ActionResult` with structured `state_changes`.
-*   **Task Flow & State Guard (`mechanics/task_flow.py`)**: Provides prompt builders, decision sanitizers, narrative outcome formatters, and `enforce_engine_owned_fields()` to prevent the Sheet Manager LLM from overwriting engine-managed pools and state paths.
+    *   **Unified Multi-Family Actions (`actions.json`)**: `execute_task()` supports all 4 resolution families (`StepTargetD20`, `D20VsTarget`, `PbtA2d6`, `DicePoolSuccess`), dynamic effort costs, pack-defined combat roles (`attack`, `defend`, `general`), weapon damage tables and formulas (`weapon_damage`, `damage_expr`, `critical_damage_expr`, `roll_damage_bonuses`), pack-driven NPC confrontation rules (`difficulty_expr`, `npc_health_expr`, `npc_armor_expr`, resistances/immunities/vulnerabilities), and damage cascade/armor/track updates (`resources.damage`).
+    *   **Declarative Consumables & Multi-Mode Progression (`resources.json`)**: Supports item capacity limits (`max_items` / `max_items_path`), consumable healing, and progression via XP thresholds (`thresholds` / `threshold_expr`), advancement purchases (`advancements` with automatic rank-up after `advancements_per_rank`), immediate XP spends (`xp_spends`), and rank-up formulas (`on_rank_up`).
+*   **Task Flow & State Guard (`mechanics/task_flow.py`)**: Provides prompt builders, decision sanitizers, narrative outcome formatters, and `enforce_engine_owned_fields()` to prevent the Sheet Manager LLM from overwriting engine-managed pools, progression, consumables, and NPC health.
+*   **Pack-Driven Streamlit UI (`app.py`, `ui_sheet.py`)**: Dynamically renders character sheets (pools, pool groups, damage track, edge/effort, consumables, progression, and schema-defined fields) for any loaded System Pack.
 
 ---
 
@@ -279,16 +281,15 @@ Les packs système peuvent inclure des fichiers optionnels (strictement validés
 - `character_schema.json` : Définit la structure attendue de la fiche de personnage et assure la validation dynamique.
 - `creation_manual.json` : Guide étape par étape la logique du processus de création de personnage en isolant cette connaissance du LLM.
 
-La méthode `synchronize_and_recalculate` du moteur a été mise à jour : la normalisation historique des "hit_points" ne s'applique désormais qu'aux packs définissant explicitement un pool d'id `hit_points`, et préserve intactes les structures de PV spécifiques aux autres systèmes (comme Cypher System).
+La méthode `synchronize_and_recalculate` du moteur borne automatiquement tous les `pools` et `pool_groups` déclarés dans le pack actif et préserve intactes les structures propres à chaque système (comme les réserves `might`, `speed`, `intellect` et `damage_track` de Cypher System ou `resources.hit_points` de D&D 5e).
 
 ### Mode tâche (packs avec actions.json)
 
-Lorsque le `SYSTEM_PACK` spécifié possède un fichier `actions.json` valide **ET** que la famille de résolution est `StepTargetD20`, le `GameStateEngine` gère entièrement la résolution mécanique des actions des joueurs (Task Mode) :
-- **Analyse de tâche :** L'Orchestrateur détermine si l'action nécessite un jet en fournissant un JSON normalisé avec l'action choisie, la réserve, la difficulté et les ajustements (avantages ou obstacles).
-- **Résolution déterministe :** Le moteur Python exécute la tâche en appliquant les coûts (effort), effectue les calculs, vérifie la capacité du personnage et génère un rapport technique incontestable.
+Lorsque le `SYSTEM_PACK` actif possède un fichier `actions.json` valide (quelle que soit sa famille de résolution : `StepTargetD20`, `D20VsTarget`, `PbtA2d6` ou `DicePoolSuccess`), le `GameStateEngine` gère entièrement la résolution mécanique des actions des joueurs (Task Mode) :
+- **Analyse de tâche :** L'Orchestrateur détermine si l'action nécessite un jet (et/ou une mécanique de tour : usage/ajout de consommable, gain/dépense d'XP, achat d'avancement, montée de niveau) en fournissant un JSON normalisé.
+- **Résolution déterministe :** Le moteur Python exécute la tâche via `execute_task()`, applique les coûts éventuels (effort), résout les dégâts d'attaque (y compris les bonus par face `roll_damage_bonuses`, les formules de critique `critical_damage_expr` et le suivi des PV des PNJ dans `npc_health` selon les règles du pack) ou les dégâts subis en défense (armure, cascade sur les réserves et piste de dégâts `damage_track`), et génère un rapport technique incontestable.
 - **Narration forcée :** Le LLM narratif reçoit des instructions l'obligeant à s'appuyer exclusivement sur le rapport technique.
-- **Garde-fou des états :** Si le mode tâche ou les actions de l'Orchestrateur tentent de modifier l'état ou la progression mécanique du personnage de manière incohérente avec le modèle (ex: triche sur les ressources en cours de tour, altérations sur les variables sous la tutelle exclusive du moteur), un mécanisme de validation et de correction (safeguard) annule ces écritures. Les variables réservées sont rechargées de force dans la fiche avant d'être écrites, préservant ainsi la pureté des statistiques du système.
-> **Note :** La gestion des dégâts automatiques et du système de repos Cypher System n'est pas encore implémentée de manière entièrement procédurale dans le mode tâche actuel.
+- **Garde-fou des états :** Si le Sheet Manager tente de modifier des variables sous la tutelle exclusive du moteur (réserves, emplacements de sorts, piste de dégâts, étape de repos, `npc_health`, XP/niveau/avancements), `enforce_engine_owned_fields()` restaure les valeurs du moteur avant sauvegarde.
 
 ### Détection d'actions du pack
 

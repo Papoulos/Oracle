@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Literal, Union, Annotated, Optional
 from pydantic import BaseModel, Field
+from mechanics.expr import Formula
 
 
 class Outcome(str, Enum):
@@ -47,6 +48,7 @@ class D20VsTargetConfig(BaseModel):
     advantage_dice: int = 2
     critical_success_on: int = 20
     critical_failure_on: int = 1
+    stat_modifier_expr: Formula | None = None
 
     @classmethod
     def template(cls) -> "D20VsTargetConfig":
@@ -62,6 +64,7 @@ class D20VsTargetConfig(BaseModel):
 class PbtA2d6Config(BaseModel):
     family: Literal["PbtA2d6"]
     tiers: list[TierDef]
+    stat_modifier_expr: Formula | None = None
 
     @classmethod
     def template(cls) -> "PbtA2d6Config":

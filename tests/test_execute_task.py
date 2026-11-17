@@ -407,6 +407,34 @@ def test_execute_task_dnd5e_d20vstarget(monkeypatch, tmp_path):
     assert res_atk.success is True
     assert res_atk.state_changes["attack_damage"]["total"] == 8
     assert res_atk.state_changes["npc_damage"]["defeated"] is True
+    # D&D 5e difficulty is AC (13), not NPC level: level is not populated from difficulty
+    assert "level" not in e.state["npc_health"]["GOBELIN_01"]
+
+    # Critical hit (natural 20) in D&D 5e doubles weapon dice / base_damage via critical_damage_expr (8 -> 16)
+    e.rng = _FixedRollRng(20)
+    res_crit = e.execute_task(
+        "attack",
+        None,
+        modifier=5,
+        base_damage=8,
+        npc_data={"id": "ORC_01", "ac": 12, "hit_points": 15},
+    )
+    assert res_crit.success is True
+    assert res_crit.state_changes["task"]["target"] == 12
+    assert res_crit.state_changes["attack_damage"] == {"base": 8, "effort_bonus": 0, "roll_bonus": 8, "total": 16}
+    assert e.state["npc_health"]["ORC_01"]["max"] == 15
+    assert e.state["npc_health"]["ORC_01"]["current"] == 0
+    assert "level" not in e.state["npc_health"]["ORC_01"]
+
+    # Scenario Goblin with AC, hit_points, and slashing resistance vs PJ's longsword (damage 4 + Force mod 3 = 7 -> halved to 3)
+    e.rng = _FixedRollRng(14)
+    goblin_dnd = {"id": "GOBELIN_RESIST", "ac": 15, "hit_points": 7, "resistances": ["slashing"]}
+    res_gob = e.execute_task("attack", None, stat="Force", modifier=5, weapon="épée longue", damage_type="slashing", npc_data=goblin_dnd)
+    assert res_gob.success is True
+    assert res_gob.state_changes["task"]["target"] == 15
+    assert res_gob.state_changes["attack_damage"]["total"] == 7  # 4 (épée longue) + 3 (Force mod)
+    assert res_gob.state_changes["npc_damage"]["effective_damage"] == 3  # 7 // 2 from slashing resistance
+    assert e.state["npc_health"]["GOBELIN_RESIST"]["current"] == 4
 
     # Saving throw failure with incoming_damage
     e.rng = _FixedRollRng(3)
@@ -414,6 +442,20 @@ def test_execute_task_dnd5e_d20vstarget(monkeypatch, tmp_path):
     assert res_save.success is True
     assert res_save.state_changes["task"]["outcome"] == "FAILURE"
     assert e.state["resources"]["hit_points"]["current"] == 14
+
+
+def test_cypher_confrontation_from_npc_data_and_weapon(engine):
+    # Cypher Goblin from scenario: level 2 -> difficulty = 2 (target 6), max HP = 2 * 3 = 6; PJ medium sword -> damage = 4
+    engine.rng = _FixedRollRng(12)
+    goblin_cypher = {"id": "GOBELIN_CYPHER", "level": 2, "armor": 1}
+    res = engine.execute_task("attack", "might", npc_data=goblin_cypher, weapon="épée")
+    assert res.success is True
+    assert res.state_changes["task"]["difficulty"]["initial"] == 2
+    assert res.state_changes["task"]["target"] == 6
+    assert res.state_changes["attack_damage"]["total"] == 4
+    assert engine.state["npc_health"]["GOBELIN_CYPHER"]["max"] == 6
+    assert engine.state["npc_health"]["GOBELIN_CYPHER"]["level"] == 2
+    assert engine.state["npc_health"]["GOBELIN_CYPHER"]["current"] == 3  # 6 - (4 - 1 armor)
 
 
 def test_execute_task_pbta_and_dice_pool(tmp_path):

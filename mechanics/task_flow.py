@@ -207,19 +207,28 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
     if diff is None and family == "D20VsTarget" and "dc" in raw:
         diff = raw.get("dc")
 
+    can_derive_diff_from_npc = bool(
+        diff is None
+        and getattr(action_def, "difficulty_expr", None)
+        and isinstance(raw.get("target_npc"), str)
+        and raw["target_npc"].strip()
+    )
+
     if family == "StepTargetD20":
-        if not isinstance(diff, int) or isinstance(diff, bool):
-            return None
-        min_diff = 0
-        max_diff = 10
-        if pack.actions.difficulty_scale:
-            min_diff = min(d.level for d in pack.actions.difficulty_scale)
-            max_diff = max(d.level for d in pack.actions.difficulty_scale)
-        if not (min_diff <= diff <= max_diff):
-            return None
+        if not can_derive_diff_from_npc:
+            if not isinstance(diff, int) or isinstance(diff, bool):
+                return None
+            min_diff = 0
+            max_diff = 10
+            if pack.actions.difficulty_scale:
+                min_diff = min(d.level for d in pack.actions.difficulty_scale)
+                max_diff = max(d.level for d in pack.actions.difficulty_scale)
+            if not (min_diff <= diff <= max_diff):
+                return None
     elif family == "D20VsTarget":
-        if not isinstance(diff, int) or isinstance(diff, bool) or diff < 0:
-            return None
+        if not can_derive_diff_from_npc:
+            if not isinstance(diff, int) or isinstance(diff, bool) or diff < 0:
+                return None
     elif family == "PbtA2d6":
         if diff is None:
             diff = 0
@@ -296,6 +305,20 @@ def sanitize_task_decision(raw: Any, pack) -> dict | None:
 
     if isinstance(raw.get("target_npc"), str) and raw["target_npc"].strip():
         out["target_npc"] = raw["target_npc"].strip()
+
+    if isinstance(raw.get("weapon"), (str, dict)):
+        if isinstance(raw["weapon"], str) and raw["weapon"].strip():
+            out["weapon"] = raw["weapon"].strip()
+        elif isinstance(raw["weapon"], dict):
+            out["weapon"] = raw["weapon"]
+
+    if isinstance(raw.get("damage_type"), str) and raw["damage_type"].strip():
+        out["damage_type"] = raw["damage_type"].strip()
+
+    if "npc_level" in raw and raw.get("npc_level") is not None:
+        npc_lvl = _parse_int_val(raw.get("npc_level"))
+        if npc_lvl > 0:
+            out["npc_level"] = npc_lvl
 
     if "npc_health_max" in raw and raw.get("npc_health_max") is not None:
         npc_hp = _parse_int_val(raw.get("npc_health_max"))
